@@ -1,0 +1,64 @@
+name: Build custom production image
+
+on:
+  push:
+    branches:
+      - codex/custom-prod
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Resolve image version
+        id: version
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::12}"
+          VERSION="custom-prod-${SHORT_SHA}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "${VERSION}" > VERSION
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push AMD64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-prod
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Publish deployment summary
+        run: |
+          echo "### Custom production image" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branch: \`${GITHUB_REF_NAME}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: \`${REGISTRY}/${IMAGE_NAME}:${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Platform: \`linux/amd64\`" >> "$GITHUB_STEP_SUMMARY"

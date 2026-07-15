@@ -27,6 +27,7 @@ import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import { HomeAnnouncementPopup } from './components/home-announcement-popup'
 import { useHomePageContent } from './hooks'
 
 export function Home() {
@@ -61,6 +62,7 @@ export function Home() {
   if (!isLoaded) {
     return (
       <PublicLayout showMainContainer={false}>
+        <HomeAnnouncementPopup />
         <main className='flex min-h-screen items-center justify-center'>
           <div className='text-muted-foreground'>{t('Loading...')}</div>
         </main>
@@ -72,6 +74,7 @@ export function Home() {
     if (isUrl) {
       return (
         <PublicLayout showMainContainer={false}>
+          <HomeAnnouncementPopup />
           {/*
             allow-top-navigation-by-user-activation: the custom home page URL is
             admin-configured (trusted); this lets its target="_top" nav/menu links
@@ -97,6 +100,7 @@ export function Home() {
     if (contentIsHtml) {
       return (
         <PublicLayout showMainContainer={false}>
+          <HomeAnnouncementPopup />
           <RichContent
             mode='html'
             htmlVariant='isolated'
@@ -109,6 +113,7 @@ export function Home() {
 
     return (
       <PublicLayout>
+        <HomeAnnouncementPopup />
         <div className='mx-auto max-w-6xl px-4 py-8'>
           <RichContent
             mode='markdown'
@@ -122,6 +127,7 @@ export function Home() {
 
   return (
     <PublicLayout showMainContainer={false}>
+      <HomeAnnouncementPopup />
       <Hero isAuthenticated={isAuthenticated} />
       <Stats />
       <Features />

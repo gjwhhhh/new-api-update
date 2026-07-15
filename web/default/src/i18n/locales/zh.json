@@ -5178,6 +5178,13 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Home Popup": "首页弹窗",
+    "Show on home page": "在首页展示",
+    "Show this announcement in a dialog when users open the home page.": "用户打开首页时，以弹窗展示此公告。",
+    "Do not show again today": "今天不再提示",
+    "Title": "标题",
+    "Enter announcement title": "输入公告标题",
+    "Optional headline shown in the home page announcement dialog.": "在首页公告弹窗中显示的可选标题。"
   }
 }

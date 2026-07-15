@@ -5178,6 +5178,13 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Home Popup": "Home Popup",
+    "Show on home page": "Show on home page",
+    "Show this announcement in a dialog when users open the home page.": "Show this announcement in a dialog when users open the home page.",
+    "Do not show again today": "Do not show again today",
+    "Title": "Title",
+    "Enter announcement title": "Enter announcement title",
+    "Optional headline shown in the home page announcement dialog.": "Optional headline shown in the home page announcement dialog."
   }
 }

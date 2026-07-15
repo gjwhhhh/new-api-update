@@ -68,10 +68,12 @@ import { useUpdateOption } from '../hooks/use-update-option'
 
 type Announcement = {
   id: number
+  title?: string
   content: string
   publishDate: string
   type: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
+  popup?: boolean
 }
 
 type AnnouncementsSectionProps = {
@@ -80,6 +82,7 @@ type AnnouncementsSectionProps = {
 }
 
 const announcementSchema = z.object({
+  title: z.string().max(100, 'Title must be less than 100 characters').optional(),
   content: z
     .string()
     .min(1, 'Content is required')
@@ -90,6 +93,7 @@ const announcementSchema = z.object({
     .string()
     .max(100, 'Extra must be less than 100 characters')
     .optional(),
+  popup: z.boolean(),
 })
 
 type AnnouncementFormValues = z.infer<typeof announcementSchema>
@@ -148,10 +152,12 @@ export function AnnouncementsSection({
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementSchema),
     defaultValues: {
+      title: '',
       content: '',
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      popup: false,
     },
   })
 
@@ -191,10 +197,12 @@ export function AnnouncementsSection({
   const handleAdd = () => {
     setEditingAnnouncement(null)
     form.reset({
+      title: '',
       content: '',
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      popup: false,
     })
     setShowDialog(true)
   }
@@ -202,10 +210,12 @@ export function AnnouncementsSection({
   const handleEdit = (announcement: Announcement) => {
     setEditingAnnouncement(announcement)
     form.reset({
+      title: announcement.title || '',
       content: announcement.content,
       publishDate: announcement.publishDate,
       type: announcement.type,
       extra: announcement.extra || '',
+      popup: announcement.popup ?? false,
     })
     setShowDialog(true)
   }
@@ -375,6 +385,12 @@ export function AnnouncementsSection({
               ),
             },
             {
+              id: 'title',
+              header: t('Title'),
+              cellClassName: 'max-w-xs truncate',
+              cell: (announcement) => announcement.title || '-',
+            },
+            {
               id: 'content',
               header: t('Content'),
               cellClassName: 'max-w-xs truncate',
@@ -418,6 +434,12 @@ export function AnnouncementsSection({
               header: t('Extra'),
               cellClassName: 'text-muted-foreground max-w-xs truncate',
               cell: (announcement) => announcement.extra || '-',
+            },
+            {
+              id: 'home-popup',
+              header: t('Home Popup'),
+              cell: (announcement) =>
+                announcement.popup ? t('Enabled') : '-',
             },
             {
               id: 'actions',
@@ -469,6 +491,27 @@ export function AnnouncementsSection({
             onSubmit={form.handleSubmit(handleSubmitForm)}
             className='space-y-4'
           >
+            <FormField
+              control={form.control}
+              name='title'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Title')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder={t('Enter announcement title')}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Optional headline shown in the home page announcement dialog.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name='content'
@@ -580,6 +623,28 @@ export function AnnouncementsSection({
                     )}
                   </FormDescription>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='popup'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-start gap-3 rounded-lg border p-4'>
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={(checked) => field.onChange(Boolean(checked))}
+                    />
+                  </FormControl>
+                  <div className='space-y-1 leading-none'>
+                    <FormLabel>{t('Show on home page')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Show this announcement in a dialog when users open the home page.'
+                      )}
+                    </FormDescription>
+                  </div>
                 </FormItem>
               )}
             />

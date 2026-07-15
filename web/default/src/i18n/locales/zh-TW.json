@@ -5178,6 +5178,13 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Home Popup": "首頁彈窗",
+    "Show on home page": "在首頁顯示",
+    "Show this announcement in a dialog when users open the home page.": "當使用者開啟首頁時，以對話框顯示此公告。",
+    "Do not show again today": "今天不再提示",
+    "Title": "標題",
+    "Enter announcement title": "輸入公告標題",
+    "Optional headline shown in the home page announcement dialog.": "在首頁公告對話框中顯示的可選標題。"
   }
 }

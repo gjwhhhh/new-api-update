@@ -5178,6 +5178,13 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Home Popup": "ホームのお知らせポップアップ",
+    "Show on home page": "ホームページに表示",
+    "Show this announcement in a dialog when users open the home page.": "ユーザーがホームページを開いたときに、このお知らせをダイアログで表示します。",
+    "Do not show again today": "今日は再表示しない",
+    "Title": "タイトル",
+    "Enter announcement title": "お知らせのタイトルを入力",
+    "Optional headline shown in the home page announcement dialog.": "ホームページのお知らせダイアログに表示する任意の見出しです。"
   }
 }

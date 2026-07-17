@@ -5185,6 +5185,24 @@
     "Do not show again today": "Không hiển thị lại hôm nay",
     "Title": "Tiêu đề",
     "Enter announcement title": "Nhập tiêu đề thông báo",
-    "Optional headline shown in the home page announcement dialog.": "Tiêu đề tùy chọn hiển thị trong hộp thoại thông báo trên trang chủ."
+    "Optional headline shown in the home page announcement dialog.": "Tiêu đề tùy chọn hiển thị trong hộp thoại thông báo trên trang chủ.",
+    "Access Groups": "Nhóm truy cập",
+    "Create Group": "Tạo nhóm",
+    "Subscription Access Groups": "Nhóm truy cập gói đăng ký",
+    "Visible Subscription Groups": "Nhóm gói đăng ký được hiển thị",
+    "Leave empty to make this plan visible to all users.": "Để trống để gói này hiển thị với mọi người dùng.",
+    "Controls which restricted subscription plans this user can purchase.": "Kiểm soát các gói đăng ký bị hạn chế mà người dùng này có thể mua.",
+    "Control which users can see and purchase restricted subscription plans.": "Kiểm soát người dùng nào có thể xem và mua các gói đăng ký bị hạn chế.",
+    "Subscription access group name": "Tên nhóm truy cập gói đăng ký",
+    "Subscription access group name is required": "Tên nhóm truy cập gói đăng ký là bắt buộc",
+    "Subscription access group created": "Đã tạo nhóm truy cập gói đăng ký",
+    "Subscription access group updated": "Đã cập nhật nhóm truy cập gói đăng ký",
+    "Subscription access group deleted": "Đã xóa nhóm truy cập gói đăng ký",
+    "No subscription access groups": "Chưa có nhóm truy cập gói đăng ký",
+    "Delete subscription access group": "Xóa nhóm truy cập gói đăng ký",
+    "Deleting this group removes it from users and subscription plans. Affected plans become visible to everyone if they have no other access groups.": "Việc xóa nhóm này sẽ xóa nhóm khỏi người dùng và gói đăng ký. Các gói không có nhóm truy cập khác sẽ hiển thị với mọi người dùng.",
+    "Optional description": "Mô tả tùy chọn",
+    "Cancel editing": "Hủy chỉnh sửa",
+    "No description": "Không có mô tả"
   }
 }

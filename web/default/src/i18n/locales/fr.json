@@ -5185,6 +5185,24 @@
     "Do not show again today": "Ne plus afficher aujourd’hui",
     "Title": "Titre",
     "Enter announcement title": "Saisir le titre de l’annonce",
-    "Optional headline shown in the home page announcement dialog.": "Titre facultatif affiché dans la boîte de dialogue d’annonce de la page d’accueil."
+    "Optional headline shown in the home page announcement dialog.": "Titre facultatif affiché dans la boîte de dialogue d’annonce de la page d’accueil.",
+    "Access Groups": "Groupes d’accès",
+    "Create Group": "Créer un groupe",
+    "Subscription Access Groups": "Groupes d’accès aux abonnements",
+    "Visible Subscription Groups": "Groupes d’accès visibles",
+    "Leave empty to make this plan visible to all users.": "Laissez vide pour rendre ce plan visible à tous les utilisateurs.",
+    "Controls which restricted subscription plans this user can purchase.": "Contrôle les plans d’abonnement restreints que cet utilisateur peut acheter.",
+    "Control which users can see and purchase restricted subscription plans.": "Contrôlez quels utilisateurs peuvent voir et acheter les plans d’abonnement restreints.",
+    "Subscription access group name": "Nom du groupe d’accès aux abonnements",
+    "Subscription access group name is required": "Le nom du groupe d’accès aux abonnements est requis",
+    "Subscription access group created": "Groupe d’accès aux abonnements créé",
+    "Subscription access group updated": "Groupe d’accès aux abonnements mis à jour",
+    "Subscription access group deleted": "Groupe d’accès aux abonnements supprimé",
+    "No subscription access groups": "Aucun groupe d’accès aux abonnements",
+    "Delete subscription access group": "Supprimer le groupe d’accès aux abonnements",
+    "Deleting this group removes it from users and subscription plans. Affected plans become visible to everyone if they have no other access groups.": "La suppression de ce groupe le retire des utilisateurs et des plans d’abonnement. Les plans sans autre groupe d’accès deviennent visibles par tous.",
+    "Optional description": "Description facultative",
+    "Cancel editing": "Annuler la modification",
+    "No description": "Aucune description"
   }
 }

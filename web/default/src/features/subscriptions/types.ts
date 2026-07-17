@@ -50,6 +50,14 @@ export type SubscriptionPlan = z.infer<typeof subscriptionPlanSchema>
 
 export interface PlanRecord {
   plan: SubscriptionPlan
+  access_group_ids?: number[]
+}
+
+export interface SubscriptionAccessGroup {
+  id: number
+  name: string
+  description: string
+  enabled: boolean
 }
 
 // ============================================================================
@@ -87,6 +95,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface PlanPayload {
   plan: Partial<SubscriptionPlan>
+  access_group_ids?: number[]
 }
 
 export interface SubscriptionPayRequest {

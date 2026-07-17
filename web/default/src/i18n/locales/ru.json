@@ -5185,6 +5185,24 @@
     "Do not show again today": "Не показывать снова сегодня",
     "Title": "Заголовок",
     "Enter announcement title": "Введите заголовок объявления",
-    "Optional headline shown in the home page announcement dialog.": "Необязательный заголовок, отображаемый в диалоговом окне объявления на главной странице."
+    "Optional headline shown in the home page announcement dialog.": "Необязательный заголовок, отображаемый в диалоговом окне объявления на главной странице.",
+    "Access Groups": "Группы доступа",
+    "Create Group": "Создать группу",
+    "Subscription Access Groups": "Группы доступа к подпискам",
+    "Visible Subscription Groups": "Видимые группы подписок",
+    "Leave empty to make this plan visible to all users.": "Оставьте пустым, чтобы сделать этот план видимым всем пользователям.",
+    "Controls which restricted subscription plans this user can purchase.": "Определяет, какие ограниченные планы подписки может приобрести этот пользователь.",
+    "Control which users can see and purchase restricted subscription plans.": "Управляйте тем, какие пользователи могут видеть и приобретать ограниченные планы подписки.",
+    "Subscription access group name": "Название группы доступа к подпискам",
+    "Subscription access group name is required": "Необходимо указать название группы доступа к подпискам",
+    "Subscription access group created": "Группа доступа к подпискам создана",
+    "Subscription access group updated": "Группа доступа к подпискам обновлена",
+    "Subscription access group deleted": "Группа доступа к подпискам удалена",
+    "No subscription access groups": "Нет групп доступа к подпискам",
+    "Delete subscription access group": "Удалить группу доступа к подпискам",
+    "Deleting this group removes it from users and subscription plans. Affected plans become visible to everyone if they have no other access groups.": "Удаление этой группы удалит её из пользователей и планов подписки. Планы без других групп доступа станут видимыми всем.",
+    "Optional description": "Необязательное описание",
+    "Cancel editing": "Отменить редактирование",
+    "No description": "Нет описания"
   }
 }

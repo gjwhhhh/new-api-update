@@ -50,6 +50,7 @@ export function getPlanFormSchema(t: TFunction) {
     stripe_price_id: z.string().optional(),
     creem_product_id: z.string().optional(),
     waffo_pancake_product_id: z.string().optional(),
+    access_group_ids: z.array(z.number()).default([]),
   })
 }
 
@@ -75,9 +76,13 @@ export const PLAN_FORM_DEFAULTS: PlanFormValues = {
   stripe_price_id: '',
   creem_product_id: '',
   waffo_pancake_product_id: '',
+  access_group_ids: [],
 }
 
-export function planToFormValues(plan: SubscriptionPlan): PlanFormValues {
+export function planToFormValues(
+  plan: SubscriptionPlan,
+  accessGroupIds: number[] = []
+): PlanFormValues {
   return {
     title: plan.title || '',
     subtitle: plan.subtitle || '',
@@ -98,13 +103,16 @@ export function planToFormValues(plan: SubscriptionPlan): PlanFormValues {
     stripe_price_id: plan.stripe_price_id || '',
     creem_product_id: plan.creem_product_id || '',
     waffo_pancake_product_id: plan.waffo_pancake_product_id || '',
+    access_group_ids: accessGroupIds,
   }
 }
 
 export function formValuesToPlanPayload(values: PlanFormValues): PlanPayload {
+  const { access_group_ids, ...planValues } = values
   return {
+    access_group_ids,
     plan: {
-      ...values,
+      ...planValues,
       price_amount: Number(values.price_amount || 0),
       currency: 'USD',
       duration_value: Number(values.duration_value || 0),

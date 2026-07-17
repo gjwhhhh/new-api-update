@@ -16,26 +16,44 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus } from 'lucide-react'
+import { FolderCog, Plus } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 
+import { SubscriptionAccessGroupsDialog } from './subscription-access-groups-dialog'
 import { useSubscriptions } from './subscriptions-provider'
 
 export function SubscriptionsPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, complianceConfirmed } = useSubscriptions()
+  const [accessGroupsOpen, setAccessGroupsOpen] = useState(false)
   return (
-    <div className='flex gap-2'>
-      <Button
-        size='sm'
-        onClick={() => setOpen('create')}
-        disabled={!complianceConfirmed}
-      >
-        <Plus className='h-4 w-4' />
-        {t('Create Plan')}
-      </Button>
-    </div>
+    <>
+      <div className='flex gap-2'>
+        <Button
+          size='sm'
+          variant='outline'
+          onClick={() => setAccessGroupsOpen(true)}
+          disabled={!complianceConfirmed}
+        >
+          <FolderCog className='h-4 w-4' />
+          {t('Access Groups')}
+        </Button>
+        <Button
+          size='sm'
+          onClick={() => setOpen('create')}
+          disabled={!complianceConfirmed}
+        >
+          <Plus className='h-4 w-4' />
+          {t('Create Plan')}
+        </Button>
+      </div>
+      <SubscriptionAccessGroupsDialog
+        open={accessGroupsOpen}
+        onOpenChange={setAccessGroupsOpen}
+      />
+    </>
   )
 }

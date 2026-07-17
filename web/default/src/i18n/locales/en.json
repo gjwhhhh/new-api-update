@@ -5185,6 +5185,24 @@
     "Do not show again today": "Do not show again today",
     "Title": "Title",
     "Enter announcement title": "Enter announcement title",
-    "Optional headline shown in the home page announcement dialog.": "Optional headline shown in the home page announcement dialog."
+    "Optional headline shown in the home page announcement dialog.": "Optional headline shown in the home page announcement dialog.",
+    "Access Groups": "Access Groups",
+    "Create Group": "Create Group",
+    "Subscription Access Groups": "Subscription Access Groups",
+    "Visible Subscription Groups": "Visible Subscription Groups",
+    "Leave empty to make this plan visible to all users.": "Leave empty to make this plan visible to all users.",
+    "Controls which restricted subscription plans this user can purchase.": "Controls which restricted subscription plans this user can purchase.",
+    "Control which users can see and purchase restricted subscription plans.": "Control which users can see and purchase restricted subscription plans.",
+    "Subscription access group name": "Subscription access group name",
+    "Subscription access group name is required": "Subscription access group name is required",
+    "Subscription access group created": "Subscription access group created",
+    "Subscription access group updated": "Subscription access group updated",
+    "Subscription access group deleted": "Subscription access group deleted",
+    "No subscription access groups": "No subscription access groups",
+    "Delete subscription access group": "Delete subscription access group",
+    "Deleting this group removes it from users and subscription plans. Affected plans become visible to everyone if they have no other access groups.": "Deleting this group removes it from users and subscription plans. Affected plans become visible to everyone if they have no other access groups.",
+    "Optional description": "Optional description",
+    "Cancel editing": "Cancel editing",
+    "No description": "No description"
   }
 }

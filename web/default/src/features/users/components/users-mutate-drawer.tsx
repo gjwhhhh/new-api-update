@@ -31,6 +31,7 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -63,6 +64,11 @@ import {
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  getSubscriptionAccessGroups,
+  getUserSubscriptionAccessGroups,
+  setUserSubscriptionAccessGroups,
+} from '@/features/subscriptions/api'
+import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
   EMPTY_PERMISSION_CATALOG,
@@ -89,7 +95,7 @@ import {
   transformFormDataToPayload,
   transformUserToFormDefaults,
 } from '../lib'
-import { type User } from '../types'
+import type { User } from '../types'
 import { UserQuotaDialog } from './user-quota-dialog'
 import { useUsers } from './users-provider'
 
@@ -110,6 +116,9 @@ export function UsersMutateDrawer({
   const currentUser = useAuthStore((s) => s.auth.user)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
+  const [subscriptionAccessGroupIds, setSubscriptionAccessGroupIds] = useState<
+    number[]
+  >([])
 
   // Fetch groups
   const { data: groupsData } = useQuery({
@@ -119,6 +128,14 @@ export function UsersMutateDrawer({
   })
 
   const groups = groupsData?.data || []
+
+  const { data: subscriptionAccessGroupsData } = useQuery({
+    queryKey: ['subscription-access-groups'],
+    queryFn: getSubscriptionAccessGroups,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const subscriptionAccessGroups = subscriptionAccessGroupsData?.data || []
 
   // Permission catalog is owned by the backend; fetched once and reused.
   const { data: permissionCatalog = EMPTY_PERMISSION_CATALOG } = useQuery({
@@ -136,14 +153,24 @@ export function UsersMutateDrawer({
   useEffect(() => {
     if (open && isUpdate && currentRow) {
       // For update, fetch fresh data
-      getUser(currentRow.id).then((result) => {
-        if (result.success && result.data) {
-          form.reset(transformUserToFormDefaults(result.data))
-        }
-      })
+      void getUser(currentRow.id)
+        .then((result) => {
+          if (result.success && result.data) {
+            form.reset(transformUserToFormDefaults(result.data))
+          }
+        })
+        .catch(() => {})
+      void getUserSubscriptionAccessGroups(currentRow.id)
+        .then((result) => {
+          if (result.success && result.data) {
+            setSubscriptionAccessGroupIds(result.data.access_group_ids || [])
+          }
+        })
+        .catch(() => {})
     } else if (open && !isUpdate) {
       // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
+      setSubscriptionAccessGroupIds([])
     }
   }, [open, isUpdate, currentRow, form])
 
@@ -180,6 +207,18 @@ export function UsersMutateDrawer({
         : await createUser(payload)
 
       if (result.success) {
+        if (isUpdate && currentRow) {
+          const accessGroupResult = await setUserSubscriptionAccessGroups(
+            currentRow.id,
+            subscriptionAccessGroupIds
+          )
+          if (!accessGroupResult.success) {
+            toast.error(
+              accessGroupResult.message || t(ERROR_MESSAGES.UPDATE_FAILED)
+            )
+            return
+          }
+        }
         toast.success(
           isUpdate
             ? t(SUCCESS_MESSAGES.USER_UPDATED)
@@ -195,7 +234,7 @@ export function UsersMutateDrawer({
               : t(ERROR_MESSAGES.CREATE_FAILED))
         )
       }
-    } catch (_error) {
+    } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setIsSubmitting(false)
@@ -278,7 +317,8 @@ export function UsersMutateDrawer({
                             { value: '10', label: t('Admin') },
                           ]}
                           onValueChange={(value) =>
-                            value !== null && field.onChange(parseInt(value))
+                            value !== null &&
+                            field.onChange(Number.parseInt(value))
                           }
                           value={String(field.value)}
                         >
@@ -360,12 +400,10 @@ export function UsersMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Group')}</FormLabel>
                         <Select
-                          items={[
-                            ...groups.map((group) => ({
-                              value: group,
-                              label: group,
-                            })),
-                          ]}
+                          items={groups.map((group) => ({
+                            value: group,
+                            label: group,
+                          }))}
                           onValueChange={field.onChange}
                           value={field.value}
                         >
@@ -388,6 +426,30 @@ export function UsersMutateDrawer({
                       </FormItem>
                     )}
                   />
+
+                  <FormItem>
+                    <FormLabel>{t('Subscription Access Groups')}</FormLabel>
+                    <MultiSelect
+                      options={subscriptionAccessGroups.map((group) => ({
+                        value: String(group.id),
+                        label: group.enabled
+                          ? group.name
+                          : `${group.name} (${t('Disabled')})`,
+                      }))}
+                      selected={subscriptionAccessGroupIds.map(String)}
+                      onChange={(ids) =>
+                        setSubscriptionAccessGroupIds(
+                          ids.map((id) => Number(id))
+                        )
+                      }
+                      placeholder={t('No subscription access groups')}
+                    />
+                    <FormDescription>
+                      {t(
+                        'Controls which restricted subscription plans this user can purchase.'
+                      )}
+                    </FormDescription>
+                  </FormItem>
 
                   <FormField
                     control={form.control}

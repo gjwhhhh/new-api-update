@@ -30,6 +30,7 @@ import type {
   SubscriptionPayResponse,
   SubscriptionPayRequest,
   SelfSubscriptionData,
+  SubscriptionAccessGroup,
 } from './types'
 
 // ============================================================================
@@ -63,6 +64,57 @@ export async function patchPlanStatus(
   const res = await api.patch(`/api/subscription/admin/plans/${id}`, {
     enabled,
   })
+  return res.data
+}
+
+export async function getSubscriptionAccessGroups(): Promise<
+  ApiResponse<SubscriptionAccessGroup[]>
+> {
+  const res = await api.get('/api/subscription/admin/access-groups')
+  return res.data
+}
+
+export async function createSubscriptionAccessGroup(data: {
+  name: string
+  description: string
+  enabled: boolean
+}): Promise<ApiResponse<SubscriptionAccessGroup>> {
+  const res = await api.post('/api/subscription/admin/access-groups', data)
+  return res.data
+}
+
+export async function updateSubscriptionAccessGroup(
+  id: number,
+  data: { name: string; description: string; enabled: boolean }
+): Promise<ApiResponse<SubscriptionAccessGroup>> {
+  const res = await api.put(`/api/subscription/admin/access-groups/${id}`, data)
+  return res.data
+}
+
+export async function deleteSubscriptionAccessGroup(
+  id: number
+): Promise<ApiResponse> {
+  const res = await api.delete(`/api/subscription/admin/access-groups/${id}`)
+  return res.data
+}
+
+export async function getUserSubscriptionAccessGroups(
+  userId: number
+): Promise<ApiResponse<{ access_group_ids: number[] }>> {
+  const res = await api.get(
+    `/api/subscription/admin/users/${userId}/access-groups`
+  )
+  return res.data
+}
+
+export async function setUserSubscriptionAccessGroups(
+  userId: number,
+  accessGroupIds: number[]
+): Promise<ApiResponse> {
+  const res = await api.put(
+    `/api/subscription/admin/users/${userId}/access-groups`,
+    { access_group_ids: accessGroupIds }
+  )
   return res.data
 }
 

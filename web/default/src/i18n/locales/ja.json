@@ -5185,6 +5185,24 @@
     "Do not show again today": "今日は再表示しない",
     "Title": "タイトル",
     "Enter announcement title": "お知らせのタイトルを入力",
-    "Optional headline shown in the home page announcement dialog.": "ホームページのお知らせダイアログに表示する任意の見出しです。"
+    "Optional headline shown in the home page announcement dialog.": "ホームページのお知らせダイアログに表示する任意の見出しです。",
+    "Access Groups": "アクセスグループ",
+    "Create Group": "グループを作成",
+    "Subscription Access Groups": "サブスクリプションアクセスグループ",
+    "Visible Subscription Groups": "表示対象のサブスクリプショングループ",
+    "Leave empty to make this plan visible to all users.": "空欄にすると、このプランはすべてのユーザーに表示されます。",
+    "Controls which restricted subscription plans this user can purchase.": "このユーザーが購入できる制限付きサブスクリプションプランを管理します。",
+    "Control which users can see and purchase restricted subscription plans.": "制限付きサブスクリプションプランを表示・購入できるユーザーを管理します。",
+    "Subscription access group name": "サブスクリプションアクセスグループ名",
+    "Subscription access group name is required": "サブスクリプションアクセスグループ名は必須です",
+    "Subscription access group created": "サブスクリプションアクセスグループを作成しました",
+    "Subscription access group updated": "サブスクリプションアクセスグループを更新しました",
+    "Subscription access group deleted": "サブスクリプションアクセスグループを削除しました",
+    "No subscription access groups": "サブスクリプションアクセスグループはありません",
+    "Delete subscription access group": "サブスクリプションアクセスグループを削除",
+    "Deleting this group removes it from users and subscription plans. Affected plans become visible to everyone if they have no other access groups.": "このグループを削除すると、ユーザーとサブスクリプションプランから削除されます。他のアクセスグループを持たないプランはすべてのユーザーに表示されます。",
+    "Optional description": "任意の説明",
+    "Cancel editing": "編集をキャンセル",
+    "No description": "説明はありません"
   }
 }

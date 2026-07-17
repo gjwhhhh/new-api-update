@@ -16,7 +16,8 @@ import (
 // ---- Shared types ----
 
 type SubscriptionPlanDTO struct {
-	Plan model.SubscriptionPlan `json:"plan"`
+	Plan           model.SubscriptionPlan `json:"plan"`
+	AccessGroupIds []int                  `json:"access_group_ids,omitempty"`
 }
 
 type BillingPreferenceRequest struct {
@@ -35,8 +36,8 @@ func GetSubscriptionPlans(c *gin.Context) {
 		return
 	}
 
-	var plans []model.SubscriptionPlan
-	if err := model.DB.Where("enabled = ?", true).Order("sort_order desc, id desc").Find(&plans).Error; err != nil {
+	plans, err := model.ListVisibleSubscriptionPlans(c.GetInt("id"))
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -127,15 +128,22 @@ func AdminListSubscriptionPlans(c *gin.Context) {
 	result := make([]SubscriptionPlanDTO, 0, len(plans))
 	for _, p := range plans {
 		p.NormalizeDefaults()
+		accessGroupIds, err := model.GetSubscriptionPlanAccessGroupIDs(p.Id)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		result = append(result, SubscriptionPlanDTO{
-			Plan: p,
+			Plan:           p,
+			AccessGroupIds: accessGroupIds,
 		})
 	}
 	common.ApiSuccess(c, result)
 }
 
 type AdminUpsertSubscriptionPlanRequest struct {
-	Plan model.SubscriptionPlan `json:"plan"`
+	Plan           model.SubscriptionPlan `json:"plan"`
+	AccessGroupIds *[]int                 `json:"access_group_ids"`
 }
 
 func AdminCreateSubscriptionPlan(c *gin.Context) {
@@ -204,13 +212,25 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "自定义重置周期需大于0秒")
 		return
 	}
-	err := model.DB.Create(&req.Plan).Error
+	accessGroupIds := []int{}
+	if req.AccessGroupIds != nil {
+		accessGroupIds = *req.AccessGroupIds
+	}
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&req.Plan).Error; err != nil {
+			return err
+		}
+		return model.ReplaceSubscriptionPlanAccessGroupsTx(tx, req.Plan.Id, accessGroupIds)
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.InvalidateSubscriptionPlanCache(req.Plan.Id)
-	common.ApiSuccess(c, req.Plan)
+	common.ApiSuccess(c, SubscriptionPlanDTO{
+		Plan:           req.Plan,
+		AccessGroupIds: accessGroupIds,
+	})
 }
 
 func AdminUpdateSubscriptionPlan(c *gin.Context) {
@@ -311,7 +331,10 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
 			return err
 		}
-		return nil
+		if req.AccessGroupIds == nil {
+			return nil
+		}
+		return model.ReplaceSubscriptionPlanAccessGroupsTx(tx, id, *req.AccessGroupIds)
 	})
 	if err != nil {
 		common.ApiError(c, err)

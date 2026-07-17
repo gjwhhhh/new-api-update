@@ -5185,6 +5185,24 @@
     "Do not show again today": "今天不再提示",
     "Title": "標題",
     "Enter announcement title": "輸入公告標題",
-    "Optional headline shown in the home page announcement dialog.": "在首頁公告對話框中顯示的可選標題。"
+    "Optional headline shown in the home page announcement dialog.": "在首頁公告對話框中顯示的可選標題。",
+    "Access Groups": "套餐群組管理",
+    "Create Group": "建立群組",
+    "Subscription Access Groups": "套餐群組",
+    "Visible Subscription Groups": "可見套餐群組",
+    "Leave empty to make this plan visible to all users.": "留空則所有使用者都可見。",
+    "Controls which restricted subscription plans this user can purchase.": "控制此使用者可購買哪些受限訂閱套餐。",
+    "Control which users can see and purchase restricted subscription plans.": "控制哪些使用者可以查看及購買受限訂閱套餐。",
+    "Subscription access group name": "套餐群組名稱",
+    "Subscription access group name is required": "套餐群組名稱不能為空",
+    "Subscription access group created": "套餐群組已建立",
+    "Subscription access group updated": "套餐群組已更新",
+    "Subscription access group deleted": "套餐群組已刪除",
+    "No subscription access groups": "暫無套餐群組",
+    "Delete subscription access group": "刪除套餐群組",
+    "Deleting this group removes it from users and subscription plans. Affected plans become visible to everyone if they have no other access groups.": "刪除後會從使用者及訂閱套餐中移除此群組。未綁定其他套餐群組的套餐將恢復為所有使用者可見。",
+    "Optional description": "可選說明",
+    "Cancel editing": "取消編輯",
+    "No description": "暫無說明"
   }
 }

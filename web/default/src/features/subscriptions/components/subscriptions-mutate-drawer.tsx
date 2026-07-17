@@ -31,6 +31,7 @@ import {
   sideDrawerHeaderClassName,
   sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
+import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -65,6 +66,7 @@ import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 
 import {
   createPlan,
+  getSubscriptionAccessGroups,
   updatePlan,
   getGroups,
   createWaffoPancakeSubscriptionProduct,
@@ -78,7 +80,7 @@ import {
   formValuesToPlanPayload,
   type PlanFormValues,
 } from '../lib'
-import type { PlanRecord } from '../types'
+import type { PlanRecord, SubscriptionAccessGroup } from '../types'
 import { useSubscriptions } from './subscriptions-provider'
 
 interface Props {
@@ -100,6 +102,9 @@ export function SubscriptionsMutateDrawer({
   const currencyLabel = getCurrencyLabel()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [groupOptions, setGroupOptions] = useState<string[]>([])
+  const [accessGroups, setAccessGroups] = useState<SubscriptionAccessGroup[]>(
+    []
+  )
   const [creatingPancakeProduct, setCreatingPancakeProduct] = useState(false)
   const [pancakeProducts, setPancakeProducts] = useState<
     { id: string; name: string; status: string }[]
@@ -114,7 +119,9 @@ export function SubscriptionsMutateDrawer({
   useEffect(() => {
     if (open) {
       if (currentRow?.plan) {
-        form.reset(planToFormValues(currentRow.plan))
+        form.reset(
+          planToFormValues(currentRow.plan, currentRow.access_group_ids || [])
+        )
       } else {
         form.reset(PLAN_FORM_DEFAULTS)
       }
@@ -123,6 +130,11 @@ export function SubscriptionsMutateDrawer({
           if (res.success) setGroupOptions(res.data || [])
         })
         .catch(() => {})
+      getSubscriptionAccessGroups()
+        .then((res) => {
+          if (res.success) setAccessGroups(res.data || [])
+        })
+        .catch(() => setAccessGroups([]))
       // Best-effort — empty list still lets the operator use "+ Create".
       listWaffoPancakeSubscriptionProductOptions()
         .then((res) => {
@@ -501,6 +513,33 @@ export function SubscriptionsMutateDrawer({
                   )}
                 />
               </div>
+
+              <FormField
+                control={form.control}
+                name='access_group_ids'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Visible Subscription Groups')}</FormLabel>
+                    <FormControl>
+                      <MultiSelect
+                        options={accessGroups.map((group) => ({
+                          value: String(group.id),
+                          label: group.name,
+                        }))}
+                        selected={field.value.map(String)}
+                        onChange={(ids) =>
+                          field.onChange(ids.map((id) => Number(id)))
+                        }
+                        placeholder={t('All users')}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Leave empty to make this plan visible to all users.')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
               <FormField
                 control={form.control}

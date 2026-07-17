@@ -2,9 +2,8 @@ name: Build custom production image
 
 on:
   push:
-    branches:
-      - codex/custom-prod
-  workflow_dispatch:
+    tags:
+      - 'custom-prod-*'
 
 permissions:
   contents: read
@@ -58,7 +57,7 @@ jobs:
       - name: Publish deployment summary
         run: |
           echo "### Custom production image" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Branch: \`${GITHUB_REF_NAME}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag: \`${GITHUB_REF_NAME}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Image: \`${REGISTRY}/${IMAGE_NAME}:${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Platform: \`linux/amd64\`" >> "$GITHUB_STEP_SUMMARY"

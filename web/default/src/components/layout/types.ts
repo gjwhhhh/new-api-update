@@ -34,6 +34,8 @@ type BaseNavItem = {
    * `useSidebarView`). Route-level guards still enforce access independently.
    */
   requiredRole?: number
+  /** Navigate by loading the document instead of letting the SPA claim the URL. */
+  hardNavigation?: boolean
 }
 
 /**

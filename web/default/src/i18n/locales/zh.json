@@ -1054,6 +1054,8 @@
     "Controls randomness and creativity": "控制输出的随机性和创造性",
     "Controls whether user verification (biometrics/PIN) is required during Passkey flows.": "控制在通行密钥流程中是否需要用户验证（生物识别/PIN）。",
     "Conversation cleared": "对话已清空",
+    "Conversation Audit": "会话审计",
+    "Review encrypted conversation metadata and details.": "查看加密会话的元数据与详情。",
     "Conversion rate from USD to your custom currency": "从美元到您的自定义货币的转换率",
     "Convert reasoning_content to <think> tag in content": "将 reasoning_content 转换为 content 中的 <think> 标签",
     "Convert string to lowercase": "把字符串转成小写",

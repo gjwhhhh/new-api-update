@@ -154,6 +154,10 @@ export function SidebarModulesSection({
         title: t('Subscription Management'),
         description: t('Manage subscription plans and pricing.'),
       },
+      conversation_audit: {
+        title: t('Conversation Audit'),
+        description: t('Review encrypted conversation metadata and details.'),
+      },
     },
   }
   const formDefaults = useMemo(() => config, [config])

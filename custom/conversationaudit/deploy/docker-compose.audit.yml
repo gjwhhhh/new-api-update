@@ -1,0 +1,4 @@
+services:
+  new-api:
+    env_file:
+      - ${CONVERSATION_AUDIT_ENV_FILE:-./conversation-audit.env}

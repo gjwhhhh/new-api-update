@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>会话审计</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+      body { margin: 0; padding: 24px; }
+      main { max-width: 1400px; margin: auto; }
+      h1 { margin: 0 0 8px; font-size: 24px; }
+      .back { display: inline-block; margin-bottom: 14px; color: #93c5fd; text-decoration: none; }
+      .back:hover { text-decoration: underline; }
+      .note { color: #94a3b8; margin-bottom: 20px; }
+      .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; padding: 16px; background: #1e293b; border-radius: 10px; }
+      label { display: grid; gap: 6px; color: #cbd5e1; font-size: 13px; }
+      input, select, button { box-sizing: border-box; min-height: 38px; border: 1px solid #475569; border-radius: 6px; background: #0f172a; color: inherit; padding: 8px; }
+      button { background: #2563eb; border: 0; cursor: pointer; font-weight: 600; }
+      button.secondary { background: #334155; }
+      .actions { display: flex; align-items: end; gap: 8px; }
+      #message { min-height: 24px; padding: 12px 0; color: #fbbf24; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; background: #1e293b; border-radius: 10px; overflow: hidden; }
+      th, td { padding: 10px; border-bottom: 1px solid #334155; text-align: left; white-space: nowrap; }
+      th { color: #94a3b8; font-weight: 600; }
+      tr[data-request-id] { cursor: pointer; }
+      tr[data-request-id]:hover { background: #334155; }
+      dialog { width: min(1000px, 92vw); max-height: 88vh; color: #e2e8f0; background: #0f172a; border: 1px solid #475569; border-radius: 10px; }
+      dialog::backdrop { background: rgba(2, 6, 23, .75); }
+      .dialog-head { display: flex; justify-content: space-between; align-items: center; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #1e293b; border-radius: 8px; }
+      .pager { display: flex; justify-content: end; align-items: center; gap: 12px; padding-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/dashboard/overview">← 返回控制台</a>
+      <h1>加密会话审计</h1>
+      <div class="note">仅管理员可查看。列表不含对话正文；点击记录后才按需解密。</div>
+      <form class="filters" id="filters">
+        <label>用户名<input id="username" name="username" placeholder="包含用户名，例如 bedlate" /></label>
+        <label>用户 ID<input id="userId" name="user_id" inputmode="numeric" placeholder="可选" /></label>
+        <label>模型<input id="model" name="model" placeholder="例如 gpt-5.6-sol" /></label>
+        <label>状态<select id="status" name="status"><option value="">全部</option><option value="completed">成功</option><option value="failed">失败</option><option value="truncated">已截断</option><option value="capture_failed">采集失败</option></select></label>
+        <label>开始时间<input id="start" type="datetime-local" /></label>
+        <label>结束时间<input id="end" type="datetime-local" /></label>
+        <div class="actions"><button type="submit">筛选</button><button class="secondary" id="reset" type="button">重置</button></div>
+      </form>
+      <div id="message"></div>
+      <table>
+        <thead><tr><th>时间</th><th>用户</th><th>模型</th><th>状态</th><th>请求 / 回复字节</th><th>接口</th><th>请求 ID</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="pager"><button class="secondary" id="previous" type="button">上一页</button><span id="page">第 1 页</span><button class="secondary" id="next" type="button">下一页</button></div>
+    </main>
+    <dialog id="detail"><div class="dialog-head"><h2>会话详情</h2><button class="secondary" id="close" type="button">关闭</button></div><p id="meta"></p><h3>请求</h3><pre id="request"></pre><h3>回复</h3><pre id="response"></pre></dialog>
+    <script>
+      const state = { page: 1, total: 0, pageSize: 20 };
+      const rows = document.getElementById('rows');
+      const message = document.getElementById('message');
+      const detail = document.getElementById('detail');
+      const toTimestamp = value => value ? Math.floor(new Date(value).getTime() / 1000) : '';
+      const escape = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
+      const pretty = value => { try { return JSON.stringify(JSON.parse(value || '{}'), null, 2); } catch { return value || '无内容'; } };
+      const apiFetch = (url, options = {}) => {
+        const uid = window.localStorage.getItem('uid');
+        const headers = new Headers(options.headers || {});
+        if (uid) headers.set('New-Api-User', uid);
+        return fetch(url, { ...options, headers, credentials: 'same-origin' });
+      };
+
+      async function load() {
+        const form = new FormData(document.getElementById('filters'));
+        const query = new URLSearchParams({ p: state.page, page_size: state.pageSize });
+        for (const [key, value] of form.entries()) if (value) query.set(key, value);
+        const start = toTimestamp(document.getElementById('start').value); if (start) query.set('start_timestamp', start);
+        const end = toTimestamp(document.getElementById('end').value); if (end) query.set('end_timestamp', end);
+        message.textContent = '加载中…';
+        const response = await apiFetch('/api/custom/conversation-audits?' + query);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) { message.textContent = payload.message || '无法读取会话审计记录，请确认管理员登录状态。'; rows.innerHTML = ''; return; }
+        state.total = payload.total;
+        rows.innerHTML = payload.data.map(item => `<tr data-request-id="${escape(item.request_id)}"><td>${escape(new Date(item.created_at * 1000).toLocaleString())}</td><td>${escape(item.username)} (#${item.user_id})</td><td>${escape(item.model_name)}</td><td>${escape(item.status)}</td><td>${item.request_length} / ${item.response_length}</td><td>${escape(item.request_path)}</td><td>${escape(item.request_id)}</td></tr>`).join('');
+        document.getElementById('page').textContent = `第 ${state.page} 页，共 ${state.total} 条`;
+        document.getElementById('previous').disabled = state.page === 1;
+        document.getElementById('next').disabled = state.page * state.pageSize >= state.total;
+        message.textContent = payload.data.length ? '' : '没有符合筛选条件的记录。';
+      }
+
+      rows.addEventListener('click', async event => {
+        const row = event.target.closest('[data-request-id]'); if (!row) return;
+        const response = await apiFetch('/api/custom/conversation-audits/' + encodeURIComponent(row.dataset.requestId));
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) { message.textContent = payload.message || '无法解密会话内容。'; return; }
+        document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}`;
+        document.getElementById('request').textContent = pretty(payload.data.request);
+        document.getElementById('response').textContent = pretty(payload.data.response);
+        detail.showModal();
+      });
+
+      document.getElementById('filters').addEventListener('submit', event => { event.preventDefault(); state.page = 1; load(); });
+      document.getElementById('reset').addEventListener('click', () => { document.getElementById('filters').reset(); state.page = 1; load(); });
+      document.getElementById('previous').addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
+      document.getElementById('next').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; load(); } });
+      document.getElementById('close').addEventListener('click', () => detail.close());
+      detail.addEventListener('click', event => {
+        const bounds = detail.getBoundingClientRect();
+        const clickedOutside = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+        if (clickedOutside) detail.close();
+      });
+      load();
+    </script>
+  </body>
+</html>

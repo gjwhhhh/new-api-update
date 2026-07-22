@@ -67,6 +67,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       user: true,
       subscription: true,
       setting: true,
+      conversation_audit: true,
     },
   });
 
@@ -128,6 +129,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         user: true,
         subscription: true,
         setting: true,
+        conversation_audit: true,
       },
     };
     setSidebarModulesAdmin(defaultModules);
@@ -197,6 +199,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             user: true,
             subscription: true,
             setting: true,
+            conversation_audit: true,
           },
         };
         setSidebarModulesAdmin(defaultModules);
@@ -264,6 +267,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'subscription',
           title: t('订阅管理'),
           description: t('订阅套餐管理'),
+        },
+        {
+          key: 'conversation_audit',
+          title: t('会话审计'),
+          description: t('查看加密会话元数据和详情'),
         },
         {
           key: 'redemption',

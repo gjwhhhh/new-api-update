@@ -1054,6 +1054,8 @@
     "Controls randomness and creativity": "Contrôle le hasard et la créativité",
     "Controls whether user verification (biometrics/PIN) is required during Passkey flows.": "Contrôle si la vérification de l'utilisateur (biométrie/PIN) est requise lors des flux de Passkey.",
     "Conversation cleared": "Conversation effacée",
+    "Conversation Audit": "Audit des conversations",
+    "Review encrypted conversation metadata and details.": "Consultez les métadonnées et les détails des conversations chiffrées.",
     "Conversion rate from USD to your custom currency": "Taux de conversion de l'USD vers votre devise personnalisée",
     "Convert reasoning_content to <think> tag in content": "Convertir reasoning_content en balise <think> dans content",
     "Convert string to lowercase": "Convertir la chaîne en minuscules",

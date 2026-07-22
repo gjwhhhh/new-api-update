@@ -135,6 +135,13 @@ export function useSidebarData(): SidebarData {
             icon: Users,
           },
           {
+            title: t('Conversation Audit'),
+            url: '/conversation-audit/',
+            icon: FileText,
+            requiredRole: ROLE.ADMIN,
+            hardNavigation: true,
+          },
+          {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,

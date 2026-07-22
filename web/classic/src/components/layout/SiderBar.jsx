@@ -49,6 +49,7 @@ const routerMap = {
   deployment: '/console/deployment',
   playground: '/console/playground',
   personal: '/console/personal',
+  conversation_audit: '/conversation-audit/',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -181,6 +182,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('用户管理'),
         itemKey: 'user',
         to: '/user',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('会话审计'),
+        itemKey: 'conversation_audit',
+        to: '/conversation-audit/',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
@@ -419,6 +426,14 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
             // 如果没有路由，直接返回元素
             if (!to) return itemElement;
+
+            if (props.itemKey === 'conversation_audit') {
+              return (
+                <a href={to} style={{ textDecoration: 'none' }}>
+                  {itemElement}
+                </a>
+              );
+            }
 
             return (
               <Link

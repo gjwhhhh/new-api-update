@@ -1054,6 +1054,8 @@
     "Controls randomness and creativity": "Управляет случайностью и креативностью",
     "Controls whether user verification (biometrics/PIN) is required during Passkey flows.": "Определяет, требуется ли проверка пользователя (биометрия/PIN) во время процессов Passkey.",
     "Conversation cleared": "Диалог очищен",
+    "Conversation Audit": "Аудит диалогов",
+    "Review encrypted conversation metadata and details.": "Просматривайте метаданные и сведения зашифрованных диалогов.",
     "Conversion rate from USD to your custom currency": "Курс конвертации из USD в вашу пользовательскую валюту",
     "Convert reasoning_content to <think> tag in content": "Преобразовать reasoning_content в тег <think> в content",
     "Convert string to lowercase": "Преобразовать строку в нижний регистр",

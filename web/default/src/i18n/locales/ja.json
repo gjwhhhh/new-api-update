@@ -1054,6 +1054,8 @@
     "Controls randomness and creativity": "ランダム性と創造性を調整します",
     "Controls whether user verification (biometrics/PIN) is required during Passkey flows.": "Passkeyフロー中にユーザー認証（生体認証/PIN）が必要かどうかを制御します。",
     "Conversation cleared": "会話を消去しました",
+    "Conversation Audit": "会話監査",
+    "Review encrypted conversation metadata and details.": "暗号化された会話のメタデータと詳細を確認します。",
     "Conversion rate from USD to your custom currency": "USDからカスタム通貨への換算レート",
     "Convert reasoning_content to <think> tag in content": "content内のreasoning_contentを<think>タグに変換",
     "Convert string to lowercase": "文字列を小文字に変換",

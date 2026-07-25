@@ -27,13 +27,15 @@ const (
 	minimumMaxContentBytes  = 1024
 	maximumMaxContentBytes  = 1024 * 1024
 	settingsRefreshInterval = time.Minute
+	requestIDUniqueIndex    = "uq_custom_conversation_audits_request_id"
+	legacyRequestIDIndex    = "idx_custom_conversation_audits_request_id"
 )
 
 // ConversationAudit is intentionally separate from model.Log. Normal user and
 // consumption-log endpoints cannot return encrypted conversation payloads.
 type ConversationAudit struct {
 	ID                 uint   `json:"id" gorm:"primaryKey"`
-	RequestID          string `json:"request_id" gorm:"uniqueIndex;index;default:''"`
+	RequestID          string `json:"request_id" gorm:"uniqueIndex:uq_custom_conversation_audits_request_id;default:''"`
 	UserID             int    `json:"user_id" gorm:"index;not null"`
 	Username           string `json:"username" gorm:"index;default:''"`
 	TokenID            int    `json:"token_id" gorm:"index;default:0"`
@@ -109,7 +111,7 @@ func initialize() {
 	}
 
 	if common.IsMasterNode {
-		if err := model.DB.AutoMigrate(&ConversationAudit{}, &AuditSettings{}); err != nil {
+		if err := migrateConversationAuditTables(model.DB); err != nil {
 			setInitError(fmt.Errorf("migrate conversation audit tables: %w", err))
 			return
 		}
@@ -118,6 +120,25 @@ func initialize() {
 	}
 	refreshSettings()
 	go refreshLoop()
+}
+
+func migrateConversationAuditTables(db *gorm.DB) error {
+	if err := db.AutoMigrate(&ConversationAudit{}, &AuditSettings{}); err != nil {
+		return err
+	}
+
+	migrator := db.Migrator()
+	if !migrator.HasIndex(&ConversationAudit{}, requestIDUniqueIndex) {
+		if err := migrator.CreateIndex(&ConversationAudit{}, requestIDUniqueIndex); err != nil {
+			return fmt.Errorf("create request id unique index: %w", err)
+		}
+	}
+	if migrator.HasIndex(&ConversationAudit{}, legacyRequestIDIndex) {
+		if err := migrator.DropIndex(&ConversationAudit{}, legacyRequestIDIndex); err != nil {
+			return fmt.Errorf("drop legacy request id index: %w", err)
+		}
+	}
+	return nil
 }
 
 func refreshLoop() {

@@ -5,6 +5,8 @@ on:
     tags:
       - '*'
       - '!nightly*'
+      # custom-prod tags publish the dedicated GHCR AMD64 image instead.
+      - '!custom-prod-*'
   workflow_dispatch:
     inputs:
       tag:

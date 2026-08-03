@@ -61,6 +61,13 @@
       const toTimestamp = value => value ? Math.floor(new Date(value).getTime() / 1000) : '';
       const escape = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
       const pretty = value => { try { return JSON.stringify(JSON.parse(value || '{}'), null, 2); } catch { return value || '无内容'; } };
+      const auditText = (value, field) => {
+        try {
+          const parsed = JSON.parse(value || '{}');
+          if (parsed.schema_version === 2 && typeof parsed[field] === 'string') return parsed[field] || '无内容';
+        } catch {}
+        return pretty(value);
+      };
       const apiFetch = (url, options = {}) => {
         const uid = window.localStorage.getItem('uid');
         const headers = new Headers(options.headers || {});
@@ -92,8 +99,8 @@
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.success) { message.textContent = payload.message || '无法解密会话内容。'; return; }
         document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}`;
-        document.getElementById('request').textContent = pretty(payload.data.request);
-        document.getElementById('response').textContent = pretty(payload.data.response);
+        document.getElementById('request').textContent = auditText(payload.data.request, 'user_input');
+        document.getElementById('response').textContent = auditText(payload.data.response, 'assistant_text');
         detail.showModal();
       });
 

@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -114,4 +119,64 @@ func TestEncryptDecryptRejectsModifiedAAD(t *testing.T) {
 	require.Equal(t, "confidential conversation", plaintext)
 	_, err = decrypt("v1", nonce, ciphertext, "different-request")
 	require.Error(t, err)
+}
+
+func TestConfigFromEnvBoundsTemporaryParseLimit(t *testing.T) {
+	t.Setenv("CONVERSATION_AUDIT_MAX_PARSE_BYTES", "512")
+	assert.Equal(t, minimumMaxParseBytes, configFromEnv().MaxParseBytes)
+
+	t.Setenv("CONVERSATION_AUDIT_MAX_PARSE_BYTES", "33554432")
+	assert.Equal(t, maximumMaxParseBytes, configFromEnv().MaxParseBytes)
+
+	t.Setenv("CONVERSATION_AUDIT_MAX_PARSE_BYTES", "4194304")
+	assert.Equal(t, defaultMaxParseBytes, configFromEnv().MaxParseBytes)
+}
+
+func TestPersistKeepsResponseWhenRequestHasNoNewUserText(t *testing.T) {
+	db := openConversationAuditMigrationTestDB(t)
+	require.NoError(t, migrateConversationAuditTables(db))
+
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	runtimeState.Lock()
+	previousConfig := runtimeState.config
+	previousKeys := runtimeState.keys
+	runtimeState.config = runtimeConfig{
+		Enabled:          true,
+		RetentionDays:    30,
+		MaxContentBytes:  defaultMaxContentBytes,
+		MaxParseBytes:    defaultMaxParseBytes,
+		ActiveKeyVersion: "v1",
+	}
+	runtimeState.keys = map[string][]byte{"v1": []byte("12345678901234567890123456789012")}
+	runtimeState.Unlock()
+	t.Cleanup(func() {
+		runtimeState.Lock()
+		runtimeState.config = previousConfig
+		runtimeState.keys = previousKeys
+		runtimeState.Unlock()
+	})
+
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set(common.RequestIdKey, "request-with-tool-continuation")
+	context.Set("id", 1)
+	context.Set("username", "audit-user")
+	context.Set("token_id", 2)
+	context.Set("original_model", "gpt-test")
+	context.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+
+	responseBody := `{"schema_version":2,"capture_mode":"assistant_text","assistant_text":"visible response"}`
+	persist(context, "", responseBody, "", "no_new_user_text", false, false, "completed", 200)
+
+	var audit ConversationAudit
+	require.NoError(t, db.Where("request_id = ?", "request-with-tool-continuation").First(&audit).Error)
+	assert.Empty(t, audit.RequestCiphertext)
+	assert.NotEmpty(t, audit.ResponseCiphertext)
+	assert.Equal(t, "no_new_user_text", audit.CaptureError)
+	decrypted, err := decryptAuditContent(&audit, "response")
+	require.NoError(t, err)
+	assert.Equal(t, responseBody, decrypted)
 }

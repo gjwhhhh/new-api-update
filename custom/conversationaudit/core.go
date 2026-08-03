@@ -24,8 +24,11 @@ const (
 	settingsID              = 1
 	defaultRetentionDays    = 30
 	defaultMaxContentBytes  = 256 * 1024
+	defaultMaxParseBytes    = 4 * 1024 * 1024
 	minimumMaxContentBytes  = 1024
 	maximumMaxContentBytes  = 1024 * 1024
+	minimumMaxParseBytes    = 1024 * 1024
+	maximumMaxParseBytes    = 16 * 1024 * 1024
 	settingsRefreshInterval = time.Minute
 	requestIDUniqueIndex    = "uq_custom_conversation_audits_request_id"
 	legacyRequestIDIndex    = "idx_custom_conversation_audits_request_id"
@@ -83,6 +86,7 @@ type runtimeConfig struct {
 	Enabled          bool
 	RetentionDays    int
 	MaxContentBytes  int
+	MaxParseBytes    int
 	ActiveKeyVersion string
 }
 
@@ -157,6 +161,7 @@ func configFromEnv() runtimeConfig {
 		Enabled:          parseBoolEnv("CONVERSATION_AUDIT_ENABLED", false),
 		RetentionDays:    boundedIntEnv("CONVERSATION_AUDIT_RETENTION_DAYS", defaultRetentionDays, 1, 3650),
 		MaxContentBytes:  boundedIntEnv("CONVERSATION_AUDIT_MAX_BYTES", defaultMaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
+		MaxParseBytes:    boundedIntEnv("CONVERSATION_AUDIT_MAX_PARSE_BYTES", defaultMaxParseBytes, minimumMaxParseBytes, maximumMaxParseBytes),
 		ActiveKeyVersion: defaultKeyVersion(os.Getenv("CONVERSATION_AUDIT_ACTIVE_KEY_VERSION")),
 	}
 }
@@ -185,10 +190,12 @@ func refreshSettings() {
 	if err := model.DB.First(&settings, settingsID).Error; err != nil {
 		return
 	}
+	envConfig := configFromEnv()
 	cfg := runtimeConfig{
 		Enabled:          settings.Enabled,
 		RetentionDays:    clamp(settings.RetentionDays, 1, 3650),
 		MaxContentBytes:  clamp(settings.MaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
+		MaxParseBytes:    envConfig.MaxParseBytes,
 		ActiveKeyVersion: defaultKeyVersion(settings.ActiveKeyVersion),
 	}
 	if err := validateConfig(cfg); err != nil {
@@ -314,9 +321,9 @@ func decrypt(version, nonceText, ciphertextText, aad string) (string, error) {
 	return string(plaintext), nil
 }
 
-func persist(c *gin.Context, requestBody, responseBody, errorCode string, requestTruncated, responseTruncated bool, status string, statusCode int) {
+func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated bool, status string, statusCode int) {
 	cfg := currentConfig()
-	if !cfg.Enabled || requestBody == "" {
+	if !cfg.Enabled {
 		return
 	}
 	requestID := c.GetString(common.RequestIdKey)
@@ -339,11 +346,14 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode string, reques
 		ResponseLength:    len(responseBody),
 		RequestTruncated:  requestTruncated,
 		ResponseTruncated: responseTruncated,
+		CaptureError:      captureError,
 		CreatedAt:         now,
 		ExpiresAt:         now + int64(cfg.RetentionDays)*int64((24*time.Hour).Seconds()),
 	}
 	var err error
-	audit.RequestNonce, audit.RequestCiphertext, err = encrypt(cfg.ActiveKeyVersion, requestBody, auditAAD(audit, "request"))
+	if requestBody != "" {
+		audit.RequestNonce, audit.RequestCiphertext, err = encrypt(cfg.ActiveKeyVersion, requestBody, auditAAD(audit, "request"))
+	}
 	if err == nil && responseBody != "" {
 		audit.ResponseNonce, audit.ResponseCiphertext, err = encrypt(cfg.ActiveKeyVersion, responseBody, auditAAD(audit, "response"))
 	}

@@ -13,3 +13,7 @@
 上游同步时保留整个 `custom/conversationaudit` 目录，并复核两个路由文件中的注册调用。默认与经典前端只各保留一个侧栏菜单入口；不要将功能写入消费日志、控制器或中继实现。
 
 密钥轮换先将新密钥以 `CONVERSATION_AUDIT_KEY_V2` 等形式部署到全部节点，再由 Root 调用 `POST /api/custom/conversation-audit/rotate-key` 切换活跃版本。旧密钥须保留到其对应记录过期。
+
+## 采集语义修复
+
+大上下文请求和流式回复的采集修复方案见 [CAPTURE_REPAIR_PLAN.md](./CAPTURE_REPAIR_PLAN.md)。方案要求请求侧只持久化最后一条真人 `user` 文本，响应侧只持久化合并后的助手可见文本；原始请求、系统提示词、历史上下文和 SSE 事件均不得持久化。

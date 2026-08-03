@@ -224,9 +224,6 @@ func loadSettings() (AuditSettings, error) {
 }
 
 func decryptAuditContent(audit *ConversationAudit, kind string) (string, error) {
-	if audit.CaptureError != "" {
-		return "", nil
-	}
 	if kind == "request" {
 		if audit.RequestCiphertext == "" {
 			return "", nil

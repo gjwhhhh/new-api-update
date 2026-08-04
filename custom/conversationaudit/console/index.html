@@ -68,6 +68,12 @@
         } catch {}
         return pretty(value);
       };
+      const mergedResponseText = (response, segments) => {
+        const texts = [auditText(response, 'assistant_text')];
+        if (Array.isArray(segments)) texts.push(...segments.map(segment => auditText(segment, 'assistant_text')));
+        const visible = texts.filter(text => text && text !== '无内容');
+        return visible.length ? visible.join('\n\n') : '无内容';
+      };
       const apiFetch = (url, options = {}) => {
         const uid = window.localStorage.getItem('uid');
         const headers = new Headers(options.headers || {});
@@ -98,9 +104,11 @@
         const response = await apiFetch('/api/custom/conversation-audits/' + encodeURIComponent(row.dataset.requestId));
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.success) { message.textContent = payload.message || '无法解密会话内容。'; return; }
-        document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}`;
+        const responsePartCount = Number(payload.data.response_part_count || 0);
+        const mergeNote = responsePartCount > 1 ? ` · 已合并 ${responsePartCount} 段回复` : '';
+        document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}${mergeNote}`;
         document.getElementById('request').textContent = auditText(payload.data.request, 'user_input');
-        document.getElementById('response').textContent = auditText(payload.data.response, 'assistant_text');
+        document.getElementById('response').textContent = mergedResponseText(payload.data.response, payload.data.response_segments);
         detail.showModal();
       });
 

@@ -50,6 +50,8 @@ func TestMigrateConversationAuditTablesCreatesPortableRequestIDIndex(t *testing.
 	require.NoError(t, migrateConversationAuditTables(db))
 	require.True(t, db.Migrator().HasIndex(&ConversationAudit{}, requestIDUniqueIndex))
 	require.False(t, db.Migrator().HasIndex(&ConversationAudit{}, legacyRequestIDIndex))
+	require.True(t, db.Migrator().HasTable(&ConversationAuditResponseLink{}))
+	require.True(t, db.Migrator().HasTable(&ConversationAuditResponseSegment{}))
 }
 
 func TestMigrateConversationAuditTablesReplacesLegacyRequestIDIndex(t *testing.T) {

@@ -27,9 +27,26 @@ const (
 )
 
 type requestCapture struct {
-	body         string
-	truncated    bool
-	captureError string
+	body                         string
+	truncated                    bool
+	captureError                 string
+	continuationParentResponseID string
+}
+
+func (capture requestCapture) hasNewUserInput() bool {
+	return capture.body != ""
+}
+
+func (capture requestCapture) isResponsesContinuation() bool {
+	return capture.continuationParentResponseID != ""
+}
+
+type responseCapture struct {
+	body               string
+	truncated          bool
+	errorCode          string
+	captureError       string
+	providerResponseID string
 }
 
 type capturePayload struct {
@@ -52,7 +69,7 @@ func CaptureMiddleware() gin.HandlerFunc {
 
 		cfg := currentConfig()
 		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes)
-		if request.body == "" {
+		if !request.hasNewUserInput() && !request.isResponsesContinuation() {
 			c.Next()
 			return
 		}
@@ -63,22 +80,39 @@ func CaptureMiddleware() gin.HandlerFunc {
 
 		c.Next()
 
-		responseBody, responseTruncated, errorCode, responseCaptureError := collector.Finalize()
+		response := collector.FinalizeCapture()
 		status := "completed"
 		if c.Writer.Status() >= http.StatusBadRequest {
 			status = "failed"
 		}
-		if request.truncated || responseTruncated {
+		if request.truncated || response.truncated {
 			status = "truncated"
 		}
-		persist(
+		captureError := joinCaptureErrors(request.captureError, response.captureError)
+		if request.hasNewUserInput() {
+			audit := persist(
+				c,
+				request.body,
+				response.body,
+				response.errorCode,
+				captureError,
+				request.truncated,
+				response.truncated,
+				status,
+				c.Writer.Status(),
+			)
+			registerResponseLink(audit, protocol, response.providerResponseID)
+			return
+		}
+		appendResponseContinuation(
 			c,
-			request.body,
-			responseBody,
-			errorCode,
-			joinCaptureErrors(request.captureError, responseCaptureError),
-			request.truncated,
-			responseTruncated,
+			protocol,
+			request.continuationParentResponseID,
+			response.body,
+			response.errorCode,
+			captureError,
+			response.providerResponseID,
+			response.truncated,
 			status,
 			c.Writer.Status(),
 		)
@@ -134,6 +168,11 @@ func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes
 
 	userText, captureError := extractLatestUserText(protocol, raw)
 	if captureError != "" {
+		if protocol == protocolOpenAIResponses && captureError == "no_new_user_text" {
+			if parentResponseID := extractPreviousResponseID(raw); parentResponseID != "" {
+				return requestCapture{continuationParentResponseID: parentResponseID}
+			}
+		}
 		return requestCapture{captureError: captureError}
 	}
 	body, truncated, err := marshalCapturePayload(capturePayload{
@@ -145,6 +184,16 @@ func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes
 		return requestCapture{captureError: "request_encode_failed"}
 	}
 	return requestCapture{body: body, truncated: truncated}
+}
+
+func extractPreviousResponseID(raw []byte) string {
+	var envelope struct {
+		PreviousResponseID string `json:"previous_response_id"`
+	}
+	if common.Unmarshal(raw, &envelope) != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.PreviousResponseID)
 }
 
 func readLimited(reader io.Reader, maxBytes int) ([]byte, bool, error) {
@@ -366,17 +415,18 @@ type responsePartKey struct {
 }
 
 type responseCollector struct {
-	protocol      conversationProtocol
-	maxContent    int
-	raw           *limitedBuffer
-	decoder       *sseDecoder
-	streaming     bool
-	parts         map[responsePartKey]*strings.Builder
-	textBytes     int
-	textTruncated bool
-	errorCode     string
-	captureError  string
-	finalized     bool
+	protocol           conversationProtocol
+	maxContent         int
+	raw                *limitedBuffer
+	decoder            *sseDecoder
+	streaming          bool
+	parts              map[responsePartKey]*strings.Builder
+	textBytes          int
+	textTruncated      bool
+	errorCode          string
+	captureError       string
+	providerResponseID string
+	finalized          bool
 }
 
 func newResponseCollector(protocol conversationProtocol, maxContentBytes, maxParseBytes int) *responseCollector {
@@ -409,8 +459,18 @@ func (c *responseCollector) Write(data []byte, streaming bool) {
 }
 
 func (c *responseCollector) Finalize() (string, bool, string, string) {
+	result := c.FinalizeCapture()
+	return result.body, result.truncated, result.errorCode, result.captureError
+}
+
+func (c *responseCollector) FinalizeCapture() responseCapture {
 	if c.finalized {
-		return "", c.textTruncated, c.errorCode, c.captureError
+		return responseCapture{
+			truncated:          c.textTruncated,
+			errorCode:          c.errorCode,
+			captureError:       c.captureError,
+			providerResponseID: c.providerResponseID,
+		}
 	}
 	c.finalized = true
 	if c.streaming {
@@ -426,7 +486,12 @@ func (c *responseCollector) Finalize() (string, bool, string, string) {
 
 	text := c.joinParts()
 	if text == "" {
-		return "", c.textTruncated, c.errorCode, c.captureError
+		return responseCapture{
+			truncated:          c.textTruncated,
+			errorCode:          c.errorCode,
+			captureError:       c.captureError,
+			providerResponseID: c.providerResponseID,
+		}
 	}
 	body, truncated, err := marshalCapturePayload(capturePayload{
 		SchemaVersion: 2,
@@ -434,9 +499,20 @@ func (c *responseCollector) Finalize() (string, bool, string, string) {
 		AssistantText: text,
 	}, c.maxContent)
 	if err != nil {
-		return "", c.textTruncated, c.errorCode, joinCaptureErrors(c.captureError, "response_encode_failed")
+		return responseCapture{
+			truncated:          c.textTruncated,
+			errorCode:          c.errorCode,
+			captureError:       joinCaptureErrors(c.captureError, "response_encode_failed"),
+			providerResponseID: c.providerResponseID,
+		}
 	}
-	return body, c.textTruncated || truncated, c.errorCode, c.captureError
+	return responseCapture{
+		body:               body,
+		truncated:          c.textTruncated || truncated,
+		errorCode:          c.errorCode,
+		captureError:       c.captureError,
+		providerResponseID: c.providerResponseID,
+	}
 }
 
 func (c *responseCollector) appendText(key responsePartKey, text string) {
@@ -516,9 +592,17 @@ func (c *responseCollector) consumeSSEPayload(payload []byte) {
 			Delta        string `json:"delta"`
 			OutputIndex  int    `json:"output_index"`
 			ContentIndex int    `json:"content_index"`
+			Response     struct {
+				ID string `json:"id"`
+			} `json:"response"`
 		}
-		if common.Unmarshal(payload, &event) == nil && event.Type == "response.output_text.delta" {
-			c.appendText(responsePartKey{output: event.OutputIndex, content: event.ContentIndex}, event.Delta)
+		if common.Unmarshal(payload, &event) == nil {
+			if event.Response.ID != "" {
+				c.providerResponseID = event.Response.ID
+			}
+			if event.Type == "response.output_text.delta" {
+				c.appendText(responsePartKey{output: event.OutputIndex, content: event.ContentIndex}, event.Delta)
+			}
 		}
 	case protocolClaude:
 		var event struct {
@@ -565,6 +649,7 @@ func (c *responseCollector) consumeNonStreaming(raw []byte) {
 		}
 	case protocolOpenAIResponses:
 		var response struct {
+			ID     string `json:"id"`
 			Output []struct {
 				Type    string `json:"type"`
 				Role    string `json:"role"`
@@ -578,6 +663,7 @@ func (c *responseCollector) consumeNonStreaming(raw []byte) {
 			c.captureError = joinCaptureErrors(c.captureError, "response_parse_failed")
 			return
 		}
+		c.providerResponseID = response.ID
 		for outputIndex, output := range response.Output {
 			if output.Type != "message" || (output.Role != "" && output.Role != "assistant") {
 				continue

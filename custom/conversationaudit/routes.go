@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func Register(apiRouter *gin.RouterGroup) {
@@ -98,26 +99,49 @@ func getAuditDetail(c *gin.Context) {
 		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
 		return
 	}
+	responseSegments, err := decryptAuditResponseSegments(&audit)
+	if err != nil {
+		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
+		return
+	}
+	responsePartCount := len(responseSegments)
+	if responseContent != "" {
+		responsePartCount++
+	}
 	recordAdminAudit(c, "conversation_audit.view", audit.RequestID)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"audit":    audit,
-			"request":  requestContent,
-			"response": responseContent,
+			"audit":               audit,
+			"request":             requestContent,
+			"response":            responseContent,
+			"response_segments":   responseSegments,
+			"response_part_count": responsePartCount,
 		},
 	})
 }
 
 func deleteAudit(c *gin.Context) {
 	requestID := c.Param("request_id")
-	result := model.DB.Where("request_id = ?", requestID).Delete(&ConversationAudit{})
-	if result.Error != nil {
+	var audit ConversationAudit
+	if err := model.DB.Where("request_id = ?", requestID).First(&audit).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			respondError(c, http.StatusNotFound, "conversation audit was not found")
+			return
+		}
 		respondError(c, http.StatusInternalServerError, "failed to delete conversation audit")
 		return
 	}
-	if result.RowsAffected == 0 {
-		respondError(c, http.StatusNotFound, "conversation audit was not found")
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("audit_id = ?", audit.ID).Delete(&ConversationAuditResponseSegment{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("audit_id = ?", audit.ID).Delete(&ConversationAuditResponseLink{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&audit).Error
+	}); err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to delete conversation audit")
 		return
 	}
 	recordAdminAudit(c, "conversation_audit.delete", requestID)
@@ -234,6 +258,23 @@ func decryptAuditContent(audit *ConversationAudit, kind string) (string, error) 
 		return "", nil
 	}
 	return decrypt(audit.KeyVersion, audit.ResponseNonce, audit.ResponseCiphertext, auditAAD(audit, kind))
+}
+
+func decryptAuditResponseSegments(audit *ConversationAudit) ([]string, error) {
+	var segments []ConversationAuditResponseSegment
+	if err := model.DB.Where("audit_id = ?", audit.ID).Order("created_at ASC, id ASC").Find(&segments).Error; err != nil {
+		return nil, err
+	}
+	plaintexts := make([]string, 0, len(segments))
+	for index := range segments {
+		segment := &segments[index]
+		plaintext, err := decrypt(segment.KeyVersion, segment.ResponseNonce, segment.ResponseCiphertext, auditResponseSegmentAAD(segment))
+		if err != nil {
+			return nil, err
+		}
+		plaintexts = append(plaintexts, plaintext)
+	}
+	return plaintexts, nil
 }
 
 func recordAdminAudit(c *gin.Context, action, requestID string) {

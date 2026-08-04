@@ -67,6 +67,47 @@ func (ConversationAudit) TableName() string {
 	return "custom_conversation_audits"
 }
 
+// ConversationAuditResponseLink maps an opaque upstream Responses ID to one
+// audited user turn. The ID is HMACed before storage so the audit database never
+// contains an upstream response identifier in plaintext.
+type ConversationAuditResponseLink struct {
+	ID             uint   `json:"id" gorm:"primaryKey"`
+	AuditID        uint   `json:"audit_id" gorm:"index;not null"`
+	Protocol       string `json:"protocol" gorm:"size:32;uniqueIndex:uq_custom_conversation_audit_response_links_provider"`
+	KeyVersion     string `json:"key_version" gorm:"size:32;uniqueIndex:uq_custom_conversation_audit_response_links_provider"`
+	ResponseIDHash string `json:"-" gorm:"size:64;uniqueIndex:uq_custom_conversation_audit_response_links_provider"`
+	UserID         int    `json:"user_id" gorm:"index;not null"`
+	ExpiresAt      int64  `json:"expires_at" gorm:"index"`
+
+	Audit ConversationAudit `json:"-" gorm:"foreignKey:AuditID;constraint:OnDelete:CASCADE"`
+}
+
+func (ConversationAuditResponseLink) TableName() string {
+	return "custom_conversation_audit_response_links"
+}
+
+// ConversationAuditResponseSegment is a later visible response fragment from
+// a tool continuation. It deliberately contains no request, tool, or raw JSON
+// content and is decrypted only with its parent audit detail.
+type ConversationAuditResponseSegment struct {
+	ID                 uint   `json:"id" gorm:"primaryKey"`
+	AuditID            uint   `json:"audit_id" gorm:"index;not null"`
+	RequestID          string `json:"request_id" gorm:"uniqueIndex:uq_custom_conversation_audit_response_segments_request_id;default:''"`
+	KeyVersion         string `json:"key_version" gorm:"default:''"`
+	ResponseNonce      string `json:"-"`
+	ResponseCiphertext string `json:"-"`
+	ResponseLength     int    `json:"response_length"`
+	ResponseTruncated  bool   `json:"response_truncated"`
+	CreatedAt          int64  `json:"created_at" gorm:"index"`
+	ExpiresAt          int64  `json:"expires_at" gorm:"index"`
+
+	Audit ConversationAudit `json:"-" gorm:"foreignKey:AuditID;constraint:OnDelete:CASCADE"`
+}
+
+func (ConversationAuditResponseSegment) TableName() string {
+	return "custom_conversation_audit_response_segments"
+}
+
 // AuditSettings has operational settings only. Encryption keys stay in the
 // deployment secret store and are never persisted in the database.
 type AuditSettings struct {
@@ -127,7 +168,12 @@ func initialize() {
 }
 
 func migrateConversationAuditTables(db *gorm.DB) error {
-	if err := db.AutoMigrate(&ConversationAudit{}, &AuditSettings{}); err != nil {
+	if err := db.AutoMigrate(
+		&ConversationAudit{},
+		&AuditSettings{},
+		&ConversationAuditResponseLink{},
+		&ConversationAuditResponseSegment{},
+	); err != nil {
 		return err
 	}
 
@@ -321,14 +367,14 @@ func decrypt(version, nonceText, ciphertextText, aad string) (string, error) {
 	return string(plaintext), nil
 }
 
-func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated bool, status string, statusCode int) {
+func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated bool, status string, statusCode int) *ConversationAudit {
 	cfg := currentConfig()
 	if !cfg.Enabled || requestBody == "" {
-		return
+		return nil
 	}
 	requestID := c.GetString(common.RequestIdKey)
 	if requestID == "" {
-		return
+		return nil
 	}
 	now := time.Now().Unix()
 	audit := &ConversationAudit{
@@ -367,18 +413,31 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 	}
 	if dbErr := model.DB.Create(audit).Error; dbErr != nil {
 		common.SysError(fmt.Sprintf("conversation audit write failed request_id=%s: %v", requestID, dbErr))
+		return nil
 	}
+	return audit
 }
 
 func auditAAD(audit *ConversationAudit, kind string) string {
 	return fmt.Sprintf("conversation-audit|%s|%d|%s", audit.RequestID, audit.UserID, kind)
 }
 
+func auditResponseSegmentAAD(segment *ConversationAuditResponseSegment) string {
+	return fmt.Sprintf("conversation-audit-segment|%d|%s", segment.AuditID, segment.RequestID)
+}
+
 func cleanupExpired() {
 	if model.DB == nil {
 		return
 	}
-	if err := model.DB.Where("expires_at > 0 AND expires_at < ?", time.Now().Unix()).Delete(&ConversationAudit{}).Error; err != nil {
+	now := time.Now().Unix()
+	if err := model.DB.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAuditResponseSegment{}).Error; err != nil {
+		common.SysError("conversation audit response segment cleanup failed: " + err.Error())
+	}
+	if err := model.DB.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAuditResponseLink{}).Error; err != nil {
+		common.SysError("conversation audit response link cleanup failed: " + err.Error())
+	}
+	if err := model.DB.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAudit{}).Error; err != nil {
 		common.SysError("conversation audit cleanup failed: " + err.Error())
 	}
 }

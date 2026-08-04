@@ -9,7 +9,7 @@
 - 响应侧只加密保存模型返回的可见 assistant 文本；流式增量合并为连续正文，不保存逐字 SSE 事件。
 - 审计扩展不额外持久化原始 JSON；它只复用 NewAPI 现有的请求级 `BodyStorage`，不将原始内容写入数据库、应用日志或 Docker 日志。
 - OpenAI Chat、OpenAI Responses、Claude Messages 和 Gemini GenerateContent 使用统一的审计输出结构。
-- 采集失败不影响模型请求，但必须保留不含正文的审计元数据和安全错误码。
+- 采集失败不影响模型请求；只有成功提取到本次新增 user 文本的请求才进入审计表。
 
 ## 2. 现网证据与根因
 
@@ -47,11 +47,11 @@
 5. 对提取结果做 UTF-8 安全截断。
 6. 使用 AES-256-GCM 加密标准化结果并写入独立审计表。
 
-原始请求超过临时解析上限时，不保存任何原始片段或截断 JSON；只创建元数据记录，并设置 `capture_error=request_parse_limit_exceeded`。
+原始请求超过临时解析上限时，不保存任何原始片段或截断 JSON，也不创建空审计记录。
 
 ### 3.2 “最后一条 user 消息”的统一定义
 
-只检查当前请求末尾代表本次新增输入的消息或 input item，不向前回溯历史 user。末尾项目包含真人 `role=user` 文本时，只拼接该消息中的文本块；末尾项目只有 `tool_result`、`function_call_output` 或其他工具结果时，本次请求正文为空，并记录 `capture_error=no_new_user_text`。这样可避免工具循环重复保存之前的用户问题。
+只检查当前请求末尾代表本次新增输入的消息或 input item，不向前回溯历史 user。末尾项目包含真人 `role=user` 文本时，只拼接该消息中的文本块；末尾项目只有 `tool_result`、`function_call_output` 或其他工具结果时，直接跳过审计写入。这样可避免工具循环重复保存之前的用户问题，也不会产生 `0 / 0` 或 `0 / N` 的无上下文记录。
 
 | 协议 | 查找位置 | 保留内容 | 明确忽略 |
 | --- | --- | --- | --- |
@@ -84,7 +84,7 @@
 
 ### 4.1 流式响应
 
-将当前“缓存原始响应后保存 `stream_events`”改为增量文本采集器。`captureWriter` 在处理请求正文之前就挂载，仍原样把字节写给客户端，同时将跨 `Write` 边界的 SSE frame 放入小型待解析缓冲区，按协议提取文本增量并追加到 assistant 文本缓冲区。即使请求正文为空、解析失败或超过临时解析上限，仍继续采集可用的模型回复和审计元数据。
+将当前“缓存原始响应后保存 `stream_events`”改为增量文本采集器。仅在已提取到本次新增 user 文本后挂载 `captureWriter`；它仍原样把字节写给客户端，同时将跨 `Write` 边界的 SSE frame 放入小型待解析缓冲区，按协议提取文本增量并追加到 assistant 文本缓冲区。没有新增 user 文本、解析失败或超过临时解析上限的请求正常转发，但不写入审计表。
 
 | 协议 | 需要合并的文本增量 |
 | --- | --- |
@@ -125,10 +125,10 @@
 - `request_truncated`：最后一条用户文本在提取后超过存储上限。
 - `response_truncated`：合并后的 assistant 文本超过存储上限。
 - `capture_error`：使用固定错误码，不写入请求、回复或解析异常原文。
-- `no_new_user_text`：表示工具续跑或其他请求没有本次新增的人类文本，不得回溯并重复保存历史 user。
+- `no_new_user_text`：表示工具续跑或其他请求没有本次新增的人类文本，直接跳过审计写入，不得回溯并重复保存历史 user。
 - HTTP 失败、客户端断开或上游失败时，只要已识别出用户输入，就保存该输入、HTTP 状态和安全错误码；没有回复正文时响应密文保持为空。
 
-需要调整持久化入口，使请求正文为空或解析失败时仍能创建记录，并在存在模型可见回复时保存响应密文；不能再以 `requestBody == ""` 直接放弃整条审计记录。
+持久化入口必须拒绝空请求正文，作为中间件筛选之外的第二道防线；这样任何调用路径都不能创建没有 user 输入的审计记录。
 
 ## 6. 实施范围
 
@@ -141,7 +141,7 @@
    - 统一生成版本 2 请求/响应结构。
 2. `core.go`
    - 增加只由环境变量提供的临时解析上限及校验，数据库设置结构保持不变。
-   - 调整长度、截断和仅元数据持久化语义。
+   - 调整长度、截断和空请求正文拒绝持久化语义。
 3. `capture_test.go`
    - 增加跨协议、大上下文、工具循环、UTF-8 截断、SSE 分片合并回归测试。
 4. `console/index.html`
@@ -160,8 +160,8 @@
 
 - OpenAI Chat 请求包含 system、历史 user/assistant 和最后 user 时，只保存最后 user。
 - OpenAI Responses 原始 JSON 大于 256 KiB、小于 4 MiB 时，仍正确保存最后 user。
-- Claude 最后一个 user 只有 `tool_result` 时，不回溯历史 user，记录 `no_new_user_text`。
-- OpenAI Responses 末尾只有 `function_call_output` 时，不重复保存之前的用户输入。
+- Claude 最后一个 user 只有 `tool_result` 时，不回溯历史 user，也不创建审计记录。
+- OpenAI Responses 末尾只有 `function_call_output` 时，不重复保存之前的用户输入，也不创建审计记录。
 - Gemini 混合 text、inline data 和 function response 时，只保存最后 user 的 text。
 - 图片、文件、音频、Base64、工具定义、工具结果和缓存控制字段均不出现在解密结果。
 - 中文文本超过 256 KiB 时在合法 UTF-8 边界截断并设置 `request_truncated=true`。
@@ -192,7 +192,7 @@
 - `/v1/responses` 因 `request payload exceeded audit limit before semantic extraction` 产生的新记录降为 0。
 - 正常流式回复不再因 SSE 包装体达到 256 KiB 而标记 `response_truncated`。
 - 随机抽查 OpenAI Chat、Responses、Claude 和 Gemini，各记录只包含最后 user 文本与连续 assistant 回复。
-- 工具续跑请求不产生重复的历史 user 密文，存在可见 assistant 回复时仍可正常保存响应。
+- 工具续跑请求不产生重复的历史 user 密文，也不产生 `0 / 0` 或 `0 / N` 的无上下文审计记录。
 - 模型请求成功率、首 token 时间和转发响应字节与发布前无显著回归。
 
 ## 8. 发布与回滚

@@ -51,11 +51,16 @@ func CaptureMiddleware() gin.HandlerFunc {
 		}
 
 		cfg := currentConfig()
+		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes)
+		if request.body == "" {
+			c.Next()
+			return
+		}
+
 		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes)
 		writer := &captureWriter{ResponseWriter: c.Writer, collector: collector}
 		c.Writer = writer
 
-		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes)
 		c.Next()
 
 		responseBody, responseTruncated, errorCode, responseCaptureError := collector.Finalize()

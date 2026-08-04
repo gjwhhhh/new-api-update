@@ -323,7 +323,7 @@ func decrypt(version, nonceText, ciphertextText, aad string) (string, error) {
 
 func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated bool, status string, statusCode int) {
 	cfg := currentConfig()
-	if !cfg.Enabled {
+	if !cfg.Enabled || requestBody == "" {
 		return
 	}
 	requestID := c.GetString(common.RequestIdKey)

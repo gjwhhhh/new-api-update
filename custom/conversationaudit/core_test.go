@@ -132,7 +132,7 @@ func TestConfigFromEnvBoundsTemporaryParseLimit(t *testing.T) {
 	assert.Equal(t, defaultMaxParseBytes, configFromEnv().MaxParseBytes)
 }
 
-func TestPersistKeepsResponseWhenRequestHasNoNewUserText(t *testing.T) {
+func TestPersistSkipsRecordWhenRequestHasNoNewUserText(t *testing.T) {
 	db := openConversationAuditMigrationTestDB(t)
 	require.NoError(t, migrateConversationAuditTables(db))
 
@@ -168,15 +168,9 @@ func TestPersistKeepsResponseWhenRequestHasNoNewUserText(t *testing.T) {
 	context.Set("original_model", "gpt-test")
 	context.Request = httptest.NewRequest("POST", "/v1/responses", nil)
 
-	responseBody := `{"schema_version":2,"capture_mode":"assistant_text","assistant_text":"visible response"}`
-	persist(context, "", responseBody, "", "no_new_user_text", false, false, "completed", 200)
+	persist(context, "", `{"schema_version":2,"capture_mode":"assistant_text","assistant_text":"visible response"}`, "", "no_new_user_text", false, false, "completed", 200)
 
-	var audit ConversationAudit
-	require.NoError(t, db.Where("request_id = ?", "request-with-tool-continuation").First(&audit).Error)
-	assert.Empty(t, audit.RequestCiphertext)
-	assert.NotEmpty(t, audit.ResponseCiphertext)
-	assert.Equal(t, "no_new_user_text", audit.CaptureError)
-	decrypted, err := decryptAuditContent(&audit, "response")
-	require.NoError(t, err)
-	assert.Equal(t, responseBody, decrypted)
+	var count int64
+	require.NoError(t, db.Model(&ConversationAudit{}).Where("request_id = ?", "request-with-tool-continuation").Count(&count).Error)
+	assert.Zero(t, count)
 }

@@ -188,6 +188,79 @@ func TestCaptureMiddlewareAppendsResponsesToolContinuationToRootTurn(t *testing.
 	assert.Equal(t, "merged final answer", decodedPayloadField(t, segments[0], "assistant_text"))
 }
 
+func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		raw, err := io.ReadAll(c.Request.Body)
+		require.NoError(t, err)
+		storage, err := common.CreateBodyStorage(raw)
+		require.NoError(t, err)
+		c.Set(common.KeyBodyStorage, storage)
+		c.Request.Body = io.NopCloser(strings.NewReader(string(raw)))
+		c.Set(common.RequestIdKey, c.GetHeader("X-Test-Request-ID"))
+		c.Set("id", 1)
+		c.Set("username", "audit-user")
+		c.Set("token_id", 2)
+		c.Set("original_model", "gpt-test")
+		c.Next()
+		_ = storage.Close()
+	})
+	router.Use(CaptureMiddleware())
+	router.POST("/v1/responses", func(c *gin.Context) {
+		if c.GetHeader("X-Test-Phase") == "empty" {
+			c.Data(http.StatusOK, "application/json", []byte(`{"id":"resp_empty","output":[{"type":"function_call","id":"call_empty"}]}`))
+			return
+		}
+		if c.GetHeader("X-Test-Phase") == "orphan" {
+			c.Data(http.StatusOK, "application/json", []byte(`{"id":"resp_orphan","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible orphan response"}]}]}`))
+			return
+		}
+		c.Data(http.StatusOK, "application/json", []byte(`{"id":"resp_final","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible appended response"}]}]}`))
+	})
+
+	empty := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"previous_response_id":"resp_unknown_empty","input":[{"type":"function_call_output","call_id":"call_empty","output":"private empty tool output"}]}`))
+	empty.Header.Set("Content-Type", "application/json")
+	empty.Header.Set("X-Test-Request-ID", "empty-continuation")
+	empty.Header.Set("X-Test-Phase", "empty")
+	router.ServeHTTP(httptest.NewRecorder(), empty)
+
+	var emptyCount int64
+	require.NoError(t, db.Model(&ConversationAudit{}).Count(&emptyCount).Error)
+	assert.Zero(t, emptyCount)
+
+	orphan := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"previous_response_id":"resp_before_audit_release","input":[{"type":"function_call_output","call_id":"call_1","output":"private tool output"}]}`))
+	orphan.Header.Set("Content-Type", "application/json")
+	orphan.Header.Set("X-Test-Request-ID", "unlinked-continuation")
+	orphan.Header.Set("X-Test-Phase", "orphan")
+	router.ServeHTTP(httptest.NewRecorder(), orphan)
+
+	var audits []ConversationAudit
+	require.NoError(t, db.Order("id ASC").Find(&audits).Error)
+	require.Len(t, audits, 1)
+	assert.Zero(t, audits[0].RequestLength)
+	assert.Positive(t, audits[0].ResponseLength)
+	assert.Equal(t, "unlinked_response_continuation", audits[0].CaptureError)
+	assert.Equal(t, "visible orphan response", decodedPayloadField(t, mustDecryptAuditContent(t, &audits[0], "response"), "assistant_text"))
+
+	link, err := findResponseLink(protocolOpenAIResponses, 1, "resp_orphan")
+	require.NoError(t, err)
+	require.NotNil(t, link)
+	assert.Equal(t, audits[0].ID, link.AuditID)
+
+	continuation := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"previous_response_id":"resp_orphan","input":[{"type":"function_call_output","call_id":"call_2","output":"private next tool output"}]}`))
+	continuation.Header.Set("Content-Type", "application/json")
+	continuation.Header.Set("X-Test-Request-ID", "linked-continuation")
+	router.ServeHTTP(httptest.NewRecorder(), continuation)
+
+	require.NoError(t, db.Order("id ASC").Find(&audits).Error)
+	require.Len(t, audits, 1)
+	segments, err := decryptAuditResponseSegments(&audits[0])
+	require.NoError(t, err)
+	require.Len(t, segments, 1)
+	assert.Equal(t, "visible appended response", decodedPayloadField(t, segments[0], "assistant_text"))
+}
+
 func setupResponseTurnTest(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := openConversationAuditMigrationTestDB(t)

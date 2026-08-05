@@ -9,7 +9,7 @@
 - 响应侧只加密保存模型返回的可见 assistant 文本；流式增量合并为连续正文，不保存逐字 SSE 事件。
 - 审计扩展不额外持久化原始 JSON；它只复用 NewAPI 现有的请求级 `BodyStorage`，不将原始内容写入数据库、应用日志或 Docker 日志。
 - OpenAI Chat、OpenAI Responses、Claude Messages 和 Gemini GenerateContent 使用统一的审计输出结构。
-- 采集失败不影响模型请求；只有成功提取到本次新增 user 文本的请求才进入审计表。
+- 采集失败不影响模型请求；有本次新增 user 文本，或无法关联但提取到可见 assistant 回复的请求才进入审计表；语义请求与回复都为空的 `0 / 0` 请求不入表。
 
 ## 2. 现网证据与根因
 
@@ -47,11 +47,11 @@
 5. 对提取结果做 UTF-8 安全截断。
 6. 使用 AES-256-GCM 加密标准化结果并写入独立审计表。
 
-原始请求超过临时解析上限时，不保存任何原始片段或截断 JSON，也不创建空审计记录。
+原始请求超过临时解析上限时，不保存任何原始片段或截断 JSON。若仍能从响应侧提取可见 assistant 文本，则保存为 `0 / N` 的独立回复记录并带固定错误码；若两侧语义内容都为空，则不创建记录。
 
 ### 3.2 “最后一条 user 消息”的统一定义
 
-只检查当前请求末尾代表本次新增输入的消息或 input item，不向前回溯历史 user。末尾项目包含真人 `role=user` 文本时，只拼接该消息中的文本块。末尾项目只有 `tool_result`、`function_call_output` 或其他工具结果时，默认不新建审计记录；仅 OpenAI Responses 在携带可验证的 `previous_response_id` 时可作为同一用户回合的工具续接，将可见回复片段追加到原记录。这样可避免工具循环重复保存之前的用户问题，也不会产生独立的 `0 / 0` 或 `0 / N` 无上下文记录。
+只检查当前请求末尾代表本次新增输入的消息或 input item，不向前回溯历史 user。末尾项目包含真人 `role=user` 文本时，只拼接该消息中的文本块。末尾项目只有 `tool_result`、`function_call_output` 或其他工具结果时，不新建带请求正文的根记录；仅 OpenAI Responses 在携带可验证的 `previous_response_id` 时可作为同一用户回合的工具续接，将可见回复片段追加到原记录。若没有可信父关联、但响应侧有可见 assistant 文本，则保存为独立的 `0 / N` 回复记录；绝不根据用户名、时间或文本猜测其父对话。这样既避免重复保存历史 user，也不会丢失有内容的模型输出。
 
 | 协议 | 查找位置 | 保留内容 | 明确忽略 |
 | --- | --- | --- | --- |
@@ -84,7 +84,7 @@
 
 ### 4.1 流式响应
 
-将当前“缓存原始响应后保存 `stream_events`”改为增量文本采集器。已提取到本次新增 user 文本时挂载 `captureWriter`，并为新的审计回合收集可见回复；OpenAI Responses 的可验证工具续接也挂载采集器，但不会新建审计记录。它仍原样把字节写给客户端，同时将跨 `Write` 边界的 SSE frame 放入小型待解析缓冲区，按协议提取文本增量并追加到 assistant 文本缓冲区。没有新增 user 文本、又没有可验证续接关系，或超过临时解析上限的请求正常转发，但不写入审计表。
+将当前“缓存原始响应后保存 `stream_events`”改为增量文本采集器。所有受支持请求均挂载 `captureWriter`：已提取到本次新增 user 文本时创建新的审计回合；OpenAI Responses 的可验证工具续接将可见回复片段追加到原记录；没有新 user 或没有可信父关联时，只要提取到可见 assistant 文本，就写入独立的 `0 / N` 回复记录。它仍原样把字节写给客户端，同时将跨 `Write` 边界的 SSE frame 放入小型待解析缓冲区，按协议提取文本增量并追加到 assistant 文本缓冲区。语义请求与回复都为空的请求正常转发但不写入审计表。
 
 | 协议 | 需要合并的文本增量 |
 | --- | --- |
@@ -125,10 +125,27 @@
 - `request_truncated`：最后一条用户文本在提取后超过存储上限。
 - `response_truncated`：合并后的 assistant 文本超过存储上限。
 - `capture_error`：使用固定错误码，不写入请求、回复或解析异常原文。
-- `no_new_user_text`：表示工具续跑或其他请求没有本次新增的人类文本。只有 OpenAI Responses 可用 `previous_response_id` 精确关联到同用户原回合时，才追加可见回复片段；其余情况直接跳过，不得回溯并重复保存历史 user。
-- HTTP 失败、客户端断开或上游失败时，只要已识别出用户输入，就保存该输入、HTTP 状态和安全错误码；没有回复正文时响应密文保持为空。
+- `no_new_user_text`：表示工具续跑或其他请求没有本次新增的人类文本。OpenAI Responses 可用 `previous_response_id` 精确关联到同用户原回合时，追加可见回复片段；无法关联但有可见回复时，创建独立 `0 / N` 记录并加入 `unlinked_response_continuation` 固定错误码；没有可见回复才跳过。不得回溯并重复保存历史 user。
+- HTTP 失败、客户端断开或上游失败时，只要已识别出用户输入，或提取到可见回复，就保存现有内容、HTTP 状态和安全错误码；缺失的一侧密文保持为空。
 
-持久化入口必须拒绝空请求正文，作为中间件筛选之外的第二道防线；这样任何调用路径都不能创建没有 user 输入的审计记录。
+持久化入口必须拒绝请求与回复都为空，作为中间件筛选之外的第二道防线；因此任何调用路径都不能创建 `0 / 0` 记录。
+
+### 5.1 无正文采集诊断日志
+
+默认不输出每次采集决策。排查漏采集时，临时设置启动环境变量 `CONVERSATION_AUDIT_DIAGNOSTICS=true`，重启实例后可在应用/Docker 日志中看到固定格式的诊断行。该开关不写入数据库设置表；关闭或移除环境变量并重启实例后停止输出。
+
+每行只包含：事件、固定原因码、关联结果、Request ID、受支持接口路径、协议、HTTP 状态、原始请求字节数，以及已经抽取出的标准化请求/回复字节数。它明确不包含请求/回复正文、系统提示词、工具结果、Token、认证头、`previous_response_id` 或上游响应 ID。
+
+| 事件 | 关键原因/关联结果 | 说明 |
+| --- | --- | --- |
+| `skipped` | `request_parse_limit_exceeded` | 原始请求超过临时解析上限，未保存任何原始片段。 |
+| `skipped` | `request_parse_failed`、`request_body_unavailable`、`no_new_user_text` | 区分协议解析失败、请求体不可读和本次无新增用户文本。 |
+| `captured_root` | `created`、`provider_response_id_absent` | 已写入新的用户回合；后者表示不能为后续工具续接建立关联。 |
+| `captured_orphan_response` | `unlinked_response_continuation` | 未知父回合仍返回了可见文本，已保存为 `0 / N` 并尝试建立后续关联。 |
+| `continuation` | `appended`、`parent_link_not_found`、`link_lookup_failed` | 区分正常归并、父响应来自旧记录/未知记录和数据库查询失败。 |
+| `root_persist_failed` | `root_persist_failed` | 加密或审计库写入未形成根记录；详细数据库错误仍只出现在既有错误日志。 |
+
+诊断开关适合短期定位问题；高流量生产环境确认原因后应关闭，避免产生大量元数据日志。
 
 ## 6. 实施范围
 
@@ -160,8 +177,8 @@
 
 - OpenAI Chat 请求包含 system、历史 user/assistant 和最后 user 时，只保存最后 user。
 - OpenAI Responses 原始 JSON 大于 256 KiB、小于 4 MiB 时，仍正确保存最后 user。
-- Claude 最后一个 user 只有 `tool_result` 时，不回溯历史 user，也不创建审计记录。
-- OpenAI Responses 末尾只有 `function_call_output` 时，不重复保存之前的用户输入，也不创建审计记录。
+- Claude 最后一个 user 只有 `tool_result` 时，不回溯历史 user；若本次有可见回复，保存为 `0 / N`。
+- OpenAI Responses 末尾只有 `function_call_output` 时，不重复保存之前的用户输入；能关联时合并回复，不能关联但有可见回复时保存为 `0 / N`。
 - Gemini 混合 text、inline data 和 function response 时，只保存最后 user 的 text。
 - 图片、文件、音频、Base64、工具定义、工具结果和缓存控制字段均不出现在解密结果。
 - 中文文本超过 256 KiB 时在合法 UTF-8 边界截断并设置 `request_truncated=true`。
@@ -192,7 +209,7 @@
 - `/v1/responses` 因 `request payload exceeded audit limit before semantic extraction` 产生的新记录降为 0。
 - 正常流式回复不再因 SSE 包装体达到 256 KiB 而标记 `response_truncated`。
 - 随机抽查 OpenAI Chat、Responses、Claude 和 Gemini，各记录只包含最后 user 文本与连续 assistant 回复。
-- 工具续跑请求不产生重复的历史 user 密文，也不产生 `0 / 0` 或 `0 / N` 的无上下文审计记录。
+- 工具续跑请求不产生重复的历史 user 密文；`0 / 0` 不入表，而无法可靠关联但有可见回复的请求保留为 `0 / N`。
 - 模型请求成功率、首 token 时间和转发响应字节与发布前无显著回归。
 
 ## 8. 跨请求回复合并（OpenAI Responses）
@@ -208,10 +225,10 @@
 ### 8.2 关联算法
 
 1. 新的末尾 user 文本：创建根审计记录，保存其可见回复，并从 Responses 非流式 JSON 或 SSE `response.*` 事件提取响应 `id`。
-2. 将响应 `id` 做带域分隔的 HMAC-SHA-256，不保存原始上游 ID；连同协议、用户和密钥版本写入独立关联表，指向根审计记录。
+2. 将响应 `id` 做带域分隔的 HMAC-SHA-256，不保存原始上游 ID；连同协议、用户和密钥版本写入独立关联表，指向审计记录。
 3. 没有新 user 文本且请求包含 `previous_response_id`：用同一 HMAC 查找同协议、同用户的父关联。匹配成功才是工具续接。
 4. 续接响应仅保存新的可见 assistant 文本为加密回复片段，并建立本次响应 `id` 到同一根记录的关联，支持多轮工具链。
-5. 没有父关联、用户不一致、协议不符或没有回复 ID 时，直接跳过；绝不按用户名、Token、模型、时间窗口或文本相似度猜测关联。
+5. 没有父关联、用户不一致或协议不符时，若本次有可见回复则创建独立 `0 / N` 记录，并将本次响应 `id` 关联到该记录，供后续工具续接使用；没有可见回复才跳过。绝不按用户名、Token、模型、时间窗口或文本相似度猜测关联。
 
 每个回复片段沿用 AES-256-GCM、独立随机 nonce 和记录的密钥版本。根记录与片段的总回复大小共同受 `CONVERSATION_AUDIT_MAX_BYTES` 限制；达到上限后只标记截断，不能让工具循环绕过容量限制。回复详情按时间和片段 ID 合并展示，并标注合并片段数。
 
@@ -219,7 +236,7 @@
 
 新增两张仅属于扩展的表：
 
-- `custom_conversation_audit_response_links`：HMAC 后的上游响应 ID 到根审计记录的映射，用于精确续接；不保存原始 ID、工具参数或正文。
+- `custom_conversation_audit_response_links`：HMAC 后的上游响应 ID 到审计记录的映射，用于精确续接；不保存原始 ID、工具参数或正文。
 - `custom_conversation_audit_response_segments`：续接阶段的加密可见回复片段；包含根审计 ID、请求 ID、密文、nonce、长度、截断、时间和密钥版本。
 
 现有 `custom_conversation_audits` 不修改正文语义；其 `response_length` 汇总根回复与续接片段的长度，`response_truncated` 表示任一片段或合并总量被截断。删除根记录和保留期清理时同步删除关联与片段。历史记录没有上游关联键，不能可靠回填，也不尝试从内容、时间或缓存数据推断关系。
@@ -239,7 +256,7 @@ Gemini GenerateContent 的多轮模式由客户端在每次调用中发送完整
 - 用户输入 -> 工具调用 -> `previous_response_id` + 工具结果 -> 最终回复：仅一条根审计记录，详情包含合并后回复。
 - 两次均有新的 user 输入、第二次携带 `previous_response_id`：必须是两条根审计记录，不能合并。
 - 多次连续工具续接：所有可见回复按发生顺序归入同一根记录。
-- 父 ID 缺失、未知、已过期或属于其他用户：不创建独立空记录，也不追加到任何现有记录。
+- 父 ID 缺失、未知、已过期或属于其他用户：不追加到任何现有记录；有可见回复时创建独立 `0 / N` 记录，无可见回复时不创建 `0 / 0` 记录。
 - 关联表中只出现 HMAC，不出现原始响应 ID、工具结果、缓存、系统提示词或原始 JSON。
 - 密钥轮换、根记录删除、保留期清理、跨数据库迁移和 256 KiB 总量限制均覆盖回归测试。
 

@@ -31,6 +31,7 @@ type requestCapture struct {
 	truncated                    bool
 	captureError                 string
 	continuationParentResponseID string
+	requestBytes                 int
 }
 
 func (capture requestCapture) hasNewUserInput() bool {
@@ -69,10 +70,6 @@ func CaptureMiddleware() gin.HandlerFunc {
 
 		cfg := currentConfig()
 		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes)
-		if !request.hasNewUserInput() && !request.isResponsesContinuation() {
-			c.Next()
-			return
-		}
 
 		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes)
 		writer := &captureWriter{ResponseWriter: c.Writer, collector: collector}
@@ -101,22 +98,62 @@ func CaptureMiddleware() gin.HandlerFunc {
 				status,
 				c.Writer.Status(),
 			)
-			registerResponseLink(audit, protocol, response.providerResponseID)
+			linkStatus := registerResponseLink(audit, protocol, response.providerResponseID)
+			event := "captured_root"
+			if audit == nil {
+				event = "root_persist_failed"
+			}
+			logCaptureDiagnostic(c, protocol, event, captureError, string(linkStatus), request.requestBytes, len(request.body), len(response.body))
 			return
 		}
-		appendResponseContinuation(
-			c,
-			protocol,
-			request.continuationParentResponseID,
-			response.body,
-			response.errorCode,
-			captureError,
-			response.providerResponseID,
-			response.truncated,
-			status,
-			c.Writer.Status(),
-		)
+		if request.isResponsesContinuation() {
+			appendStatus := appendResponseContinuation(
+				c,
+				protocol,
+				request.continuationParentResponseID,
+				response.body,
+				response.errorCode,
+				captureError,
+				response.providerResponseID,
+				response.truncated,
+				status,
+				c.Writer.Status(),
+			)
+			if appendStatus == continuationParentLinkNotFound && response.body != "" {
+				captureError = joinCaptureErrors(captureError, "unlinked_response_continuation")
+				persistOrphanResponse(c, protocol, request, response, captureError, status)
+				return
+			}
+			logCaptureDiagnostic(c, protocol, "continuation", string(appendStatus), "not_applicable", request.requestBytes, 0, len(response.body))
+			return
+		}
+
+		if response.body == "" {
+			logCaptureDiagnostic(c, protocol, "skipped", captureError, "not_applicable", request.requestBytes, 0, 0)
+			return
+		}
+		persistOrphanResponse(c, protocol, request, response, captureError, status)
 	}
+}
+
+func persistOrphanResponse(c *gin.Context, protocol conversationProtocol, request requestCapture, response responseCapture, captureError, status string) {
+	audit := persist(
+		c,
+		"",
+		response.body,
+		response.errorCode,
+		captureError,
+		false,
+		response.truncated,
+		status,
+		c.Writer.Status(),
+	)
+	linkStatus := registerResponseLink(audit, protocol, response.providerResponseID)
+	event := "captured_orphan_response"
+	if audit == nil {
+		event = "orphan_response_persist_failed"
+	}
+	logCaptureDiagnostic(c, protocol, event, captureError, string(linkStatus), request.requestBytes, 0, len(response.body))
 }
 
 func protocolForRequest(request *http.Request) conversationProtocol {
@@ -140,15 +177,19 @@ func protocolForRequest(request *http.Request) conversationProtocol {
 	return protocolUnknown
 }
 
-func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int) requestCapture {
+func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int) (capture requestCapture) {
+	capture.requestBytes = -1
 	if protocol == protocolLegacyCompletion {
-		return requestCapture{captureError: "unsupported_legacy_prompt"}
+		capture.captureError = "unsupported_legacy_prompt"
+		return capture
 	}
 
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
-		return requestCapture{captureError: "request_body_unavailable"}
+		capture.captureError = "request_body_unavailable"
+		return capture
 	}
+	capture.requestBytes = int(storage.Size())
 	defer func() {
 		if _, seekErr := storage.Seek(0, io.SeekStart); seekErr == nil {
 			c.Request.Body = io.NopCloser(storage)
@@ -156,24 +197,29 @@ func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes
 	}()
 
 	if storage.Size() > int64(maxParseBytes) {
-		return requestCapture{captureError: "request_parse_limit_exceeded"}
+		capture.captureError = "request_parse_limit_exceeded"
+		return capture
 	}
 	if _, err = storage.Seek(0, io.SeekStart); err != nil {
-		return requestCapture{captureError: "request_body_unavailable"}
+		capture.captureError = "request_body_unavailable"
+		return capture
 	}
 	raw, _, err := readLimited(storage, maxParseBytes)
 	if err != nil {
-		return requestCapture{captureError: "request_body_unavailable"}
+		capture.captureError = "request_body_unavailable"
+		return capture
 	}
 
 	userText, captureError := extractLatestUserText(protocol, raw)
 	if captureError != "" {
 		if protocol == protocolOpenAIResponses && captureError == "no_new_user_text" {
 			if parentResponseID := extractPreviousResponseID(raw); parentResponseID != "" {
-				return requestCapture{continuationParentResponseID: parentResponseID}
+				capture.continuationParentResponseID = parentResponseID
+				return capture
 			}
 		}
-		return requestCapture{captureError: captureError}
+		capture.captureError = captureError
+		return capture
 	}
 	body, truncated, err := marshalCapturePayload(capturePayload{
 		SchemaVersion: 2,
@@ -181,9 +227,12 @@ func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes
 		UserInput:     userText,
 	}, maxContentBytes)
 	if err != nil {
-		return requestCapture{captureError: "request_encode_failed"}
+		capture.captureError = "request_encode_failed"
+		return capture
 	}
-	return requestCapture{body: body, truncated: truncated}
+	capture.body = body
+	capture.truncated = truncated
+	return capture
 }
 
 func extractPreviousResponseID(raw []byte) string {

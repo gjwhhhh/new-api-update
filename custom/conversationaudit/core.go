@@ -124,11 +124,12 @@ func (AuditSettings) TableName() string {
 }
 
 type runtimeConfig struct {
-	Enabled          bool
-	RetentionDays    int
-	MaxContentBytes  int
-	MaxParseBytes    int
-	ActiveKeyVersion string
+	Enabled            bool
+	DiagnosticsEnabled bool
+	RetentionDays      int
+	MaxContentBytes    int
+	MaxParseBytes      int
+	ActiveKeyVersion   string
 }
 
 var runtimeState struct {
@@ -204,11 +205,12 @@ func refreshLoop() {
 
 func configFromEnv() runtimeConfig {
 	return runtimeConfig{
-		Enabled:          parseBoolEnv("CONVERSATION_AUDIT_ENABLED", false),
-		RetentionDays:    boundedIntEnv("CONVERSATION_AUDIT_RETENTION_DAYS", defaultRetentionDays, 1, 3650),
-		MaxContentBytes:  boundedIntEnv("CONVERSATION_AUDIT_MAX_BYTES", defaultMaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
-		MaxParseBytes:    boundedIntEnv("CONVERSATION_AUDIT_MAX_PARSE_BYTES", defaultMaxParseBytes, minimumMaxParseBytes, maximumMaxParseBytes),
-		ActiveKeyVersion: defaultKeyVersion(os.Getenv("CONVERSATION_AUDIT_ACTIVE_KEY_VERSION")),
+		Enabled:            parseBoolEnv("CONVERSATION_AUDIT_ENABLED", false),
+		DiagnosticsEnabled: parseBoolEnv("CONVERSATION_AUDIT_DIAGNOSTICS", false),
+		RetentionDays:      boundedIntEnv("CONVERSATION_AUDIT_RETENTION_DAYS", defaultRetentionDays, 1, 3650),
+		MaxContentBytes:    boundedIntEnv("CONVERSATION_AUDIT_MAX_BYTES", defaultMaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
+		MaxParseBytes:      boundedIntEnv("CONVERSATION_AUDIT_MAX_PARSE_BYTES", defaultMaxParseBytes, minimumMaxParseBytes, maximumMaxParseBytes),
+		ActiveKeyVersion:   defaultKeyVersion(os.Getenv("CONVERSATION_AUDIT_ACTIVE_KEY_VERSION")),
 	}
 }
 
@@ -238,11 +240,12 @@ func refreshSettings() {
 	}
 	envConfig := configFromEnv()
 	cfg := runtimeConfig{
-		Enabled:          settings.Enabled,
-		RetentionDays:    clamp(settings.RetentionDays, 1, 3650),
-		MaxContentBytes:  clamp(settings.MaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
-		MaxParseBytes:    envConfig.MaxParseBytes,
-		ActiveKeyVersion: defaultKeyVersion(settings.ActiveKeyVersion),
+		Enabled:            settings.Enabled,
+		DiagnosticsEnabled: envConfig.DiagnosticsEnabled,
+		RetentionDays:      clamp(settings.RetentionDays, 1, 3650),
+		MaxContentBytes:    clamp(settings.MaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
+		MaxParseBytes:      envConfig.MaxParseBytes,
+		ActiveKeyVersion:   defaultKeyVersion(settings.ActiveKeyVersion),
 	}
 	if err := validateConfig(cfg); err != nil {
 		setInitError(err)
@@ -369,7 +372,7 @@ func decrypt(version, nonceText, ciphertextText, aad string) (string, error) {
 
 func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated bool, status string, statusCode int) *ConversationAudit {
 	cfg := currentConfig()
-	if !cfg.Enabled || requestBody == "" {
+	if !cfg.Enabled || (requestBody == "" && responseBody == "") {
 		return nil
 	}
 	requestID := c.GetString(common.RequestIdKey)

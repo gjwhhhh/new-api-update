@@ -19,6 +19,21 @@ import (
 
 const openAIResponsesLinkProtocol = "openai_responses"
 
+type responseLinkStatus string
+
+const (
+	responseLinkNotApplicable        responseLinkStatus = "not_applicable"
+	responseLinkRootPersistFailed    responseLinkStatus = "root_persist_failed"
+	responseLinkProviderIDAbsent     responseLinkStatus = "provider_response_id_absent"
+	responseLinkCreated              responseLinkStatus = "created"
+	responseLinkWriteFailed          responseLinkStatus = "write_failed"
+	continuationAppended             responseLinkStatus = "appended"
+	continuationParentLinkNotFound   responseLinkStatus = "parent_link_not_found"
+	continuationLinkLookupFailed     responseLinkStatus = "link_lookup_failed"
+	continuationRequestIDUnavailable responseLinkStatus = "request_id_unavailable"
+	continuationWriteFailed          responseLinkStatus = "write_failed"
+)
+
 func responseLinkProtocol(protocol conversationProtocol) string {
 	if protocol == protocolOpenAIResponses {
 		return openAIResponsesLinkProtocol
@@ -74,14 +89,22 @@ func createResponseLink(db *gorm.DB, auditID uint, userID int, expiresAt int64, 
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error
 }
 
-func registerResponseLink(audit *ConversationAudit, protocol conversationProtocol, responseID string) {
+func registerResponseLink(audit *ConversationAudit, protocol conversationProtocol, responseID string) responseLinkStatus {
 	linkProtocol := responseLinkProtocol(protocol)
-	if audit == nil || linkProtocol == "" || responseID == "" {
-		return
+	if linkProtocol == "" {
+		return responseLinkNotApplicable
+	}
+	if audit == nil {
+		return responseLinkRootPersistFailed
+	}
+	if responseID == "" {
+		return responseLinkProviderIDAbsent
 	}
 	if err := createResponseLink(model.DB, audit.ID, audit.UserID, audit.ExpiresAt, linkProtocol, audit.KeyVersion, responseID); err != nil {
 		common.SysError("conversation audit response link write failed: " + err.Error())
+		return responseLinkWriteFailed
 	}
+	return responseLinkCreated
 }
 
 func findResponseLink(protocol conversationProtocol, userID int, parentResponseID string) (*ConversationAuditResponseLink, error) {
@@ -112,23 +135,23 @@ func findResponseLink(protocol conversationProtocol, userID int, parentResponseI
 	return nil, nil
 }
 
-func appendResponseContinuation(c *gin.Context, protocol conversationProtocol, parentResponseID, responseBody, errorCode, captureError, providerResponseID string, responseTruncated bool, status string, statusCode int) {
+func appendResponseContinuation(c *gin.Context, protocol conversationProtocol, parentResponseID, responseBody, errorCode, captureError, providerResponseID string, responseTruncated bool, status string, statusCode int) responseLinkStatus {
 	if !isEnabled() || parentResponseID == "" {
-		return
+		return continuationParentLinkNotFound
 	}
 	link, err := findResponseLink(protocol, c.GetInt("id"), parentResponseID)
 	if err != nil {
 		common.SysError("conversation audit response link lookup failed: " + err.Error())
-		return
+		return continuationLinkLookupFailed
 	}
 	if link == nil {
-		return
+		return continuationParentLinkNotFound
 	}
 
 	cfg := currentConfig()
 	requestID := c.GetString(common.RequestIdKey)
 	if requestID == "" {
-		return
+		return continuationRequestIDUnavailable
 	}
 	linkProtocol := responseLinkProtocol(protocol)
 	now := time.Now().Unix()
@@ -195,7 +218,9 @@ func appendResponseContinuation(c *gin.Context, protocol conversationProtocol, p
 	})
 	if err != nil {
 		common.SysError("conversation audit response continuation write failed request_id=" + requestID + ": " + err.Error())
+		return continuationWriteFailed
 	}
+	return continuationAppended
 }
 
 func fitResponseSegment(body string, remaining int) (string, bool, error) {

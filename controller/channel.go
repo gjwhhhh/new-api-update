@@ -612,6 +612,7 @@ func AddChannel(c *gin.Context) {
 	}
 
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
+	addChannelRequest.Channel.LastAutoTestTime = 0
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
@@ -960,6 +961,12 @@ func UpdateChannel(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
 		return
 	}
+	resetAutomaticTestTime := false
+	if _, ok := requestData["settings"]; ok {
+		originHealthCheck := originChannel.GetOtherSettings().HealthCheck
+		updatedHealthCheck := channel.GetOtherSettings().HealthCheck
+		resetAutomaticTestTime = !dto.ChannelHealthCheckSettingsEqual(originHealthCheck, updatedHealthCheck)
+	}
 
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
@@ -1050,6 +1057,13 @@ func UpdateChannel(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if resetAutomaticTestTime {
+		if err := model.ResetChannelAutomaticTestTime(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		channel.LastAutoTestTime = 0
 	}
 	model.InitChannelCache()
 	service.ResetProxyClientCache()
@@ -1379,6 +1393,7 @@ func CopyChannel(c *gin.Context) {
 	clone.CreatedTime = common.GetTimestamp()
 	clone.Name = origin.Name + suffix
 	clone.TestTime = 0
+	clone.LastAutoTestTime = 0
 	clone.ResponseTime = 0
 	if resetBalance {
 		clone.Balance = 0

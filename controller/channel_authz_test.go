@@ -100,6 +100,7 @@ func TestClearChannelReadOnlyFields(t *testing.T) {
 	channel := PatchChannel{Channel: model.Channel{
 		CreatedTime:        11,
 		TestTime:           22,
+		LastAutoTestTime:   23,
 		ResponseTime:       33,
 		Balance:            44.5,
 		BalanceUpdatedTime: 55,
@@ -111,6 +112,7 @@ func TestClearChannelReadOnlyFields(t *testing.T) {
 	clearChannelReadOnlyFields(&channel, map[string]any{
 		"created_time":         channel.CreatedTime,
 		"test_time":            channel.TestTime,
+		"last_auto_test_time":  channel.LastAutoTestTime,
 		"response_time":        channel.ResponseTime,
 		"balance":              channel.Balance,
 		"balance_updated_time": channel.BalanceUpdatedTime,
@@ -121,6 +123,7 @@ func TestClearChannelReadOnlyFields(t *testing.T) {
 
 	assert.Zero(t, channel.CreatedTime)
 	assert.Zero(t, channel.TestTime)
+	assert.Zero(t, channel.LastAutoTestTime)
 	assert.Zero(t, channel.ResponseTime)
 	assert.Zero(t, channel.Balance)
 	assert.Zero(t, channel.BalanceUpdatedTime)

@@ -900,19 +900,26 @@ type channelTestSummary struct {
 	Enabled   int `json:"enabled"`
 }
 
+type automaticChannelTestTarget struct {
+	Channel                 *model.Channel
+	AllowDisable            bool
+	RecordAutomaticTestTime bool
+}
+
 // performChannelTests runs the channel test loop synchronously, honoring ctx
 // cancellation so a system-task runner that loses its lease stops promptly. When
 // report is non-nil it is called after each channel with (processed, total) so
 // the system task can surface progress.
-func performChannelTests(ctx context.Context, channels []*model.Channel, testUserID int, allowDisable bool, report func(processed, total int)) channelTestSummary {
+func performChannelTests(ctx context.Context, targets []automaticChannelTestTarget, testUserID int, report func(processed, total int)) channelTestSummary {
 	summary := channelTestSummary{}
 	var disableThreshold = int64(common.ChannelDisableThreshold * 1000)
 	if disableThreshold == 0 {
 		disableThreshold = 10000000 // a impossible value
 	}
 
-	total := len(channels)
-	for index, channel := range channels {
+	total := len(targets)
+	for index, target := range targets {
+		channel := target.Channel
 		if ctx != nil && ctx.Err() != nil {
 			break
 		}
@@ -956,7 +963,7 @@ func performChannelTests(ctx context.Context, channels []*model.Channel, testUse
 		}
 
 		// disable channel
-		if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
+		if target.AllowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
 			processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 			summary.Disabled++
 		}
@@ -967,7 +974,11 @@ func performChannelTests(ctx context.Context, channels []*model.Channel, testUse
 			summary.Enabled++
 		}
 
-		channel.UpdateResponseTime(milliseconds)
+		if target.RecordAutomaticTestTime {
+			channel.UpdateAutomaticTestTime(milliseconds)
+		} else {
+			channel.UpdateResponseTime(milliseconds)
+		}
 		if common.RequestInterval > 0 {
 			if ctx == nil {
 				time.Sleep(common.RequestInterval)
@@ -1003,30 +1014,91 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 	if err != nil {
 		return channelTestSummary{}, err
 	}
-	if strings.TrimSpace(mode) == "" {
-		mode = operation_setting.GetMonitorSetting().ChannelTestMode
+	var targets []automaticChannelTestTarget
+	if strings.TrimSpace(mode) != "" {
+		targets = selectChannelsForManualTest(channels)
+	} else {
+		monitorSetting := operation_setting.GetMonitorSetting()
+		targets = selectChannelsForAutomaticTest(
+			channels,
+			monitorSetting.ChannelTestMode,
+			channelTestDefaultInterval(monitorSetting.AutoTestChannelMinutes),
+			common.GetTimestamp(),
+		)
 	}
-	selected := selectChannelsForAutomaticTest(channels, mode)
-	allowDisable := mode != operation_setting.ChannelTestModePassiveRecovery
-	summary := performChannelTests(ctx, selected, testUserID, allowDisable, report)
+	summary := performChannelTests(ctx, targets, testUserID, report)
 	if notify && (ctx == nil || ctx.Err() == nil) {
 		service.NotifyRootUser(dto.NotifyTypeChannelTest, "通道测试完成", "所有通道测试已完成")
 	}
 	return summary, nil
 }
 
-func selectChannelsForAutomaticTest(channels []*model.Channel, mode string) []*model.Channel {
-	selected := make([]*model.Channel, 0, len(channels))
+func selectChannelsForManualTest(channels []*model.Channel) []automaticChannelTestTarget {
+	targets := make([]automaticChannelTestTarget, 0, len(channels))
 	for _, channel := range channels {
 		if channel.Status == common.ChannelStatusManuallyDisabled {
 			continue
 		}
-		if mode == operation_setting.ChannelTestModePassiveRecovery && channel.Status != common.ChannelStatusAutoDisabled {
+		targets = append(targets, automaticChannelTestTarget{Channel: channel, AllowDisable: true})
+	}
+	return targets
+}
+
+func selectChannelsForAutomaticTest(channels []*model.Channel, globalMode string, defaultInterval time.Duration, now int64) []automaticChannelTestTarget {
+	targets := make([]automaticChannelTestTarget, 0, len(channels))
+	for _, channel := range channels {
+		if channel.Status == common.ChannelStatusManuallyDisabled {
 			continue
 		}
-		selected = append(selected, channel)
+
+		healthCheck := channel.GetOtherSettings().HealthCheck
+		mode := effectiveChannelHealthCheckMode(healthCheck, globalMode)
+		if mode == dto.ChannelHealthCheckModeExcluded {
+			continue
+		}
+		interval := effectiveChannelHealthCheckInterval(healthCheck, defaultInterval)
+		if channel.LastAutoTestTime > 0 && now-channel.LastAutoTestTime < int64(interval.Seconds()) {
+			continue
+		}
+		if mode == dto.ChannelHealthCheckModePassiveRecovery && channel.Status != common.ChannelStatusAutoDisabled {
+			continue
+		}
+		targets = append(targets, automaticChannelTestTarget{
+			Channel:                 channel,
+			AllowDisable:            mode != dto.ChannelHealthCheckModePassiveRecovery,
+			RecordAutomaticTestTime: true,
+		})
 	}
-	return selected
+	return targets
+}
+
+func channelTestDefaultInterval(minutes float64) time.Duration {
+	if minutes <= 0 {
+		minutes = 10
+	}
+	interval := time.Duration(minutes * float64(time.Minute))
+	if interval <= 0 {
+		return 10 * time.Minute
+	}
+	return interval
+}
+
+func effectiveChannelHealthCheckMode(healthCheck *dto.ChannelHealthCheckSettings, globalMode string) dto.ChannelHealthCheckMode {
+	mode := healthCheck.ModeOrDefault()
+	if mode != dto.ChannelHealthCheckModeInherit {
+		return mode
+	}
+	if globalMode == operation_setting.ChannelTestModePassiveRecovery {
+		return dto.ChannelHealthCheckModePassiveRecovery
+	}
+	return dto.ChannelHealthCheckModeScheduled
+}
+
+func effectiveChannelHealthCheckInterval(healthCheck *dto.ChannelHealthCheckSettings, defaultInterval time.Duration) time.Duration {
+	if healthCheck != nil && healthCheck.IntervalMinutes != nil {
+		return time.Duration(*healthCheck.IntervalMinutes) * time.Minute
+	}
+	return defaultInterval
 }
 
 // TestAllChannels enqueues a channel_test system task instead of running the

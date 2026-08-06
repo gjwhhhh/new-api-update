@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -36,11 +37,26 @@ func (channelTestHandler) Enabled() bool {
 }
 
 func (channelTestHandler) Interval() time.Duration {
-	minutes := operation_setting.GetMonitorSetting().AutoTestChannelMinutes
-	if minutes <= 0 {
-		minutes = 10
+	monitorSetting := operation_setting.GetMonitorSetting()
+	defaultInterval := channelTestDefaultInterval(monitorSetting.AutoTestChannelMinutes)
+	channels, err := model.GetAllChannels(0, 0, true, false)
+	if err != nil {
+		common.SysError(fmt.Sprintf("failed to load channels for health-check interval: %v", err))
+		return defaultInterval
 	}
-	return time.Duration(minutes * float64(time.Minute))
+	interval := defaultInterval
+	for _, channel := range channels {
+		healthCheck := channel.GetOtherSettings().HealthCheck
+		mode := effectiveChannelHealthCheckMode(healthCheck, monitorSetting.ChannelTestMode)
+		if mode == dto.ChannelHealthCheckModeExcluded {
+			continue
+		}
+		candidate := effectiveChannelHealthCheckInterval(healthCheck, defaultInterval)
+		if candidate < interval {
+			interval = candidate
+		}
+	}
+	return interval
 }
 
 func (channelTestHandler) NewPayload() any { return nil }

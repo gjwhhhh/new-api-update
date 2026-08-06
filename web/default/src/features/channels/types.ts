@@ -45,6 +45,7 @@ export const channelSchema = z.object({
   weight: z.number().nullish(),
   created_time: z.number(),
   test_time: z.number(),
+  last_auto_test_time: z.number().default(0),
   response_time: z.number(), // in milliseconds
   base_url: z.string().nullish(),
   other: z.string().default(''),
@@ -106,8 +107,20 @@ export interface ChannelOtherSettings {
   upstream_model_update_ignored_models?: string[]
   upstream_model_update_last_check_time?: number
   upstream_model_update_last_detected_models?: string[]
+  health_check?: ChannelHealthCheckSettings
   advanced_custom?: AdvancedCustomConfig
 }
+
+export interface ChannelHealthCheckSettings {
+  mode?: ChannelHealthCheckMode
+  interval_minutes?: number
+}
+
+export type ChannelHealthCheckMode =
+  | 'inherit'
+  | 'scheduled'
+  | 'passive_recovery'
+  | 'excluded'
 
 export interface AdvancedCustomConfig {
   advanced_routes?: AdvancedCustomRoute[]

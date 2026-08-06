@@ -31,6 +31,7 @@ type Channel struct {
 	Weight             *uint   `json:"weight" gorm:"default:0"`
 	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
 	TestTime           int64   `json:"test_time" gorm:"bigint"`
+	LastAutoTestTime   int64   `json:"last_auto_test_time" gorm:"bigint"`
 	ResponseTime       int     `json:"response_time"` // in milliseconds
 	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
 	Other              string  `json:"other"`
@@ -582,6 +583,26 @@ func (channel *Channel) UpdateResponseTime(responseTime int64) {
 	}
 }
 
+func (channel *Channel) UpdateAutomaticTestTime(responseTime int64) {
+	now := common.GetTimestamp()
+	err := DB.Model(channel).Select("response_time", "test_time", "last_auto_test_time").Updates(Channel{
+		TestTime:         now,
+		LastAutoTestTime: now,
+		ResponseTime:     int(responseTime),
+	}).Error
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to update automatic test time: channel_id=%d, error=%v", channel.Id, err))
+		return
+	}
+	channel.TestTime = now
+	channel.LastAutoTestTime = now
+	channel.ResponseTime = int(responseTime)
+}
+
+func ResetChannelAutomaticTestTime(channelID int) error {
+	return DB.Model(&Channel{}).Where("id = ?", channelID).Update("last_auto_test_time", 0).Error
+}
+
 func (channel *Channel) UpdateBalance(balance float64) {
 	err := DB.Model(channel).Select("balance_updated_time", "balance").Updates(Channel{
 		BalanceUpdatedTime: common.GetTimestamp(),
@@ -961,6 +982,9 @@ func (channel *Channel) ValidateSettings() error {
 		if err := channelOtherSettings.AdvancedCustom.Validate(); err != nil {
 			return err
 		}
+	}
+	if err := channelOtherSettings.HealthCheck.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -34,25 +34,88 @@ const (
 )
 
 type ChannelOtherSettings struct {
-	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
-	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"` // "json" or "api_key"
-	OpenRouterEnterprise                  *bool                 `json:"openrouter_enterprise,omitempty"`
-	ClaudeBetaQuery                       bool                  `json:"claude_beta_query,omitempty"`          // Claude 渠道是否强制追加 ?beta=true
-	AllowServiceTier                      bool                  `json:"allow_service_tier,omitempty"`         // 是否允许 service_tier 透传（默认过滤以避免额外计费）
-	AllowInferenceGeo                     bool                  `json:"allow_inference_geo,omitempty"`        // 是否允许 inference_geo 透传（仅 Claude，默认过滤以满足数据驻留合规
-	AllowSpeed                            bool                  `json:"allow_speed,omitempty"`                // 是否允许 speed 透传（仅 Claude，默认过滤以避免意外切换推理速度模式）
-	AllowSafetyIdentifier                 bool                  `json:"allow_safety_identifier,omitempty"`    // 是否允许 safety_identifier 透传（默认过滤以保护用户隐私）
-	DisableStore                          bool                  `json:"disable_store,omitempty"`              // 是否禁用 store 透传（默认允许透传，禁用后可能导致 Codex 无法使用）
-	AllowIncludeObfuscation               bool                  `json:"allow_include_obfuscation,omitempty"`  // 是否允许 stream_options.include_obfuscation 透传（默认过滤以避免关闭流混淆保护）
-	DisableTaskPollingSleep               bool                  `json:"disable_task_polling_sleep,omitempty"` // 是否跳过异步任务轮询间隔
-	AwsKeyType                            AwsKeyType            `json:"aws_key_type,omitempty"`
-	UpstreamModelUpdateCheckEnabled       bool                  `json:"upstream_model_update_check_enabled,omitempty"`        // 是否检测上游模型更新
-	UpstreamModelUpdateAutoSyncEnabled    bool                  `json:"upstream_model_update_auto_sync_enabled,omitempty"`    // 是否自动同步上游模型更新
-	UpstreamModelUpdateLastCheckTime      int64                 `json:"upstream_model_update_last_check_time,omitempty"`      // 上次检测时间
-	UpstreamModelUpdateLastDetectedModels []string              `json:"upstream_model_update_last_detected_models,omitempty"` // 上次检测到的可加入模型
-	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
-	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
-	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
+	AzureResponsesVersion                 string                      `json:"azure_responses_version,omitempty"`
+	VertexKeyType                         VertexKeyType               `json:"vertex_key_type,omitempty"` // "json" or "api_key"
+	OpenRouterEnterprise                  *bool                       `json:"openrouter_enterprise,omitempty"`
+	ClaudeBetaQuery                       bool                        `json:"claude_beta_query,omitempty"`          // Claude 渠道是否强制追加 ?beta=true
+	AllowServiceTier                      bool                        `json:"allow_service_tier,omitempty"`         // 是否允许 service_tier 透传（默认过滤以避免额外计费）
+	AllowInferenceGeo                     bool                        `json:"allow_inference_geo,omitempty"`        // 是否允许 inference_geo 透传（仅 Claude，默认过滤以满足数据驻留合规
+	AllowSpeed                            bool                        `json:"allow_speed,omitempty"`                // 是否允许 speed 透传（仅 Claude，默认过滤以避免意外切换推理速度模式）
+	AllowSafetyIdentifier                 bool                        `json:"allow_safety_identifier,omitempty"`    // 是否允许 safety_identifier 透传（默认过滤以保护用户隐私）
+	DisableStore                          bool                        `json:"disable_store,omitempty"`              // 是否禁用 store 透传（默认允许透传，禁用后可能导致 Codex 无法使用）
+	AllowIncludeObfuscation               bool                        `json:"allow_include_obfuscation,omitempty"`  // 是否允许 stream_options.include_obfuscation 透传（默认过滤以避免关闭流混淆保护）
+	DisableTaskPollingSleep               bool                        `json:"disable_task_polling_sleep,omitempty"` // 是否跳过异步任务轮询间隔
+	AwsKeyType                            AwsKeyType                  `json:"aws_key_type,omitempty"`
+	UpstreamModelUpdateCheckEnabled       bool                        `json:"upstream_model_update_check_enabled,omitempty"`        // 是否检测上游模型更新
+	UpstreamModelUpdateAutoSyncEnabled    bool                        `json:"upstream_model_update_auto_sync_enabled,omitempty"`    // 是否自动同步上游模型更新
+	UpstreamModelUpdateLastCheckTime      int64                       `json:"upstream_model_update_last_check_time,omitempty"`      // 上次检测时间
+	UpstreamModelUpdateLastDetectedModels []string                    `json:"upstream_model_update_last_detected_models,omitempty"` // 上次检测到的可加入模型
+	UpstreamModelUpdateLastRemovedModels  []string                    `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
+	UpstreamModelUpdateIgnoredModels      []string                    `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
+	HealthCheck                           *ChannelHealthCheckSettings `json:"health_check,omitempty"`
+	AdvancedCustom                        *AdvancedCustomConfig       `json:"advanced_custom,omitempty"`
+}
+
+type ChannelHealthCheckMode string
+
+const (
+	ChannelHealthCheckModeInherit         ChannelHealthCheckMode = "inherit"
+	ChannelHealthCheckModeScheduled       ChannelHealthCheckMode = "scheduled"
+	ChannelHealthCheckModePassiveRecovery ChannelHealthCheckMode = "passive_recovery"
+	ChannelHealthCheckModeExcluded        ChannelHealthCheckMode = "excluded"
+
+	MaxChannelHealthCheckIntervalMinutes = 525600
+)
+
+// ChannelHealthCheckSettings controls the background health-check behavior for
+// one channel. A nil value preserves the historical system-level behavior.
+type ChannelHealthCheckSettings struct {
+	Mode            ChannelHealthCheckMode `json:"mode,omitempty"`
+	IntervalMinutes *int                   `json:"interval_minutes,omitempty"`
+}
+
+func (settings *ChannelHealthCheckSettings) ModeOrDefault() ChannelHealthCheckMode {
+	if settings == nil || settings.Mode == "" {
+		return ChannelHealthCheckModeInherit
+	}
+	return settings.Mode
+}
+
+func (settings *ChannelHealthCheckSettings) Validate() error {
+	mode := settings.ModeOrDefault()
+	switch mode {
+	case ChannelHealthCheckModeInherit,
+		ChannelHealthCheckModeScheduled,
+		ChannelHealthCheckModePassiveRecovery,
+		ChannelHealthCheckModeExcluded:
+	default:
+		return fmt.Errorf("invalid health_check.mode: %s", settings.Mode)
+	}
+
+	if settings != nil && settings.IntervalMinutes != nil {
+		if *settings.IntervalMinutes < 1 || *settings.IntervalMinutes > MaxChannelHealthCheckIntervalMinutes {
+			return fmt.Errorf("health_check.interval_minutes must be between 1 and %d", MaxChannelHealthCheckIntervalMinutes)
+		}
+		if mode == ChannelHealthCheckModeInherit || mode == ChannelHealthCheckModeExcluded {
+			return fmt.Errorf("health_check.interval_minutes is only supported for scheduled and passive_recovery modes")
+		}
+	}
+	return nil
+}
+
+func ChannelHealthCheckSettingsEqual(left, right *ChannelHealthCheckSettings) bool {
+	leftMode := left.ModeOrDefault()
+	rightMode := right.ModeOrDefault()
+	if leftMode != rightMode {
+		return false
+	}
+	if left == nil || left.IntervalMinutes == nil {
+		return right == nil || right.IntervalMinutes == nil
+	}
+	if right == nil || right.IntervalMinutes == nil {
+		return false
+	}
+	return *left.IntervalMinutes == *right.IntervalMinutes
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

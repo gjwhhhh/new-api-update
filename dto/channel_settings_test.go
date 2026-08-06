@@ -145,6 +145,52 @@ func TestAdvancedCustomValidateDuplicateIncomingPathRequiresCatchAllLast(t *test
 	assert.Contains(t, err.Error(), "catch-all route must be last")
 }
 
+func TestChannelHealthCheckSettingsValidate(t *testing.T) {
+	ten := 10
+	zero := 0
+
+	tests := []struct {
+		name     string
+		settings *ChannelHealthCheckSettings
+		valid    bool
+	}{
+		{name: "unset inherits global", settings: nil, valid: true},
+		{name: "scheduled with interval", settings: &ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeScheduled, IntervalMinutes: &ten}, valid: true},
+		{name: "passive recovery without override", settings: &ChannelHealthCheckSettings{Mode: ChannelHealthCheckModePassiveRecovery}, valid: true},
+		{name: "excluded", settings: &ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeExcluded}, valid: true},
+		{name: "invalid mode", settings: &ChannelHealthCheckSettings{Mode: "unsupported"}, valid: false},
+		{name: "zero interval", settings: &ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeScheduled, IntervalMinutes: &zero}, valid: false},
+		{name: "inherit cannot override interval", settings: &ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeInherit, IntervalMinutes: &ten}, valid: false},
+		{name: "excluded cannot override interval", settings: &ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeExcluded, IntervalMinutes: &ten}, valid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.settings.Validate()
+			if tt.valid {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestChannelHealthCheckSettingsEqualTreatsNilAsInherit(t *testing.T) {
+	assert.True(t, ChannelHealthCheckSettingsEqual(nil, &ChannelHealthCheckSettings{}))
+
+	ten := 10
+	twenty := 20
+	assert.True(t, ChannelHealthCheckSettingsEqual(
+		&ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeScheduled, IntervalMinutes: &ten},
+		&ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeScheduled, IntervalMinutes: &ten},
+	))
+	assert.False(t, ChannelHealthCheckSettingsEqual(
+		&ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeScheduled, IntervalMinutes: &ten},
+		&ChannelHealthCheckSettings{Mode: ChannelHealthCheckModeScheduled, IntervalMinutes: &twenty},
+	))
+}
+
 func TestAdvancedCustomMatchPathForModel(t *testing.T) {
 	config := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{

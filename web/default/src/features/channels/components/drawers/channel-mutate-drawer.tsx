@@ -257,6 +257,7 @@ const ADVANCED_SETTINGS_SECTION_IDS = {
   overrideRules: 'channel-section-advanced-override-rules',
   extraSettings: 'channel-section-advanced-extra-settings',
   fieldPassthrough: 'channel-section-advanced-field-passthrough',
+  healthCheck: 'channel-section-advanced-health-check',
   upstreamModelDetection: 'channel-section-advanced-upstream-model-detection',
 } as const
 const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
@@ -297,6 +298,8 @@ const SENSITIVE_FORM_FIELDS = [
   'upstream_model_update_check_enabled',
   'upstream_model_update_auto_sync_enabled',
   'upstream_model_update_ignored_models',
+  'health_check_mode',
+  'health_check_interval_minutes',
 ] satisfies (keyof ChannelFormValues)[]
 
 function readAdvancedSettingsPreference(): boolean {
@@ -341,7 +344,8 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
-    values.upstream_model_update_ignored_models?.trim()
+    values.upstream_model_update_ignored_models?.trim() ||
+    values.health_check_mode !== 'inherit'
   )
 }
 
@@ -759,6 +763,10 @@ export function ChannelMutateDrawer({
   const currentUpstreamModelUpdateIgnoredModels = form.watch(
     'upstream_model_update_ignored_models'
   )
+  const currentHealthCheckMode = form.watch('health_check_mode') || 'inherit'
+  const currentHealthCheckIntervalMinutes = form.watch(
+    'health_check_interval_minutes'
+  )
   const {
     unlocked: doubaoApiEditUnlocked,
     handleClick: handleApiConfigSecretClick,
@@ -1034,13 +1042,31 @@ export function ChannelMutateDrawer({
     currentUpstreamModelUpdateAutoSyncEnabled ||
     currentUpstreamModelUpdateIgnoredModels?.trim()
   )
+  const healthCheckConfigured = currentHealthCheckMode !== 'inherit'
+  let healthCheckDescription = t(
+    'Use the system-wide channel test mode and default interval.'
+  )
+  if (currentHealthCheckMode === 'scheduled') {
+    healthCheckDescription = t(
+      'Run background health checks even when the global mode is passive recovery.'
+    )
+  } else if (currentHealthCheckMode === 'passive_recovery') {
+    healthCheckDescription = t(
+      'Only test this channel after it has been automatically disabled.'
+    )
+  } else if (currentHealthCheckMode === 'excluded') {
+    healthCheckDescription = t(
+      'This channel will not be tested or recovered automatically. Manual tests remain available.'
+    )
+  }
   const advancedConfigured = Boolean(
     routingStrategyConfigured ||
     internalNotesConfigured ||
     overrideRulesConfigured ||
     extraSettingsConfigured ||
     fieldPassthroughConfigured ||
-    upstreamModelDetectionConfigured
+    upstreamModelDetectionConfigured ||
+    healthCheckConfigured
   )
   const advancedNavChildren: ChannelEditorNavChildItem[] = [
     {
@@ -1062,6 +1088,11 @@ export function ChannelMutateDrawer({
       id: ADVANCED_SETTINGS_SECTION_IDS.extraSettings,
       title: t('Channel Extra Settings'),
       configured: extraSettingsConfigured,
+    },
+    {
+      id: ADVANCED_SETTINGS_SECTION_IDS.healthCheck,
+      title: t('Channel Health Check'),
+      configured: healthCheckConfigured,
     },
   ]
   if (currentType === 1 || currentType === 14 || currentType === 57) {
@@ -4477,6 +4508,182 @@ export function ChannelMutateDrawer({
                             </fieldset>
                           </div>
                         )}
+
+                        <div
+                          id={ADVANCED_SETTINGS_SECTION_IDS.healthCheck}
+                          className={sideDrawerSectionClassName(
+                            configuredAdvancedSectionClassName(
+                              'scroll-mt-4',
+                              healthCheckConfigured
+                            )
+                          )}
+                        >
+                          <CardHeading
+                            title={t('Channel Health Check')}
+                            icon={<Settings className='h-4 w-4' />}
+                            iconTone='success'
+                          />
+                          {sensitiveLocked && (
+                            <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                              <AlertDescription>
+                                {t('No permission to perform this action')}
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                          <fieldset
+                            disabled={sensitiveLocked}
+                            className='space-y-4 disabled:opacity-60'
+                          >
+                            <FormField
+                              control={form.control}
+                              name='health_check_mode'
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('Automatic test strategy')}
+                                  </FormLabel>
+                                  <Select
+                                    items={[
+                                      {
+                                        value: 'inherit',
+                                        label: t('Follow global settings'),
+                                      },
+                                      {
+                                        value: 'scheduled',
+                                        label: t('Scheduled test'),
+                                      },
+                                      {
+                                        value: 'passive_recovery',
+                                        label: t('Passive recovery only'),
+                                      },
+                                      {
+                                        value: 'excluded',
+                                        label: t(
+                                          'Exclude from automatic tests'
+                                        ),
+                                      },
+                                    ]}
+                                    value={field.value || 'inherit'}
+                                    onValueChange={(value) => {
+                                      field.onChange(value)
+                                      if (
+                                        value === 'inherit' ||
+                                        value === 'excluded'
+                                      ) {
+                                        form.setValue(
+                                          'health_check_interval_minutes',
+                                          undefined,
+                                          {
+                                            shouldDirty: true,
+                                            shouldValidate: true,
+                                          }
+                                        )
+                                      }
+                                    }}
+                                  >
+                                    <FormControl>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent alignItemWithTrigger={false}>
+                                      <SelectGroup>
+                                        <SelectItem value='inherit'>
+                                          {t('Follow global settings')}
+                                        </SelectItem>
+                                        <SelectItem value='scheduled'>
+                                          {t('Scheduled test')}
+                                        </SelectItem>
+                                        <SelectItem value='passive_recovery'>
+                                          {t('Passive recovery only')}
+                                        </SelectItem>
+                                        <SelectItem value='excluded'>
+                                          {t('Exclude from automatic tests')}
+                                        </SelectItem>
+                                      </SelectGroup>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormDescription>
+                                    {healthCheckDescription}
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            {(currentHealthCheckMode === 'scheduled' ||
+                              currentHealthCheckMode ===
+                                'passive_recovery') && (
+                              <FormField
+                                control={form.control}
+                                name='health_check_interval_minutes'
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>
+                                      {t('Channel test interval (minutes)')}
+                                    </FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        type='number'
+                                        min={1}
+                                        max={525600}
+                                        step={1}
+                                        name={field.name}
+                                        ref={field.ref}
+                                        value={field.value ?? ''}
+                                        onBlur={field.onBlur}
+                                        onChange={(event) => {
+                                          const value = event.target.value
+                                          field.onChange(
+                                            value === ''
+                                              ? undefined
+                                              : Number(value)
+                                          )
+                                        }}
+                                      />
+                                    </FormControl>
+                                    <FormDescription>
+                                      {t(
+                                        'Leave empty to use the system-wide default interval.'
+                                      )}
+                                    </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            <div className='text-muted-foreground space-y-1 border-t pt-3 text-xs'>
+                              <div>
+                                <span className='text-foreground font-medium'>
+                                  {t('Last automatic test')}:
+                                </span>{' '}
+                                {formatUnixTime(
+                                  channelData?.data?.last_auto_test_time
+                                )}
+                              </div>
+                              {currentHealthCheckIntervalMinutes !==
+                                undefined &&
+                                currentHealthCheckMode !== 'inherit' &&
+                                currentHealthCheckMode !== 'excluded' && (
+                                  <div>
+                                    {t(
+                                      'Channel interval: {{minutes}} minutes',
+                                      {
+                                        minutes:
+                                          currentHealthCheckIntervalMinutes,
+                                      }
+                                    )}
+                                  </div>
+                                )}
+                              <div>
+                                {t(
+                                  "Automatic health checks use this channel's Test Model configuration."
+                                )}
+                              </div>
+                            </div>
+                          </fieldset>
+                        </div>
 
                         {MODEL_FETCHABLE_TYPES.has(currentType) && (
                           <div

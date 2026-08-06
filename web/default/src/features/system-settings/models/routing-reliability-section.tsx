@@ -367,7 +367,7 @@ export function RoutingReliabilitySection({
                       <FormLabel>{t('Scheduled channel tests')}</FormLabel>
                       <FormDescription>
                         {t(
-                          'Automatically probe all channels in the background'
+                          'Automatically run background health checks using the default channel policy'
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>
@@ -444,9 +444,11 @@ export function RoutingReliabilitySection({
                     <FormDescription>
                       {channelTestMode === 'passive_recovery'
                         ? t(
-                            'How frequently the system checks auto-disabled channels for recovery'
+                            'Default interval for auto-disabled channels without an individual setting'
                           )
-                        : t('How frequently the system tests all channels')}
+                        : t(
+                            'Default interval for channels without an individual setting'
+                          )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

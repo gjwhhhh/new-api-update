@@ -209,6 +209,15 @@ export const channelFormSchema = z
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
     upstream_model_update_ignored_models: z.string().optional(),
+    health_check_mode: z
+      .enum(['inherit', 'scheduled', 'passive_recovery', 'excluded'])
+      .optional(),
+    health_check_interval_minutes: z
+      .number()
+      .int('Test interval must be a whole number of minutes')
+      .min(1, 'Test interval must be at least 1 minute')
+      .max(525600, 'Test interval must not exceed 525600 minutes')
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if ([3, 8, 36, 45].includes(data.type) && !data.base_url?.trim()) {
@@ -290,6 +299,18 @@ export const channelFormSchema = z
         'Vertex AI API Key mode does not support batch creation'
       )
     }
+
+    if (
+      (data.health_check_mode === 'inherit' ||
+        data.health_check_mode === 'excluded') &&
+      data.health_check_interval_minutes !== undefined
+    ) {
+      addRequiredIssue(
+        ctx,
+        'health_check_interval_minutes',
+        'Test interval is only available for scheduled and passive recovery modes'
+      )
+    }
   })
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
@@ -348,6 +369,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
+  health_check_mode: 'inherit',
+  health_check_interval_minutes: undefined,
   advanced_custom: '',
 }
 
@@ -404,6 +427,8 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
+  let healthCheckMode: ChannelFormValues['health_check_mode'] = 'inherit'
+  let healthCheckIntervalMinutes: number | undefined
   let advancedCustom = ''
 
   if (channel.settings) {
@@ -430,6 +455,28 @@ export function transformChannelToFormDefaults(
       )
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
+      const healthCheck = parsed.health_check
+      if (
+        healthCheck &&
+        typeof healthCheck === 'object' &&
+        !Array.isArray(healthCheck)
+      ) {
+        if (
+          healthCheck.mode === 'scheduled' ||
+          healthCheck.mode === 'passive_recovery' ||
+          healthCheck.mode === 'excluded' ||
+          healthCheck.mode === 'inherit'
+        ) {
+          healthCheckMode = healthCheck.mode
+        }
+        if (
+          typeof healthCheck.interval_minutes === 'number' &&
+          Number.isInteger(healthCheck.interval_minutes) &&
+          healthCheck.interval_minutes > 0
+        ) {
+          healthCheckIntervalMinutes = healthCheck.interval_minutes
+        }
+      }
       if (parsed.advanced_custom) {
         advancedCustom = stringifyAdvancedCustomConfig(parsed.advanced_custom)
       }
@@ -483,6 +530,8 @@ export function transformChannelToFormDefaults(
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
+    health_check_mode: healthCheckMode,
+    health_check_interval_minutes: healthCheckIntervalMinutes,
     advanced_custom: advancedCustom,
   }
 }
@@ -563,13 +612,18 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       formData.allow_include_obfuscation === true
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
   } else {
-    if ('disable_store' in settingsObj) delete settingsObj.disable_store
-    if ('allow_safety_identifier' in settingsObj)
+    if ('disable_store' in settingsObj) {
+      delete settingsObj.disable_store
+    }
+    if ('allow_safety_identifier' in settingsObj) {
       delete settingsObj.allow_safety_identifier
-    if ('allow_include_obfuscation' in settingsObj)
+    }
+    if ('allow_include_obfuscation' in settingsObj) {
       delete settingsObj.allow_include_obfuscation
-    if (formData.type !== 14 && 'allow_inference_geo' in settingsObj)
+    }
+    if (formData.type !== 14 && 'allow_inference_geo' in settingsObj) {
       delete settingsObj.allow_inference_geo
+    }
   }
 
   // Anthropic (type 14): claude_beta_query, allow_inference_geo, allow_speed
@@ -578,8 +632,12 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.allow_speed = formData.allow_speed === true
     settingsObj.claude_beta_query = formData.claude_beta_query === true
   } else {
-    if ('allow_speed' in settingsObj) delete settingsObj.allow_speed
-    if ('claude_beta_query' in settingsObj) delete settingsObj.claude_beta_query
+    if ('allow_speed' in settingsObj) {
+      delete settingsObj.allow_speed
+    }
+    if ('claude_beta_query' in settingsObj) {
+      delete settingsObj.claude_beta_query
+    }
   }
 
   settingsObj.disable_task_polling_sleep =
@@ -592,14 +650,14 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.upstream_model_update_auto_sync_enabled =
       settingsObj.upstream_model_update_check_enabled === true &&
       formData.upstream_model_update_auto_sync_enabled === true
-    settingsObj.upstream_model_update_ignored_models = Array.from(
-      new Set(
+    settingsObj.upstream_model_update_ignored_models = [
+      ...new Set(
         String(formData.upstream_model_update_ignored_models || '')
           .split(',')
           .map((model) => model.trim())
           .filter(Boolean)
-      )
-    )
+      ),
+    ]
     if (
       !Array.isArray(settingsObj.upstream_model_update_last_detected_models) ||
       settingsObj.upstream_model_update_check_enabled !== true
@@ -610,6 +668,17 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       settingsObj.upstream_model_update_last_check_time = 0
     }
   }
+
+  const healthCheckMode = formData.health_check_mode || 'inherit'
+  const healthCheck: Record<string, unknown> = { mode: healthCheckMode }
+  if (
+    (healthCheckMode === 'scheduled' ||
+      healthCheckMode === 'passive_recovery') &&
+    formData.health_check_interval_minutes !== undefined
+  ) {
+    healthCheck.interval_minutes = formData.health_check_interval_minutes
+  }
+  settingsObj.health_check = healthCheck
 
   if (formData.type === CHANNEL_TYPE_ADVANCED_CUSTOM) {
     const advancedCustomConfig = parseAdvancedCustomConfig(

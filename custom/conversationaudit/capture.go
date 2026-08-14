@@ -32,9 +32,10 @@ type requestCapture struct {
 	captureError                 string
 	continuationParentResponseID string
 	requestBytes                 int
+	fullPayload                  bool
 }
 
-func (capture requestCapture) hasNewUserInput() bool {
+func (capture requestCapture) hasPersistableRequest() bool {
 	return capture.body != ""
 }
 
@@ -69,9 +70,9 @@ func CaptureMiddleware() gin.HandlerFunc {
 		}
 
 		cfg := currentConfig()
-		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes)
+		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, cfg.CaptureFullPayload)
 
-		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes)
+		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes, cfg.CaptureFullPayload)
 		writer := &captureWriter{ResponseWriter: c.Writer, collector: collector}
 		c.Writer = writer
 
@@ -86,7 +87,7 @@ func CaptureMiddleware() gin.HandlerFunc {
 			status = "truncated"
 		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
-		if request.hasNewUserInput() {
+		if request.hasPersistableRequest() {
 			audit := persist(
 				c,
 				request.body,
@@ -95,6 +96,7 @@ func CaptureMiddleware() gin.HandlerFunc {
 				captureError,
 				request.truncated,
 				response.truncated,
+				request.fullPayload,
 				status,
 				c.Writer.Status(),
 			)
@@ -145,6 +147,7 @@ func persistOrphanResponse(c *gin.Context, protocol conversationProtocol, reques
 		captureError,
 		false,
 		response.truncated,
+		request.fullPayload,
 		status,
 		c.Writer.Status(),
 	)
@@ -177,12 +180,13 @@ func protocolForRequest(request *http.Request) conversationProtocol {
 	return protocolUnknown
 }
 
-func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int) (capture requestCapture) {
+func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int, captureFullPayload bool) (capture requestCapture) {
 	capture.requestBytes = -1
-	if protocol == protocolLegacyCompletion {
+	if protocol == protocolLegacyCompletion && !captureFullPayload {
 		capture.captureError = "unsupported_legacy_prompt"
 		return capture
 	}
+	capture.fullPayload = captureFullPayload
 
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
@@ -196,12 +200,25 @@ func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes
 		}
 	}()
 
-	if storage.Size() > int64(maxParseBytes) {
+	if !captureFullPayload && storage.Size() > int64(maxParseBytes) {
 		capture.captureError = "request_parse_limit_exceeded"
 		return capture
 	}
 	if _, err = storage.Seek(0, io.SeekStart); err != nil {
 		capture.captureError = "request_body_unavailable"
+		return capture
+	}
+	if captureFullPayload {
+		raw, truncated, readErr := readLimited(storage, maxParseBytes)
+		if readErr != nil {
+			capture.captureError = "request_body_unavailable"
+			return capture
+		}
+		capture.body = string(raw)
+		capture.truncated = truncated
+		if truncated {
+			capture.captureError = "request_content_limit_exceeded"
+		}
 		return capture
 	}
 	raw, _, err := readLimited(storage, maxParseBytes)
@@ -467,6 +484,7 @@ type responseCollector struct {
 	protocol           conversationProtocol
 	maxContent         int
 	raw                *limitedBuffer
+	fullPayload        *limitedBuffer
 	decoder            *sseDecoder
 	streaming          bool
 	parts              map[responsePartKey]*strings.Builder
@@ -478,12 +496,15 @@ type responseCollector struct {
 	finalized          bool
 }
 
-func newResponseCollector(protocol conversationProtocol, maxContentBytes, maxParseBytes int) *responseCollector {
+func newResponseCollector(protocol conversationProtocol, maxContentBytes, maxParseBytes int, captureFullPayload bool) *responseCollector {
 	collector := &responseCollector{
 		protocol:   protocol,
 		maxContent: maxContentBytes,
 		raw:        newLimitedBuffer(maxParseBytes),
 		parts:      make(map[responsePartKey]*strings.Builder),
+	}
+	if captureFullPayload {
+		collector.fullPayload = newLimitedBuffer(maxParseBytes)
 	}
 	collector.decoder = newSSEDecoder(maxSSEFrameBytes, collector.consumeSSEPayload)
 	return collector
@@ -492,6 +513,9 @@ func newResponseCollector(protocol conversationProtocol, maxContentBytes, maxPar
 func (c *responseCollector) Write(data []byte, streaming bool) {
 	if c.finalized || len(data) == 0 {
 		return
+	}
+	if c.fullPayload != nil {
+		c.fullPayload.Write(data)
 	}
 	if streaming && !c.streaming {
 		c.streaming = true
@@ -527,10 +551,19 @@ func (c *responseCollector) FinalizeCapture() responseCapture {
 		if c.decoder.Oversized() {
 			c.captureError = joinCaptureErrors(c.captureError, "response_frame_too_large")
 		}
-	} else if c.raw.Truncated() {
+	} else if c.raw.Truncated() && c.fullPayload == nil {
 		c.captureError = joinCaptureErrors(c.captureError, "response_parse_limit_exceeded")
 	} else {
 		c.consumeNonStreaming(c.raw.Bytes())
+	}
+	if c.fullPayload != nil {
+		return responseCapture{
+			body:               string(c.fullPayload.Bytes()),
+			truncated:          c.fullPayload.Truncated(),
+			errorCode:          c.errorCode,
+			captureError:       c.captureError,
+			providerResponseID: c.providerResponseID,
+		}
 	}
 
 	text := c.joinParts()

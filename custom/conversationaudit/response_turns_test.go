@@ -28,7 +28,7 @@ func TestCaptureRequestRecognizesOnlyToolContinuationWithPreviousResponseID(t *t
 	t.Cleanup(func() { _ = storage.Close() })
 	context.Set(common.KeyBodyStorage, storage)
 
-	captured := captureRequest(context, protocolOpenAIResponses, defaultMaxParseBytes, defaultMaxContentBytes)
+	captured := captureRequest(context, protocolOpenAIResponses, defaultMaxParseBytes, defaultMaxContentBytes, false)
 	assert.Empty(t, captured.body)
 	assert.Empty(t, captured.captureError)
 	assert.Equal(t, "resp_parent", captured.continuationParentResponseID)
@@ -39,13 +39,13 @@ func TestCaptureRequestRecognizesOnlyToolContinuationWithPreviousResponseID(t *t
 	t.Cleanup(func() { _ = storage.Close() })
 	context.Set(common.KeyBodyStorage, storage)
 
-	captured = captureRequest(context, protocolOpenAIResponses, defaultMaxParseBytes, defaultMaxContentBytes)
+	captured = captureRequest(context, protocolOpenAIResponses, defaultMaxParseBytes, defaultMaxContentBytes, false)
 	assert.Equal(t, "", captured.continuationParentResponseID)
 	assert.Equal(t, "a new question", decodedPayloadField(t, captured.body, "user_input"))
 }
 
 func TestResponsesCollectorCapturesProviderResponseID(t *testing.T) {
-	collector := newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes)
+	collector := newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes, false)
 	collector.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_stream\"}}\n\n"), true)
 	collector.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"visible\"}\n\n"), true)
 
@@ -53,7 +53,7 @@ func TestResponsesCollectorCapturesProviderResponseID(t *testing.T) {
 	assert.Equal(t, "resp_stream", captured.providerResponseID)
 	assert.Equal(t, "visible", decodedPayloadField(t, captured.body, "assistant_text"))
 
-	collector = newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes)
+	collector = newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes, false)
 	collector.Write([]byte(`{"id":"resp_json","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"complete"}]}]}`), false)
 	captured = collector.FinalizeCapture()
 	assert.Equal(t, "resp_json", captured.providerResponseID)
@@ -74,7 +74,7 @@ func TestResponsesContinuationAppendsToSameUserTurn(t *testing.T) {
 		CaptureMode:   "assistant_text",
 		AssistantText: "first visible part",
 	})
-	rootAudit := persist(rootContext, rootRequest, rootResponse, "", "", false, false, "completed", http.StatusOK)
+	rootAudit := persist(rootContext, rootRequest, rootResponse, "", "", false, false, false, "completed", http.StatusOK)
 	require.NotNil(t, rootAudit)
 	registerResponseLink(rootAudit, protocolOpenAIResponses, "resp_root")
 	runtimeState.Lock()
@@ -186,6 +186,46 @@ func TestCaptureMiddlewareAppendsResponsesToolContinuationToRootTurn(t *testing.
 	require.NoError(t, err)
 	require.Len(t, segments, 1)
 	assert.Equal(t, "merged final answer", decodedPayloadField(t, segments[0], "assistant_text"))
+}
+
+func TestCaptureMiddlewareFullPayloadPersistsOriginalTransaction(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	runtimeState.Lock()
+	runtimeState.config.CaptureFullPayload = true
+	runtimeState.Unlock()
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		raw, err := io.ReadAll(c.Request.Body)
+		require.NoError(t, err)
+		storage, err := common.CreateBodyStorage(raw)
+		require.NoError(t, err)
+		c.Set(common.KeyBodyStorage, storage)
+		c.Request.Body = io.NopCloser(strings.NewReader(string(raw)))
+		c.Set(common.RequestIdKey, c.GetHeader("X-Test-Request-ID"))
+		c.Set("id", 1)
+		c.Set("username", "audit-user")
+		c.Set("token_id", 2)
+		c.Set("original_model", "claude-test")
+		c.Next()
+		_ = storage.Close()
+	})
+	router.Use(CaptureMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/json", []byte(`{"id":"msg_test","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"visible"}]}`))
+	})
+
+	requestBody := `{"system":"keep this","messages":[{"role":"user","content":"hello"}],"metadata":{"trace":"full"}}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(requestBody))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Test-Request-ID", "full-payload-request")
+	router.ServeHTTP(httptest.NewRecorder(), request)
+
+	var audit ConversationAudit
+	require.NoError(t, db.Where("request_id = ?", "full-payload-request").First(&audit).Error)
+	assert.True(t, audit.FullPayload)
+	assert.Equal(t, requestBody, mustDecryptAuditContent(t, &audit, "request"))
+	assert.Equal(t, `{"id":"msg_test","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"visible"}]}`, mustDecryptAuditContent(t, &audit, "response"))
 }
 
 func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testing.T) {

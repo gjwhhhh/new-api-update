@@ -89,7 +89,7 @@ func TestCaptureRequestRestoresBodyStorageAndDoesNotPersistRawJSON(t *testing.T)
 	t.Cleanup(func() { _ = storage.Close() })
 	context.Set(common.KeyBodyStorage, storage)
 
-	captured := captureRequest(context, protocolOpenAIChat, defaultMaxParseBytes, defaultMaxContentBytes)
+	captured := captureRequest(context, protocolOpenAIChat, defaultMaxParseBytes, defaultMaxContentBytes, false)
 	require.Empty(t, captured.captureError)
 	assert.NotContains(t, captured.body, "private")
 	forwarded, err := io.ReadAll(context.Request.Body)
@@ -108,13 +108,34 @@ func TestCaptureRequestOverParseLimitStoresOnlyErrorCode(t *testing.T) {
 	t.Cleanup(func() { _ = storage.Close() })
 	context.Set(common.KeyBodyStorage, storage)
 
-	captured := captureRequest(context, protocolOpenAIChat, 1024, defaultMaxContentBytes)
+	captured := captureRequest(context, protocolOpenAIChat, 1024, defaultMaxContentBytes, false)
 	assert.Empty(t, captured.body)
 	assert.Equal(t, "request_parse_limit_exceeded", captured.captureError)
 }
 
+func TestCaptureRequestFullPayloadPreservesRawJSONBeyondSummaryLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	raw := []byte(`{"messages":[{"role":"system","content":"private system"},{"role":"user","content":"current"}],"metadata":{"trace":"full request"}}`)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(raw)))
+	context.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(raw)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = storage.Close() })
+	context.Set(common.KeyBodyStorage, storage)
+
+	captured := captureRequest(context, protocolOpenAIChat, len(raw), 32, true)
+	require.Empty(t, captured.captureError)
+	assert.True(t, captured.fullPayload)
+	assert.False(t, captured.truncated)
+	assert.Equal(t, string(raw), captured.body)
+	forwarded, err := io.ReadAll(context.Request.Body)
+	require.NoError(t, err)
+	assert.Equal(t, raw, forwarded)
+}
+
 func TestOpenAIChatSSECombinesCharacterDeltasAndKeepsWhitespace(t *testing.T) {
-	collector := newResponseCollector(protocolOpenAIChat, defaultMaxContentBytes, defaultMaxParseBytes)
+	collector := newResponseCollector(protocolOpenAIChat, defaultMaxContentBytes, defaultMaxParseBytes, false)
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\n" +
 		"data: {\"choices\":[{\"index\":1,\"delta\":{\"content\":\"ignored\"}}]}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \"}}]}\n\n" +
@@ -130,8 +151,30 @@ func TestOpenAIChatSSECombinesCharacterDeltasAndKeepsWhitespace(t *testing.T) {
 	assert.Equal(t, "Hello world", decodedPayloadField(t, body, "assistant_text"))
 }
 
+func TestFullPayloadResponseCollectorPreservesRawSSE(t *testing.T) {
+	stream := "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"private\"}}\n\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"visible\"}}\n\n"
+	collector := newResponseCollector(protocolClaude, len(stream), defaultMaxParseBytes, true)
+	collector.Write([]byte(stream[:41]), true)
+	collector.Write([]byte(stream[41:]), true)
+
+	captured := collector.FinalizeCapture()
+	assert.Equal(t, stream, captured.body)
+	assert.False(t, captured.truncated)
+	assert.Contains(t, captured.body, "thinking_delta")
+}
+
+func TestFullPayloadResponseCollectorMarksContentLimit(t *testing.T) {
+	collector := newResponseCollector(protocolClaude, defaultMaxContentBytes, 8, true)
+	collector.Write([]byte(`{"content":[{"type":"text","text":"response"}]}`), false)
+
+	captured := collector.FinalizeCapture()
+	assert.Equal(t, `{"conten`, captured.body)
+	assert.True(t, captured.truncated)
+}
+
 func TestResponsesSSEOrdersOutputTextByIndexes(t *testing.T) {
-	collector := newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes)
+	collector := newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes, false)
 	collector.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"second\"}\n\n"), true)
 	collector.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"first\"}\n\n"), true)
 
@@ -163,7 +206,7 @@ func TestClaudeAndGeminiStreamingStoreVisibleTextOnly(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			collector := newResponseCollector(testCase.protocol, defaultMaxContentBytes, defaultMaxParseBytes)
+			collector := newResponseCollector(testCase.protocol, defaultMaxContentBytes, defaultMaxParseBytes, false)
 			collector.Write([]byte(testCase.stream), true)
 			body, _, _, captureError := collector.Finalize()
 			require.Empty(t, captureError)
@@ -173,7 +216,7 @@ func TestClaudeAndGeminiStreamingStoreVisibleTextOnly(t *testing.T) {
 }
 
 func TestNonStreamingResponsesStoreOnlyAssistantText(t *testing.T) {
-	collector := newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes)
+	collector := newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes, false)
 	collector.Write([]byte(`{"output":[{"type":"reasoning","content":[{"type":"summary_text","text":"private reasoning"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first paragraph"},{"type":"output_text","text":"second paragraph"}]},{"type":"function_call","arguments":"secret"}]}`), false)
 
 	body, truncated, _, captureError := collector.Finalize()

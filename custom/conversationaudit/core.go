@@ -56,6 +56,7 @@ type ConversationAudit struct {
 	ResponseLength     int    `json:"response_length"`
 	RequestTruncated   bool   `json:"request_truncated"`
 	ResponseTruncated  bool   `json:"response_truncated"`
+	FullPayload        bool   `json:"full_payload"`
 	CaptureError       string `json:"capture_error,omitempty" gorm:"default:''"`
 	CreatedAt          int64  `json:"created_at" gorm:"index"`
 	ExpiresAt          int64  `json:"expires_at" gorm:"index"`
@@ -111,12 +112,13 @@ func (ConversationAuditResponseSegment) TableName() string {
 // AuditSettings has operational settings only. Encryption keys stay in the
 // deployment secret store and are never persisted in the database.
 type AuditSettings struct {
-	ID               uint   `json:"-" gorm:"primaryKey"`
-	Enabled          bool   `json:"enabled"`
-	RetentionDays    int    `json:"retention_days"`
-	MaxContentBytes  int    `json:"max_content_bytes"`
-	ActiveKeyVersion string `json:"active_key_version"`
-	UpdatedAt        int64  `json:"updated_at"`
+	ID                 uint   `json:"-" gorm:"primaryKey"`
+	Enabled            bool   `json:"enabled"`
+	CaptureFullPayload bool   `json:"capture_full_payload"`
+	RetentionDays      int    `json:"retention_days"`
+	MaxContentBytes    int    `json:"max_content_bytes"`
+	ActiveKeyVersion   string `json:"active_key_version"`
+	UpdatedAt          int64  `json:"updated_at"`
 }
 
 func (AuditSettings) TableName() string {
@@ -125,6 +127,7 @@ func (AuditSettings) TableName() string {
 
 type runtimeConfig struct {
 	Enabled            bool
+	CaptureFullPayload bool
 	DiagnosticsEnabled bool
 	RetentionDays      int
 	MaxContentBytes    int
@@ -206,6 +209,7 @@ func refreshLoop() {
 func configFromEnv() runtimeConfig {
 	return runtimeConfig{
 		Enabled:            parseBoolEnv("CONVERSATION_AUDIT_ENABLED", false),
+		CaptureFullPayload: false,
 		DiagnosticsEnabled: parseBoolEnv("CONVERSATION_AUDIT_DIAGNOSTICS", false),
 		RetentionDays:      boundedIntEnv("CONVERSATION_AUDIT_RETENTION_DAYS", defaultRetentionDays, 1, 3650),
 		MaxContentBytes:    boundedIntEnv("CONVERSATION_AUDIT_MAX_BYTES", defaultMaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
@@ -222,12 +226,13 @@ func ensureDefaultSettings() {
 	}
 	cfg := currentConfig()
 	if err = model.DB.Create(&AuditSettings{
-		ID:               settingsID,
-		Enabled:          cfg.Enabled,
-		RetentionDays:    cfg.RetentionDays,
-		MaxContentBytes:  cfg.MaxContentBytes,
-		ActiveKeyVersion: cfg.ActiveKeyVersion,
-		UpdatedAt:        time.Now().Unix(),
+		ID:                 settingsID,
+		Enabled:            cfg.Enabled,
+		CaptureFullPayload: cfg.CaptureFullPayload,
+		RetentionDays:      cfg.RetentionDays,
+		MaxContentBytes:    cfg.MaxContentBytes,
+		ActiveKeyVersion:   cfg.ActiveKeyVersion,
+		UpdatedAt:          time.Now().Unix(),
 	}).Error; err != nil {
 		common.SysError("create conversation audit settings failed: " + err.Error())
 	}
@@ -241,6 +246,7 @@ func refreshSettings() {
 	envConfig := configFromEnv()
 	cfg := runtimeConfig{
 		Enabled:            settings.Enabled,
+		CaptureFullPayload: settings.CaptureFullPayload,
 		DiagnosticsEnabled: envConfig.DiagnosticsEnabled,
 		RetentionDays:      clamp(settings.RetentionDays, 1, 3650),
 		MaxContentBytes:    clamp(settings.MaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
@@ -370,7 +376,7 @@ func decrypt(version, nonceText, ciphertextText, aad string) (string, error) {
 	return string(plaintext), nil
 }
 
-func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated bool, status string, statusCode int) *ConversationAudit {
+func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated, fullPayload bool, status string, statusCode int) *ConversationAudit {
 	cfg := currentConfig()
 	if !cfg.Enabled || (requestBody == "" && responseBody == "") {
 		return nil
@@ -395,6 +401,7 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 		ResponseLength:    len(responseBody),
 		RequestTruncated:  requestTruncated,
 		ResponseTruncated: responseTruncated,
+		FullPayload:       fullPayload,
 		CaptureError:      captureError,
 		CreatedAt:         now,
 		ExpiresAt:         now + int64(cfg.RetentionDays)*int64((24*time.Hour).Seconds()),

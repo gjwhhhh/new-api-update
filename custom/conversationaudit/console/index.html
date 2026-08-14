@@ -12,6 +12,15 @@
       .back { display: inline-block; margin-bottom: 14px; color: #93c5fd; text-decoration: none; }
       .back:hover { text-decoration: underline; }
       .note { color: #94a3b8; margin-bottom: 20px; }
+      .settings { margin-bottom: 20px; padding: 16px; background: #1e293b; border-radius: 10px; }
+      .settings h2 { margin: 0 0 12px; font-size: 16px; }
+      .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid #334155; }
+      .setting-row:first-of-type { border-top: 0; }
+      .setting-copy { display: grid; gap: 4px; }
+      .setting-copy span { color: #94a3b8; font-size: 13px; }
+      .toggle { display: inline-flex; align-items: center; gap: 8px; min-width: 18px; }
+      .toggle input { min-height: auto; width: 18px; height: 18px; padding: 0; }
+      .settings-actions { display: flex; justify-content: end; padding-top: 12px; }
       .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; padding: 16px; background: #1e293b; border-radius: 10px; }
       label { display: grid; gap: 6px; color: #cbd5e1; font-size: 13px; }
       input, select, button { box-sizing: border-box; min-height: 38px; border: 1px solid #475569; border-radius: 6px; background: #0f172a; color: inherit; padding: 8px; }
@@ -36,6 +45,18 @@
       <a class="back" href="/dashboard/overview">← 返回控制台</a>
       <h1>加密会话审计</h1>
       <div class="note">仅管理员可查看。列表不含对话正文；点击记录后才按需解密。</div>
+      <section class="settings" id="settings" hidden>
+        <h2>审计设置</h2>
+        <div class="setting-row">
+          <div class="setting-copy"><strong>启用会话审计</strong><span>关闭后不会创建新的审计记录。</span></div>
+          <label class="toggle"><input id="auditEnabled" type="checkbox" />开启</label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-copy"><strong>完整记录请求与返回</strong><span>加密保存客户端请求与网关返回的原始 Body；不包含鉴权请求头和上游报文，超过安全上限会标记为截断。</span></div>
+          <label class="toggle"><input id="captureFullPayload" type="checkbox" />开启</label>
+        </div>
+        <div class="settings-actions"><button id="saveSettings" type="button">保存设置</button></div>
+      </section>
       <form class="filters" id="filters">
         <label>用户名<input id="username" name="username" placeholder="包含用户名，例如 bedlate" /></label>
         <label>用户 ID<input id="userId" name="user_id" inputmode="numeric" placeholder="可选" /></label>
@@ -58,6 +79,10 @@
       const rows = document.getElementById('rows');
       const message = document.getElementById('message');
       const detail = document.getElementById('detail');
+      const settings = document.getElementById('settings');
+      const auditEnabled = document.getElementById('auditEnabled');
+      const captureFullPayload = document.getElementById('captureFullPayload');
+      const saveSettings = document.getElementById('saveSettings');
       const toTimestamp = value => value ? Math.floor(new Date(value).getTime() / 1000) : '';
       const escape = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
       const pretty = value => { try { return JSON.stringify(JSON.parse(value || '{}'), null, 2); } catch { return value || '无内容'; } };
@@ -74,12 +99,47 @@
         const visible = texts.filter(text => text && text !== '无内容');
         return visible.length ? visible.join('\n\n') : '无内容';
       };
+      const rawPayloadText = value => value || '无内容';
       const apiFetch = (url, options = {}) => {
         const uid = window.localStorage.getItem('uid');
         const headers = new Headers(options.headers || {});
         if (uid) headers.set('New-Api-User', uid);
         return fetch(url, { ...options, headers, credentials: 'same-origin' });
       };
+
+      function syncFullPayloadToggle() {
+        captureFullPayload.disabled = !auditEnabled.checked;
+      }
+
+      async function loadSettings() {
+        const response = await apiFetch('/api/custom/conversation-audit/settings');
+        if (response.status === 403) return;
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) { message.textContent = payload.message || '无法读取审计设置。'; return; }
+        auditEnabled.checked = Boolean(payload.data.enabled);
+        captureFullPayload.checked = Boolean(payload.data.capture_full_payload);
+        syncFullPayloadToggle();
+        settings.hidden = false;
+      }
+
+      async function saveAuditSettings() {
+        saveSettings.disabled = true;
+        try {
+          const response = await apiFetch('/api/custom/conversation-audit/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: auditEnabled.checked, capture_full_payload: captureFullPayload.checked }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.success) { message.textContent = payload.message || '无法保存审计设置。'; return; }
+          auditEnabled.checked = Boolean(payload.data.enabled);
+          captureFullPayload.checked = Boolean(payload.data.capture_full_payload);
+          syncFullPayloadToggle();
+          message.textContent = '审计设置已保存。';
+        } finally {
+          saveSettings.disabled = false;
+        }
+      }
 
       async function load() {
         const form = new FormData(document.getElementById('filters'));
@@ -92,7 +152,7 @@
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.success) { message.textContent = payload.message || '无法读取会话审计记录，请确认管理员登录状态。'; rows.innerHTML = ''; return; }
         state.total = payload.total;
-        rows.innerHTML = payload.data.map(item => `<tr data-request-id="${escape(item.request_id)}"><td>${escape(new Date(item.created_at * 1000).toLocaleString())}</td><td>${escape(item.username)} (#${item.user_id})</td><td>${escape(item.model_name)}</td><td>${escape(item.status)}</td><td>${item.request_length} / ${item.response_length}</td><td>${escape(item.request_path)}</td><td>${escape(item.request_id)}</td></tr>`).join('');
+        rows.innerHTML = payload.data.map(item => `<tr data-request-id="${escape(item.request_id)}"><td>${escape(new Date(item.created_at * 1000).toLocaleString())}</td><td>${escape(item.username)} (#${item.user_id})</td><td>${escape(item.model_name)}</td><td>${escape(item.status)}${item.full_payload ? ' · 完整' : ''}</td><td>${item.request_length} / ${item.response_length}</td><td>${escape(item.request_path)}</td><td>${escape(item.request_id)}</td></tr>`).join('');
         document.getElementById('page').textContent = `第 ${state.page} 页，共 ${state.total} 条`;
         document.getElementById('previous').disabled = state.page === 1;
         document.getElementById('next').disabled = state.page * state.pageSize >= state.total;
@@ -104,11 +164,14 @@
         const response = await apiFetch('/api/custom/conversation-audits/' + encodeURIComponent(row.dataset.requestId));
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.success) { message.textContent = payload.message || '无法解密会话内容。'; return; }
+        const fullPayload = payload.data.audit.full_payload === true;
         const responsePartCount = Number(payload.data.response_part_count || 0);
         const mergeNote = responsePartCount > 1 ? ` · 已合并 ${responsePartCount} 段回复` : '';
-        document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}${mergeNote}`;
-        document.getElementById('request').textContent = auditText(payload.data.request, 'user_input');
-        document.getElementById('response').textContent = mergedResponseText(payload.data.response, payload.data.response_segments);
+        const truncation = [payload.data.audit.request_truncated ? '请求已截断' : '', payload.data.audit.response_truncated ? '回复已截断' : ''].filter(Boolean).join(' · ');
+        const fullPayloadNote = fullPayload ? ' · 完整原始报文' : '';
+        document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}${fullPayloadNote}${mergeNote}${truncation ? ` · ${truncation}` : ''}`;
+        document.getElementById('request').textContent = fullPayload ? rawPayloadText(payload.data.request) : auditText(payload.data.request, 'user_input');
+        document.getElementById('response').textContent = fullPayload ? rawPayloadText(payload.data.response) : mergedResponseText(payload.data.response, payload.data.response_segments);
         detail.showModal();
       });
 
@@ -117,12 +180,14 @@
       document.getElementById('previous').addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
       document.getElementById('next').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; load(); } });
       document.getElementById('close').addEventListener('click', () => detail.close());
+      auditEnabled.addEventListener('change', syncFullPayloadToggle);
+      saveSettings.addEventListener('click', saveAuditSettings);
       detail.addEventListener('click', event => {
         const bounds = detail.getBoundingClientRect();
         const clickedOutside = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
         if (clickedOutside) detail.close();
       });
-      load();
+      loadSettings().finally(load);
     </script>
   </body>
 </html>

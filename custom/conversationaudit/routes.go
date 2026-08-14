@@ -158,10 +158,11 @@ func getSettings(c *gin.Context) {
 }
 
 type updateSettingsRequest struct {
-	Enabled          *bool   `json:"enabled"`
-	RetentionDays    *int    `json:"retention_days"`
-	MaxContentBytes  *int    `json:"max_content_bytes"`
-	ActiveKeyVersion *string `json:"active_key_version"`
+	Enabled            *bool   `json:"enabled"`
+	CaptureFullPayload *bool   `json:"capture_full_payload"`
+	RetentionDays      *int    `json:"retention_days"`
+	MaxContentBytes    *int    `json:"max_content_bytes"`
+	ActiveKeyVersion   *string `json:"active_key_version"`
 }
 
 func updateSettings(c *gin.Context) {
@@ -178,6 +179,9 @@ func updateSettings(c *gin.Context) {
 	if request.Enabled != nil {
 		settings.Enabled = *request.Enabled
 	}
+	if request.CaptureFullPayload != nil {
+		settings.CaptureFullPayload = *request.CaptureFullPayload
+	}
 	if request.RetentionDays != nil {
 		settings.RetentionDays = clamp(*request.RetentionDays, 1, 3650)
 	}
@@ -188,10 +192,11 @@ func updateSettings(c *gin.Context) {
 		settings.ActiveKeyVersion = defaultKeyVersion(*request.ActiveKeyVersion)
 	}
 	if err := validateConfig(runtimeConfig{
-		Enabled:          settings.Enabled,
-		RetentionDays:    settings.RetentionDays,
-		MaxContentBytes:  settings.MaxContentBytes,
-		ActiveKeyVersion: settings.ActiveKeyVersion,
+		Enabled:            settings.Enabled,
+		CaptureFullPayload: settings.CaptureFullPayload,
+		RetentionDays:      settings.RetentionDays,
+		MaxContentBytes:    settings.MaxContentBytes,
+		ActiveKeyVersion:   settings.ActiveKeyVersion,
 	}); err != nil {
 		respondError(c, http.StatusBadRequest, "the configured encryption key is unavailable")
 		return
@@ -223,10 +228,11 @@ func rotateKey(c *gin.Context) {
 	}
 	settings.ActiveKeyVersion = defaultKeyVersion(request.ActiveKeyVersion)
 	if err := validateConfig(runtimeConfig{
-		Enabled:          settings.Enabled,
-		RetentionDays:    settings.RetentionDays,
-		MaxContentBytes:  settings.MaxContentBytes,
-		ActiveKeyVersion: settings.ActiveKeyVersion,
+		Enabled:            settings.Enabled,
+		CaptureFullPayload: settings.CaptureFullPayload,
+		RetentionDays:      settings.RetentionDays,
+		MaxContentBytes:    settings.MaxContentBytes,
+		ActiveKeyVersion:   settings.ActiveKeyVersion,
 	}); err != nil {
 		respondError(c, http.StatusBadRequest, "the configured encryption key is unavailable")
 		return

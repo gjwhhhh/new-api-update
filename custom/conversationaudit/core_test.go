@@ -141,6 +141,51 @@ func TestConfigFromEnvDisablesDiagnosticsByDefault(t *testing.T) {
 	assert.True(t, configFromEnv().DiagnosticsEnabled)
 }
 
+func TestRefreshSettingsLoadsFullPayloadToggle(t *testing.T) {
+	db := openConversationAuditMigrationTestDB(t)
+	require.NoError(t, migrateConversationAuditTables(db))
+
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	runtimeState.Lock()
+	previousConfig := runtimeState.config
+	previousKeys := runtimeState.keys
+	runtimeState.keys = map[string][]byte{"v1": []byte("12345678901234567890123456789012")}
+	runtimeState.Unlock()
+	t.Cleanup(func() {
+		runtimeState.Lock()
+		runtimeState.config = previousConfig
+		runtimeState.keys = previousKeys
+		runtimeState.Unlock()
+	})
+
+	settings := AuditSettings{
+		ID:                 settingsID,
+		Enabled:            true,
+		CaptureFullPayload: true,
+		RetentionDays:      30,
+		MaxContentBytes:    defaultMaxContentBytes,
+		ActiveKeyVersion:   "v1",
+	}
+	require.NoError(t, db.Create(&settings).Error)
+	refreshSettings()
+	assert.True(t, currentConfig().CaptureFullPayload)
+
+	settings.CaptureFullPayload = false
+	require.NoError(t, db.Save(&settings).Error)
+	refreshSettings()
+	assert.False(t, currentConfig().CaptureFullPayload)
+}
+
+func TestUpdateSettingsRequestPreservesFullPayloadFalse(t *testing.T) {
+	var request updateSettingsRequest
+	require.NoError(t, common.Unmarshal([]byte(`{"capture_full_payload":false}`), &request))
+	require.NotNil(t, request.CaptureFullPayload)
+	assert.False(t, *request.CaptureFullPayload)
+}
+
 func TestPersistStoresVisibleResponseWithoutNewUserText(t *testing.T) {
 	db := openConversationAuditMigrationTestDB(t)
 	require.NoError(t, migrateConversationAuditTables(db))
@@ -177,7 +222,7 @@ func TestPersistStoresVisibleResponseWithoutNewUserText(t *testing.T) {
 	context.Set("original_model", "gpt-test")
 	context.Request = httptest.NewRequest("POST", "/v1/responses", nil)
 
-	persist(context, "", `{"schema_version":2,"capture_mode":"assistant_text","assistant_text":"visible response"}`, "", "unlinked_response_continuation", false, false, "completed", 200)
+	persist(context, "", `{"schema_version":2,"capture_mode":"assistant_text","assistant_text":"visible response"}`, "", "unlinked_response_continuation", false, false, false, "completed", 200)
 
 	var audit ConversationAudit
 	require.NoError(t, db.Where("request_id = ?", "request-with-tool-continuation").First(&audit).Error)
@@ -187,7 +232,7 @@ func TestPersistStoresVisibleResponseWithoutNewUserText(t *testing.T) {
 	assert.Equal(t, "unlinked_response_continuation", audit.CaptureError)
 
 	context.Set(common.RequestIdKey, "empty-audit")
-	assert.Nil(t, persist(context, "", "", "", "", false, false, "completed", 200))
+	assert.Nil(t, persist(context, "", "", "", "", false, false, false, "completed", 200))
 	var emptyCount int64
 	require.NoError(t, db.Model(&ConversationAudit{}).Where("request_id = ?", "empty-audit").Count(&emptyCount).Error)
 	assert.Zero(t, emptyCount)

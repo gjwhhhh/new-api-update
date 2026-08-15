@@ -401,9 +401,10 @@ export function RatioSettingsCard({
           group_group_ratio: JSON.parse(normalized.GroupGroupRatio),
           auto_groups: JSON.parse(normalized.AutoGroups),
           default_use_auto_group: normalized.DefaultUseAutoGroup,
-          group_special_usable_group: JSON.parse(
-            normalized.GroupSpecialUsableGroup
-          ),
+          group_special_usable_group:
+            normalized.GroupSpecialUsableGroup === ''
+              ? current.config.group_special_usable_group
+              : JSON.parse(normalized.GroupSpecialUsableGroup),
           model_request_rate_limit: current.config.model_request_rate_limit,
         }
       } catch {

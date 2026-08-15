@@ -31,6 +31,14 @@ type ModelRequest struct {
 
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		service.LockGroupMutationRead()
+		groupGateLocked := true
+		defer func() {
+			if groupGateLocked {
+				service.UnlockGroupMutationRead()
+			}
+		}()
+
 		var channel *model.Channel
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
@@ -82,7 +90,8 @@ func Distribute() func(c *gin.Context) {
 					return
 				}
 				var selectGroup string
-				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+				usingGroup := service.ResolveRenamedGroup(common.GetContextKeyString(c, constant.ContextKeyUsingGroup))
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
 				// check path is /pg/chat/completions
 				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
 					playgroundRequest := &dto.PlayGroundRequest{}
@@ -92,7 +101,10 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+						playgroundRequest.Group = service.ResolveRenamedGroup(playgroundRequest.Group)
+						userGroup := service.ResolveRenamedGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+						common.SetContextKey(c, constant.ContextKeyUserGroup, userGroup)
+						if !service.GroupInUserUsableGroups(userGroup, playgroundRequest.Group) && playgroundRequest.Group != userGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
@@ -162,6 +174,8 @@ func Distribute() func(c *gin.Context) {
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		service.UnlockGroupMutationRead()
+		groupGateLocked = false
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)

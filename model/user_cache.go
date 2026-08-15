@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -61,6 +62,42 @@ func invalidateUserCache(userId int) error {
 // 供 controller 等上层包在用户状态变更（如禁用、删除、角色变更）后主动清理缓存。
 func InvalidateUserCache(userId int) error {
 	return invalidateUserCache(userId)
+}
+
+// InvalidateUserCaches removes a batch of user cache entries in one Redis
+// pipeline. Group migrations use this after their database transaction commits
+// so subsequent token authentication reads the renamed group immediately.
+func InvalidateUserCaches(userIDs []int) error {
+	if !common.RedisEnabled || len(userIDs) == 0 {
+		return nil
+	}
+	if common.RDB == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+	seen := make(map[int]struct{}, len(userIDs))
+	keys := make([]string, 0, len(userIDs))
+	for _, userID := range userIDs {
+		if userID <= 0 {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		keys = append(keys, getUserCacheKey(userID))
+	}
+	for start := 0; start < len(keys); start += 500 {
+		end := start + 500
+		if end > len(keys) {
+			end = len(keys)
+		}
+		pipe := common.RDB.Pipeline()
+		pipe.Del(context.Background(), keys[start:end]...)
+		if _, err := pipe.Exec(context.Background()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func populateUserCache(user User) error {

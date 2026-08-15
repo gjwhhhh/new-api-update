@@ -39,6 +39,51 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type GroupConfig = {
+  group_ratio: Record<string, number>
+  topup_group_ratio: Record<string, number>
+  user_usable_groups: Record<string, string>
+  group_group_ratio: Record<string, Record<string, number>>
+  auto_groups: string[]
+  default_use_auto_group: boolean
+  group_special_usable_group: Record<string, Record<string, string>>
+  model_request_rate_limit: Record<string, [number, number]>
+}
+
+export type GroupConfigResponse = {
+  success: boolean
+  message: string
+  data?: {
+    config: GroupConfig
+    revision: string
+  }
+}
+
+export type GroupRenameAffected = {
+  users: number
+  tokens: number
+  channels: number
+  abilities: number
+  subscription_plans: number
+  active_subscriptions: number
+  active_tasks: number
+  config_references: number
+}
+
+export type GroupRenamePreview = {
+  old_name: string
+  new_name: string
+  revision: string
+  affected: GroupRenameAffected
+  warnings: string[]
+}
+
+export type GroupRenameResponse = {
+  success: boolean
+  message: string
+  data?: GroupRenamePreview
+}
+
 export type ConfirmPaymentComplianceResponse = {
   success: boolean
   message: string

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -23,6 +24,41 @@ func cacheDeleteToken(key string) error {
 	err := common.RedisDelKey(fmt.Sprintf("token:%s", key))
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+// InvalidateTokenCaches removes token caches in one Redis pipeline. It accepts
+// raw token keys and hashes them only when constructing the cache key.
+func InvalidateTokenCaches(keys []string) error {
+	if !common.RedisEnabled || len(keys) == 0 {
+		return nil
+	}
+	if common.RDB == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+	seen := make(map[string]struct{}, len(keys))
+	cacheKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		cacheKeys = append(cacheKeys, fmt.Sprintf("token:%s", common.GenerateHMAC(key)))
+	}
+	for start := 0; start < len(cacheKeys); start += 500 {
+		end := start + 500
+		if end > len(cacheKeys) {
+			end = len(cacheKeys)
+		}
+		pipe := common.RDB.Pipeline()
+		pipe.Del(context.Background(), cacheKeys[start:end]...)
+		if _, err := pipe.Exec(context.Background()); err != nil {
+			return err
+		}
 	}
 	return nil
 }

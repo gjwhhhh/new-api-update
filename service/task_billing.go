@@ -275,33 +275,38 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 
 	modelName := taskModelName(task)
 
-	// 获取模型价格和倍率
-	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
-	// 只有配置了倍率(非固定价格)时才按 token 重新计费
-	if !hasRatioSetting || modelRatio <= 0 {
-		return
+	// New tasks persist the exact multipliers used for pre-consume. Settlement
+	// must prefer that snapshot: a later group rename or price adjustment cannot
+	// retroactively change a task that was already accepted. Older tasks without
+	// a snapshot retain the previous lookup behavior, with rename aliases folded
+	// in before reading the current setting.
+	modelRatio := 0.0
+	finalGroupRatio := 0.0
+	hasGroupRatioSnapshot := false
+	if billingContext := task.PrivateData.BillingContext; billingContext != nil {
+		modelRatio = billingContext.ModelRatio
+		finalGroupRatio = billingContext.GroupRatio
+		hasGroupRatioSnapshot = true
 	}
-
-	// 获取用户和组的倍率信息
-	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
+	if modelRatio <= 0 {
+		var hasRatioSetting bool
+		modelRatio, hasRatioSetting, _ = ratio_setting.GetModelRatio(modelName)
+		if !hasRatioSetting || modelRatio <= 0 {
+			return
 		}
 	}
-	if group == "" {
-		return
-	}
-
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
-	var finalGroupRatio float64
-	if hasUserGroupRatio {
-		finalGroupRatio = userGroupRatio
-	} else {
-		finalGroupRatio = groupRatio
+	if !hasGroupRatioSnapshot {
+		group := ResolveRenamedGroup(task.Group)
+		if group == "" {
+			user, err := model.GetUserById(task.UserId, false)
+			if err == nil {
+				group = ResolveRenamedGroup(user.Group)
+			}
+		}
+		if group == "" {
+			return
+		}
+		finalGroupRatio = ratio_setting.GetGroupRatio(group)
 	}
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）

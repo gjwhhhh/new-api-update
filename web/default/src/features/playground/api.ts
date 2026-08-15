@@ -80,3 +80,12 @@ export async function getUserGroups(): Promise<GroupOption[]> {
     desc: info.desc,
   }))
 }
+
+export async function getUserGroupAliases(): Promise<Record<string, string>> {
+  const res = await api.get(API_ENDPOINTS.USER_GROUP_ALIASES)
+  const { data } = res
+  if (!data.success || !data.data) {
+    return {}
+  }
+  return data.data as Record<string, string>
+}

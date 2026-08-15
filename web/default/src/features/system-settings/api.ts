@@ -21,6 +21,9 @@ import { api } from '@/lib/api'
 import type {
   ConfirmPaymentComplianceResponse,
   FetchUpstreamRatiosRequest,
+  GroupConfig,
+  GroupConfigResponse,
+  GroupRenameResponse,
   LogCleanupTask,
   SystemOptionsResponse,
   SystemTaskListResponse,
@@ -38,6 +41,40 @@ export async function getSystemOptions() {
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
   const res = await api.put<UpdateOptionResponse>('/api/option/', request)
+  return res.data
+}
+
+export async function getGroupConfig() {
+  const res = await api.get<GroupConfigResponse>('/api/group/config')
+  return res.data
+}
+
+export async function updateGroupConfig(request: {
+  revision: string
+  config: GroupConfig
+}) {
+  const res = await api.put<GroupConfigResponse>('/api/group/config', request)
+  return res.data
+}
+
+export async function previewGroupRename(request: {
+  old_name: string
+  new_name: string
+}) {
+  const res = await api.post<GroupRenameResponse>(
+    '/api/group/rename-preview',
+    request
+  )
+  return res.data
+}
+
+export async function renameGroup(request: {
+  old_name: string
+  new_name: string
+  revision: string
+  confirmation: string
+}) {
+  const res = await api.post<GroupRenameResponse>('/api/group/rename', request)
   return res.data
 }
 

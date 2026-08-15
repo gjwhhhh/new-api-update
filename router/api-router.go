@@ -84,6 +84,7 @@ func SetApiRouter(router *gin.Engine) {
 			selfRoute.Use(middleware.UserAuth())
 			{
 				selfRoute.GET("/self/groups", controller.GetUserGroups)
+				selfRoute.GET("/group-aliases", controller.GetUserGroupAliases)
 				selfRoute.GET("/self", controller.GetSelf)
 				selfRoute.GET("/models", controller.GetUserModels)
 				selfRoute.PUT("/self", middleware.CriticalRateLimit(), controller.UpdateSelf)
@@ -313,9 +314,12 @@ func SetApiRouter(router *gin.Engine) {
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
 		}
 		groupRoute := apiRouter.Group("/group")
-		groupRoute.Use(middleware.AdminAuth())
 		{
-			groupRoute.GET("/", controller.GetGroups)
+			groupRoute.GET("/", middleware.AdminAuth(), controller.GetGroups)
+			groupRoute.GET("/config", middleware.AdminAuth(), controller.GetGroupConfig)
+			groupRoute.PUT("/config", middleware.AdminAuth(), middleware.CriticalRateLimit(), controller.UpdateGroupConfig)
+			groupRoute.POST("/rename-preview", middleware.RootAuth(), middleware.CriticalRateLimit(), controller.PreviewGroupRename)
+			groupRoute.POST("/rename", middleware.RootAuth(), middleware.CriticalRateLimit(), controller.RenameGroup)
 		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")

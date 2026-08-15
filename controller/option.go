@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -136,6 +137,10 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
+	}
+	if service.IsGroupManagedOption(option.Key) {
+		common.ApiErrorMsg(c, "分组相关配置必须通过分组配置接口保存")
+		return
 	}
 	switch option.Key {
 	case "QuotaForInviter", "QuotaForInvitee":
@@ -331,6 +336,10 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	}
+	if service.IsGroupRelatedOption(option.Key) {
+		service.LockGroupMutation()
+		defer service.UnlockGroupMutation()
 	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {

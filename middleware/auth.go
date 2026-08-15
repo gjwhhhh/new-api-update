@@ -417,8 +417,9 @@ func TokenAuth() func(c *gin.Context) {
 
 		userCache.WriteContext(c)
 
-		userGroup := userCache.Group
-		tokenGroup := token.Group
+		userGroup := service.ResolveRenamedGroup(userCache.Group)
+		common.SetContextKey(c, constant.ContextKeyUserGroup, userGroup)
+		tokenGroup := service.ResolveRenamedGroup(token.Group)
 		if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {

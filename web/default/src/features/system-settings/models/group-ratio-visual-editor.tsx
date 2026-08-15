@@ -29,6 +29,7 @@ import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
+import { Dialog } from '@/components/dialog'
 import {
   sideDrawerContentClassName,
   sideDrawerFormClassName,
@@ -49,7 +50,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { Dialog } from '@/components/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -77,7 +77,9 @@ type GroupRatioVisualEditorProps = {
   groupGroupRatio: string
   autoGroups: string
   groupSpecialUsableGroup: string
+  persistedGroupNames: string[]
   onChange: (field: string, value: string) => void
+  onRename: (groupName: string) => void
 }
 
 type GroupPricingRow = {
@@ -258,7 +260,9 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   groupGroupRatio,
   autoGroups,
   groupSpecialUsableGroup,
+  persistedGroupNames,
   onChange,
+  onRename,
 }: GroupRatioVisualEditorProps) {
   const { t } = useTranslation()
   const [detailGroup, setDetailGroup] = useState<string | null>(null)
@@ -329,8 +333,10 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
         groupRatio={groupRatio}
         userUsableGroups={userUsableGroups}
         topupGroupRatio={topupGroupRatio}
+        persistedGroupNames={persistedGroupNames}
         onChange={onChange}
         onShowDetail={setDetailGroup}
+        onRename={onRename}
       />
 
       <GroupOverrideRules
@@ -420,16 +426,20 @@ type GroupPricingTableProps = {
   groupRatio: string
   userUsableGroups: string
   topupGroupRatio: string
+  persistedGroupNames: string[]
   onChange: (field: string, value: string) => void
   onShowDetail: (name: string) => void
+  onRename: (groupName: string) => void
 }
 
 function GroupPricingTable({
   groupRatio,
   userUsableGroups,
   topupGroupRatio,
+  persistedGroupNames,
   onChange,
   onShowDetail,
+  onRename,
 }: GroupPricingTableProps) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<GroupPricingRow[]>(() =>
@@ -518,6 +528,11 @@ function GroupPricingTable({
       .map(([name]) => name)
   }, [rows])
 
+  const persistedGroupNameSet = useMemo(
+    () => new Set(persistedGroupNames),
+    [persistedGroupNames]
+  )
+
   return (
     <Card className={sectionCardClassName}>
       <CardHeader className={sectionHeaderClassName}>
@@ -551,6 +566,7 @@ function GroupPricingTable({
                 cell: (row) => (
                   <Input
                     value={row.name}
+                    disabled={persistedGroupNameSet.has(row.name.trim())}
                     onChange={(event) =>
                       updateRow(row._id, 'name', event.target.value)
                     }
@@ -642,10 +658,22 @@ function GroupPricingTable({
                     >
                       <Info className='h-4 w-4' />
                     </Button>
+                    {persistedGroupNameSet.has(row.name.trim()) &&
+                    row.name !== 'default' &&
+                    row.name !== 'auto' ? (
+                      <Button
+                        variant='ghost'
+                        size='sm'
+                        onClick={() => onRename(row.name.trim())}
+                      >
+                        {t('Rename')}
+                      </Button>
+                    ) : null}
                     <Button
                       variant='ghost'
                       size='sm'
                       onClick={() => removeRow(row._id)}
+                      disabled={persistedGroupNameSet.has(row.name.trim())}
                       aria-label={t('Delete')}
                     >
                       <Trash2 className='h-4 w-4' />
@@ -1100,10 +1128,13 @@ function GroupOverrideDialog({
           <p className='text-muted-foreground text-xs'>
             {baseRatio !== undefined
               ? t('(instead of {{ratio}})', { ratio: baseRatio })
-              : t('Multiplier applied when {{userGroup}} uses {{targetGroup}}', {
-                  userGroup: userGroup || t('this user group'),
-                  targetGroup: targetGroup || t('this token group'),
-                })}
+              : t(
+                  'Multiplier applied when {{userGroup}} uses {{targetGroup}}',
+                  {
+                    userGroup: userGroup || t('this user group'),
+                    targetGroup: targetGroup || t('this token group'),
+                  }
+                )}
           </p>
         </div>
       </div>

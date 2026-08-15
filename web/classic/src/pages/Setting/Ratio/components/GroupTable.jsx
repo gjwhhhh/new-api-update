@@ -7,7 +7,7 @@ import {
   Typography,
   Popconfirm,
 } from '@douyinfe/semi-ui';
-import { IconPlus, IconDelete } from '@douyinfe/semi-icons';
+import { IconEdit, IconPlus, IconDelete } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import CardTable from '../../../../components/common/ui/CardTable';
 
@@ -36,6 +36,7 @@ function buildRows(groupRatioStr, userUsableGroupsStr) {
 
   return Array.from(allNames).map((name) => ({
     _id: uid(),
+    persisted: true,
     name,
     ratio: ratioMap[name] ?? 1,
     selectable: name in usableMap,
@@ -61,7 +62,12 @@ export function serializeGroupTable(rows) {
   };
 }
 
-export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
+export default function GroupTable({
+  groupRatio,
+  userUsableGroups,
+  onChange,
+  onRename,
+}) {
   const { t } = useTranslation();
 
   const [rows, setRows] = useState(() =>
@@ -104,6 +110,7 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
         ...prev,
         {
           _id: uid(),
+          persisted: false,
           name: newName,
           ratio: 1,
           selectable: true,
@@ -146,6 +153,7 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
           <Input
             size='small'
             value={record.name}
+            disabled={record.persisted}
             status={
               duplicateNamesRef.current.has(record.name) ? 'warning' : undefined
             }
@@ -207,22 +215,37 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
         key: 'actions',
         width: 50,
         render: (_, record) => (
-          <Popconfirm
-            title={t('确认删除该分组？')}
-            onConfirm={() => removeRow(record._id)}
-            position='left'
-          >
-            <Button
-              icon={<IconDelete />}
-              type='danger'
-              theme='borderless'
-              size='small'
-            />
-          </Popconfirm>
+          <div className='flex gap-1'>
+            {record.persisted &&
+              record.name !== 'default' &&
+              record.name !== 'auto' && (
+                <Button
+                  icon={<IconEdit />}
+                  theme='borderless'
+                  size='small'
+                  onClick={() => onRename?.(record.name)}
+                  aria-label={t('重命名分组')}
+                />
+              )}
+            <Popconfirm
+              title={t('确认删除该分组？')}
+              onConfirm={() => removeRow(record._id)}
+              position='left'
+              disabled={record.persisted}
+            >
+              <Button
+                icon={<IconDelete />}
+                type='danger'
+                theme='borderless'
+                size='small'
+                disabled={record.persisted}
+              />
+            </Popconfirm>
+          </div>
         ),
       },
     ],
-    [t, updateRow, removeRow],
+    [t, updateRow, removeRow, onRename],
   );
 
   return (

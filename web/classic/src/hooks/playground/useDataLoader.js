@@ -56,18 +56,43 @@ export const useDataLoader = (
 
   const loadGroups = useCallback(async () => {
     try {
-      const res = await API.get(API_ENDPOINTS.USER_GROUPS);
+      const [aliasesRes, res, selfRes] = await Promise.all([
+        API.get(API_ENDPOINTS.USER_GROUP_ALIASES),
+        API.get(API_ENDPOINTS.USER_GROUPS),
+        API.get('/api/user/self'),
+      ]);
       const { success, message, data } = res.data;
 
       if (success) {
+        const aliases = aliasesRes.data?.success
+          ? aliasesRes.data.data || {}
+          : {};
+        const renamedGroup = aliases[inputs.group];
+        if (renamedGroup && renamedGroup !== inputs.group) {
+          handleInputChange('group', renamedGroup);
+        }
+
+        const latestUser = selfRes.data?.success ? selfRes.data.data : null;
+        if (latestUser?.group) {
+          try {
+            const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
+            localStorage.setItem(
+              'user',
+              JSON.stringify({ ...storedUser, ...latestUser }),
+            );
+          } catch {
+            // Storage is optional; the current request still uses server data.
+          }
+        }
         const userGroup =
+          latestUser?.group ||
           userState?.user?.group ||
           JSON.parse(localStorage.getItem('user'))?.group;
         const groupOptions = processGroupsData(data, userGroup);
         setGroups(groupOptions);
 
         const hasCurrentGroup = groupOptions.some(
-          (option) => option.value === inputs.group,
+          (option) => option.value === (renamedGroup || inputs.group),
         );
         if (!hasCurrentGroup) {
           handleInputChange('group', groupOptions[0]?.value || '');

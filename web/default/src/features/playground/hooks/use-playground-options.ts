@@ -21,7 +21,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { getUserGroups, getUserModels } from '../api'
+import { getUserGroupAliases, getUserGroups, getUserModels } from '../api'
 import {
   getGroupFallback,
   getModelFallback,
@@ -59,6 +59,11 @@ export function usePlaygroundOptions({
     queryKey: ['playground-models', currentGroup],
     queryFn: () => getUserModels(currentGroup),
     enabled: currentGroup !== '',
+  })
+
+  const { data: aliasesData } = useQuery({
+    queryKey: ['playground-group-aliases'],
+    queryFn: getUserGroupAliases,
   })
 
   const {
@@ -109,7 +114,16 @@ export function usePlaygroundOptions({
   }, [modelsData, currentModel, setModels, updateConfig])
 
   useEffect(() => {
+    const renamedGroup = aliasesData?.[currentGroup]
+    if (renamedGroup && renamedGroup !== currentGroup) {
+      updateConfig('group', renamedGroup)
+    }
+  }, [aliasesData, currentGroup, updateConfig])
+
+  useEffect(() => {
     if (!groupsData) return
+
+    if (aliasesData?.[currentGroup]) return
 
     setGroups(groupsData)
     const fallback = getGroupFallback(groupsData, currentGroup)
@@ -117,7 +131,7 @@ export function usePlaygroundOptions({
     if (fallback) {
       updateConfig('group', fallback)
     }
-  }, [groupsData, currentGroup, setGroups, updateConfig])
+  }, [aliasesData, groupsData, currentGroup, setGroups, updateConfig])
 
   return {
     isLoadingModels,

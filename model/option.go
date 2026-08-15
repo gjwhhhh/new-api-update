@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -230,21 +231,38 @@ func UpdateOptionsBulk(values map[string]string) error {
 		return nil
 	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		for k, v := range values {
-			option := Option{Key: k}
-			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
-				return err
-			}
-			option.Value = v
-			if err := tx.Save(&option).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		return UpdateOptionsBulkWithTx(tx, values)
 	})
 	if err != nil {
 		return err
 	}
+	return ApplyOptionValues(values)
+}
+
+// UpdateOptionsBulkWithTx writes options using the caller's transaction but
+// deliberately leaves runtime state untouched. Cross-table migrations use it
+// so they can commit option rows and business data together before publishing
+// the new in-memory configuration.
+func UpdateOptionsBulkWithTx(tx *gorm.DB, values map[string]string) error {
+	if tx == nil {
+		return errors.New("option transaction is nil")
+	}
+	for k, v := range values {
+		option := Option{Key: k}
+		if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
+			return err
+		}
+		option.Value = v
+		if err := tx.Save(&option).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ApplyOptionValues publishes already-persisted option values to runtime
+// configuration. Callers must validate values before the database commit.
+func ApplyOptionValues(values map[string]string) error {
 	for k, v := range values {
 		if err := updateOptionMap(k, v); err != nil {
 			return err

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
@@ -263,6 +264,10 @@ func InitLogDB() (err error) {
 func migrateDB() error {
 	// Migrate price_amount column from float/double to decimal for existing tables
 	migrateSubscriptionPlanPriceAmount()
+	// Expand group columns before group rename becomes available.
+	if err := migrateGroupRenameColumnWidths(); err != nil {
+		return err
+	}
 	// Migrate model_limits column from varchar to text for existing tables
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
@@ -300,6 +305,7 @@ func migrateDB() error {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&GroupRenameAlias{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -313,6 +319,65 @@ func migrateDB() error {
 	} else {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// migrateGroupRenameColumnWidths expands fields that must retain a 64-character
+// group name. SQLite's type affinity does not enforce varchar length, while
+// MySQL/PostgreSQL need an explicit migration for existing installations.
+func migrateGroupRenameColumnWidths() error {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		return nil
+	}
+	if !DB.Migrator().HasTable("tasks") || !DB.Migrator().HasTable("channels") ||
+		!DB.Migrator().HasColumn(&Task{}, "group") || !DB.Migrator().HasColumn(&Channel{}, "group") {
+		return nil
+	}
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		var taskLength sql.NullInt64
+		if err := DB.Raw(`SELECT character_maximum_length FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'tasks' AND column_name = 'group'`).Scan(&taskLength).Error; err != nil {
+			return fmt.Errorf("failed to inspect tasks.group: %w", err)
+		}
+		if !taskLength.Valid || taskLength.Int64 < 64 {
+			if err := DB.Exec(`ALTER TABLE tasks ALTER COLUMN "group" TYPE varchar(64)`).Error; err != nil {
+				return fmt.Errorf("failed to expand tasks.group: %w", err)
+			}
+		}
+		var channelLength sql.NullInt64
+		if err := DB.Raw(`SELECT character_maximum_length FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'channels' AND column_name = 'group'`).Scan(&channelLength).Error; err != nil {
+			return fmt.Errorf("failed to inspect channels.group: %w", err)
+		}
+		if !channelLength.Valid || channelLength.Int64 < 4096 {
+			if err := DB.Exec(`ALTER TABLE channels ALTER COLUMN "group" TYPE varchar(4096)`).Error; err != nil {
+				return fmt.Errorf("failed to expand channels.group: %w", err)
+			}
+		}
+		return nil
+	}
+	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		var taskColumnType string
+		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = 'tasks' AND column_name = 'group'`).Scan(&taskColumnType).Error; err != nil {
+			return fmt.Errorf("failed to inspect tasks.group: %w", err)
+		}
+		if !strings.EqualFold(taskColumnType, "varchar(64)") {
+			if err := DB.Exec("ALTER TABLE tasks MODIFY COLUMN `group` varchar(64)").Error; err != nil {
+				return fmt.Errorf("failed to expand tasks.group: %w", err)
+			}
+		}
+		var channelColumnType string
+		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = 'channels' AND column_name = 'group'`).Scan(&channelColumnType).Error; err != nil {
+			return fmt.Errorf("failed to inspect channels.group: %w", err)
+		}
+		if !strings.EqualFold(channelColumnType, "varchar(4096)") {
+			if err := DB.Exec("ALTER TABLE channels MODIFY COLUMN `group` varchar(4096) DEFAULT 'default'").Error; err != nil {
+				return fmt.Errorf("failed to expand channels.group: %w", err)
+			}
 		}
 	}
 	return nil
@@ -357,6 +422,7 @@ func migrateDBFast() error {
 		{&SystemInstance{}, "SystemInstance"},
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
+		{&GroupRenameAlias{}, "GroupRenameAlias"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

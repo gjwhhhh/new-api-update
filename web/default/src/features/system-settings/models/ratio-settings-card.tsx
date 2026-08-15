@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -27,11 +27,13 @@ import * as z from 'zod'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-import { resetModelRatios } from '../api'
+import { getGroupConfig, resetModelRatios, updateGroupConfig } from '../api'
 import { SettingsPageTitleStatusPortal } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import type { GroupConfig } from '../types'
 import { GroupRatioForm } from './group-ratio-form'
+import { GroupRenameDialog } from './group-rename-dialog'
 import { ModelRatioForm } from './model-ratio-form'
 import { ToolPriceSettings } from './tool-price-settings'
 import { UpstreamRatioSync } from './upstream-ratio-sync'
@@ -162,6 +164,13 @@ export function RatioSettingsCard({
   const updateOption = useUpdateOption()
   const queryClient = useQueryClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [renameGroupName, setRenameGroupName] = useState<string | null>(null)
+
+  const groupConfigQuery = useQuery({
+    queryKey: ['group-config'],
+    queryFn: getGroupConfig,
+    staleTime: 5 * 60 * 1000,
+  })
 
   const resetMutation = useMutation({
     mutationFn: resetModelRatios,
@@ -176,6 +185,17 @@ export function RatioSettingsCard({
     },
     onError: (error: Error) => {
       toast.error(error.message || t('Failed to reset model ratios'))
+    },
+  })
+
+  const groupConfigMutation = useMutation({
+    mutationFn: updateGroupConfig,
+    onSuccess: (response) => {
+      if (!response.success) return
+      queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      queryClient.invalidateQueries({ queryKey: ['group-config'] })
+      queryClient.invalidateQueries({ queryKey: ['playground-groups'] })
+      queryClient.invalidateQueries({ queryKey: ['playground-models'] })
     },
   })
 
@@ -366,24 +386,44 @@ export function RatioSettingsCard({
         ),
       }
 
-      // Map form field names to API keys (most are 1:1, except GroupSpecialUsableGroup)
-      const apiKeyMap: Record<string, string> = {
-        GroupSpecialUsableGroup:
-          'group_ratio_setting.group_special_usable_group',
+      const current = groupConfigQuery.data?.data
+      if (!current) {
+        toast.error(t('Failed to load group configuration'))
+        return
       }
 
-      const updates = (
-        Object.keys(normalized) as Array<keyof typeof normalized>
-      ).filter(
-        (key) => normalized[key] !== groupNormalizedDefaults.current[key]
-      )
-
-      for (const key of updates) {
-        const apiKey = apiKeyMap[key] || key
-        await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
+      let config: GroupConfig
+      try {
+        config = {
+          group_ratio: JSON.parse(normalized.GroupRatio),
+          topup_group_ratio: JSON.parse(normalized.TopupGroupRatio),
+          user_usable_groups: JSON.parse(normalized.UserUsableGroups),
+          group_group_ratio: JSON.parse(normalized.GroupGroupRatio),
+          auto_groups: JSON.parse(normalized.AutoGroups),
+          default_use_auto_group: normalized.DefaultUseAutoGroup,
+          group_special_usable_group: JSON.parse(
+            normalized.GroupSpecialUsableGroup
+          ),
+          model_request_rate_limit: current.config.model_request_rate_limit,
+        }
+      } catch {
+        toast.error(t('Invalid JSON'))
+        return
       }
+
+      const response = await groupConfigMutation.mutateAsync({
+        revision: current.revision,
+        config,
+      })
+      if (!response.success) {
+        toast.error(response.message || t('Failed to save group configuration'))
+        return
+      }
+
+      groupNormalizedDefaults.current = normalized
+      toast.success(t('Group configuration saved'))
     },
-    [updateOption]
+    [groupConfigMutation, groupConfigQuery.data, t]
   )
 
   const handleResetRatios = useCallback(() => {
@@ -431,7 +471,8 @@ export function RatioSettingsCard({
         <GroupRatioForm
           form={groupForm}
           onSave={saveGroupRatios}
-          isSaving={updateOption.isPending}
+          onRename={setRenameGroupName}
+          isSaving={groupConfigMutation.isPending}
         />
       )
     }
@@ -499,6 +540,12 @@ export function RatioSettingsCard({
         isLoading={resetMutation.isPending}
         handleConfirm={handleConfirmReset}
         confirmText={t('Reset')}
+      />
+      <GroupRenameDialog
+        oldName={renameGroupName}
+        onOpenChange={(open) => {
+          if (!open) setRenameGroupName(null)
+        }}
       />
     </>
   )

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -79,8 +80,14 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	var streamErr *types.NewAPIError
+	hasForwardedEvent := false
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		if streamErr != nil {
+			sr.Stop(streamErr)
+			return
+		}
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
@@ -89,7 +96,31 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+		if upstreamError := responsesStreamEventError(&streamResponse); upstreamError != nil {
+			logger.LogError(c, fmt.Sprintf("responses stream terminal error: event=%s type=%s code=%v", streamResponse.Type, upstreamError.Type, upstreamError.Code))
+			streamErr = newResponsesStreamChannelError(streamResponse.Type, hasForwardedEvent)
+
+			if hasForwardedEvent {
+				c.Set(string(constant.ContextKeyStreamTerminalErrorSent), true)
+				terminalEvent := responsesStreamTerminalEvent(streamResponse.Type, streamErr)
+				terminalData, err := common.Marshal(terminalEvent)
+				if err != nil {
+					logger.LogError(c, "failed to marshal responses stream terminal error: "+err.Error())
+				} else if err := helper.ResponseChunkData(c, terminalEvent, string(terminalData)); err != nil {
+					logger.LogError(c, "failed to send responses stream terminal error: "+err.Error())
+				}
+			}
+
+			sr.Stop(streamErr)
+			return
+		}
+
+		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
+			logger.LogError(c, "failed to send responses stream data: "+err.Error())
+			sr.Stop(err)
+			return
+		}
+		hasForwardedEvent = true
 		switch streamResponse.Type {
 		case "response.completed":
 			if streamResponse.Response != nil {
@@ -131,6 +162,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+	if streamErr != nil {
+		return nil, streamErr
+	}
 
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量
@@ -148,5 +182,5 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
-	return usage, nil
+	return usage, streamErr
 }

@@ -14,8 +14,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -109,6 +113,7 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 
 	db := openTokenControllerTestDB(t)
 	migrateTokenControllerTestDB(t, db)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
 	return db
 }
 
@@ -503,6 +508,78 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("update response leaked raw token key: %s", recorder.Body.String())
 	}
+}
+
+func TestTokenGroupMustBeExplicitAndAvailable(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+
+	originalRatios, err := common.Marshal(ratio_setting.GetGroupRatioCopy())
+	require.NoError(t, err)
+	originalUsableGroups, err := common.Marshal(setting.GetUserUsableGroupsCopy())
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"standard":1}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"standard":"Standard"}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(string(originalRatios)))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(string(originalUsableGroups)))
+	})
+
+	user := model.User{
+		Id:       1,
+		Username: "token-group-user",
+		Password: "password",
+		Group:    "member",
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	emptyGroupContext, emptyGroupRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", model.Token{
+		Name:           "empty-group",
+		ExpiredTime:    -1,
+		UnlimitedQuota: true,
+	}, user.Id)
+	AddToken(emptyGroupContext)
+	emptyGroupResponse := decodeAPIResponse(t, emptyGroupRecorder)
+	assert.False(t, emptyGroupResponse.Success)
+
+	unavailableGroupContext, unavailableGroupRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", model.Token{
+		Name:           "unavailable-group",
+		ExpiredTime:    -1,
+		UnlimitedQuota: true,
+		Group:          "premium",
+	}, user.Id)
+	AddToken(unavailableGroupContext)
+	unavailableGroupResponse := decodeAPIResponse(t, unavailableGroupRecorder)
+	assert.False(t, unavailableGroupResponse.Success)
+
+	validGroupContext, validGroupRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/", model.Token{
+		Name:           "standard-group",
+		ExpiredTime:    -1,
+		UnlimitedQuota: true,
+		Group:          " standard ",
+	}, user.Id)
+	AddToken(validGroupContext)
+	validGroupResponse := decodeAPIResponse(t, validGroupRecorder)
+	require.True(t, validGroupResponse.Success, validGroupResponse.Message)
+
+	var createdToken model.Token
+	require.NoError(t, db.Where("name = ?", "standard-group").First(&createdToken).Error)
+	assert.Equal(t, "standard", createdToken.Group)
+
+	updateContext, updateRecorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", map[string]any{
+		"id":                createdToken.Id,
+		"name":              createdToken.Name,
+		"group":             "",
+		"unlimited_quota":   true,
+		"expired_time":      -1,
+		"cross_group_retry": false,
+	}, user.Id)
+	UpdateToken(updateContext)
+	updateResponse := decodeAPIResponse(t, updateRecorder)
+	assert.False(t, updateResponse.Success)
+
+	var updatedToken model.Token
+	require.NoError(t, db.First(&updatedToken, createdToken.Id).Error)
+	assert.Equal(t, "standard", updatedToken.Group)
 }
 
 func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {

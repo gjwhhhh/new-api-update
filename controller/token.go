@@ -9,7 +9,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -164,6 +166,24 @@ func GetTokenUsage(c *gin.Context) {
 	})
 }
 
+func validateTokenGroup(userID int, group string) (string, string) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return "", i18n.MsgTokenGroupRequired
+	}
+	userGroup, err := model.GetUserGroup(userID, false)
+	if err != nil {
+		return "", i18n.MsgTokenGroupUnavailable
+	}
+	if !service.GroupInUserUsableGroups(userGroup, group) {
+		return "", i18n.MsgTokenGroupUnavailable
+	}
+	if group != "auto" && !ratio_setting.ContainsGroupRatio(group) {
+		return "", i18n.MsgTokenGroupRetired
+	}
+	return group, ""
+}
+
 func AddToken(c *gin.Context) {
 	token := model.Token{}
 	err := c.ShouldBindJSON(&token)
@@ -173,6 +193,11 @@ func AddToken(c *gin.Context) {
 	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
+		return
+	}
+	group, groupError := validateTokenGroup(c.GetInt("id"), token.Group)
+	if groupError != "" {
+		common.ApiErrorI18n(c, groupError)
 		return
 	}
 	// 非无限额度时，检查额度值是否超出有效范围
@@ -219,7 +244,7 @@ func AddToken(c *gin.Context) {
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
-		Group:              token.Group,
+		Group:              group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 	}
 	err = cleanToken.Insert()
@@ -289,6 +314,11 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
+		group, groupError := validateTokenGroup(userId, token.Group)
+		if groupError != "" {
+			common.ApiErrorI18n(c, groupError)
+			return
+		}
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
@@ -297,7 +327,7 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
-		cleanToken.Group = token.Group
+		cleanToken.Group = group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 	}
 	err = cleanToken.Update()

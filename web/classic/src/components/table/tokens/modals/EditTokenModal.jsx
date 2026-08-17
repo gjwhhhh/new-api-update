@@ -387,7 +387,7 @@ const EditTokenModal = (props) => {
                       <Form.Select
                         field='group'
                         label={t('令牌分组')}
-                        placeholder={t('令牌分组，默认为用户的分组')}
+                        placeholder={t('请选择分组')}
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
                         filter={(input, option) => {
@@ -398,8 +398,13 @@ const EditTokenModal = (props) => {
                               option.label.toLowerCase().includes(q))
                           );
                         }}
-                        showClear
                         style={{ width: '100%' }}
+                        rules={[
+                          {
+                            required: true,
+                            message: t('请选择分组'),
+                          },
+                        ]}
                       />
                     ) : (
                       <Form.Select

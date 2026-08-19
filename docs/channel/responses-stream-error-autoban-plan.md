@@ -1,8 +1,8 @@
-# Responses 流上游错误识别与渠道自动禁用开发计划
+# Responses 流上游错误识别开发计划
 
 ## 状态与结论
 
-状态：已实现，待合并发布。
+状态：已实现；后续策略调整为保留失败识别，但 Responses SSE 终止失败暂不触发自动禁用。
 
 基于 `origin/main` 的最新提交 `bde9b2f4` 审查：直连 OpenAI Responses 流处理器 `relay/channel/openai/relay_responses.go` 原先只处理完成、文本增量和工具完成事件。它没有将上游流内的 `error`、`response.error` 或 `response.failed` 事件转为 `NewAPIError`。当上游以 `200` 建立 SSE、在流内发送失败事件后关闭连接时，扫描器将其记为 `EOF`，控制器不会调用 `processChannelError`，所以不会重试或自动禁用渠道。
 
@@ -13,7 +13,7 @@
 目标：
 
 - 将上游 SSE 内的终止失败事件识别为渠道错误，而不是成功 EOF。
-- 在全局自动禁用和渠道 `AutoBan` 都启用时，让失败的渠道（多 Key 时仅失败 Key）进入现有自动禁用流程。
+- 保留渠道失败识别、错误日志和重试边界，但 Responses SSE 终止失败不进入自动禁用流程。
 - 只有在尚未向客户端发送任何 SSE 事件时才允许控制器切换备用渠道。
 - 已向客户端输出过事件时，禁止自动重试，避免重复回答或重复工具调用。
 - 记录可关联的诊断信息，但不写入提示词、完整 SSE 负载、认证头或渠道密钥。
@@ -50,7 +50,7 @@ Error *types.OpenAIError `json:"error,omitempty"`
 channel:upstream_stream_terminated
 ```
 
-使用 `types.NewOpenAIError` 生成 `502 Bad Gateway` 的渠道错误，并保留 `channel:` 前缀。现有 `service.ShouldDisableChannel` 与 `shouldRetry` 可据此前缀识别为渠道故障，不依赖管理员额外配置 500 状态码或错误关键词。
+使用 `types.NewOpenAIError` 生成 `502 Bad Gateway` 的渠道错误，并保留 `channel:` 前缀供重试和诊断识别。`service.ShouldDisableChannel` 对该错误码设置明确例外，即使管理员配置了 500 状态码或匹配关键词，也不自动禁用渠道。
 
 客户端返回的错误使用固定的渠道错误；若已经开始 SSE，保留原始事件的协议形状（顶层 `error` 或 `response.failed` / `response.error`），但不透传上游消息。后端日志记录事件类型、错误码和请求 ID。不要记录原始错误 payload、提示词、响应正文或凭据。
 
@@ -65,8 +65,8 @@ channel:upstream_stream_terminated
 
 | 场景 | 渠道状态 | 重试 | 客户端结果 |
 | --- | --- | --- | --- |
-| 首个 SSE 事件前收到上游错误 | 进入自动禁用流程 | 允许切换备用渠道 | 若备用成功，客户端继续获得单一正常流；否则返回规范错误 |
-| 已发送任意 SSE 事件后收到上游错误 | 进入自动禁用流程 | 禁止 | 以规范终止错误结束当前流，不重复执行请求 |
+| 首个 SSE 事件前收到上游错误 | 保持不变 | 允许切换备用渠道 | 若备用成功，客户端继续获得单一正常流；否则返回规范错误 |
+| 已发送任意 SSE 事件后收到上游错误 | 保持不变 | 禁止 | 以规范终止错误结束当前流，不重复执行请求 |
 | 正常 `response.completed` / `[DONE]` / EOF | 不变 | 不适用 | 保持现有行为 |
 | 无法解析的 SSE JSON | 记录为坏响应 | 按既有坏响应策略 | 保持既有客户端兼容性 |
 
@@ -95,9 +95,8 @@ channel:upstream_stream_terminated
    - 不记录原始错误 payload、提示词、响应正文或凭据。
 
 6. 管理配置核验
-   - 确认生产环境的 `AutomaticDisableChannelEnabled` 为开启。
-   - 确认目标渠道的 `AutoBan` 为开启。
-   - 该代码修复使 `channel:` 错误直接满足自动禁用条件，不要求修改自动禁用状态码或关键词。
+   - Responses SSE 终止失败不受 `AutomaticDisableChannelEnabled`、渠道 `AutoBan`、自动禁用状态码或关键词影响。
+   - 其他既有渠道错误仍按原有自动禁用配置处理。
 
 ## 测试计划
 
@@ -111,9 +110,9 @@ channel:upstream_stream_terminated
 6. 失败发生在任何事件输出前：返回可重试的渠道错误。
 7. 失败发生在已输出事件后：返回带跳过重试标记的渠道错误。
 8. `shouldRetry`：跳过重试标记优先于渠道错误标记；既有渠道模型映射等用例不发生意外重试。
-9. 渠道处理链路：当全局自动禁用和 `AutoBan` 开启时，新的错误码调用现有禁用流程；多 Key 渠道断言只更新命中的 Key。
+9. 渠道处理链路：新的错误码即使在全局自动禁用、渠道 `AutoBan`、502 状态码和匹配关键词均开启时，也不禁用渠道或 Key。
 
-已覆盖：顶层/嵌套错误、无事件前重试、已输出后停止重试、自动禁用开关、正常完成流和控制器重试优先级。
+已覆盖：顶层/嵌套错误、无事件前重试、已输出后停止重试、自动禁用例外、正常完成流和控制器重试优先级。
 
 验证命令按修改范围执行：
 
@@ -125,7 +124,7 @@ go test ./relay/channel/openai ./controller ./types
 
 ## 发布与回滚
 
-1. 先在测试环境以模拟 SSE `response.failed` 验证：渠道错误日志、自动禁用、无首事件重试和部分流不重试。
+1. 先在测试环境以模拟 SSE `response.failed` 验证：渠道错误日志、渠道状态保持不变、无首事件重试和部分流不重试。
 2. 生产发布后监控新的错误码及 channel #30 的状态变化；确认不会再出现同类请求以 `HTTP 200 + EOF + status=ok` 结算。
 3. 回滚仅回退本次代码提交；不需要变更 Nginx 配置或数据库迁移。
 
@@ -134,7 +133,7 @@ go test ./relay/channel/openai ./controller ./types
 ### 通过项
 
 - 根因位于协议错误语义丢失，方案在协议边界修复，不把供应商文案写入渠道选择或 Nginx。
-- 复用现有自动禁用、单 Key/多 Key 状态更新和重试调度，避免新增并行禁用机制。
+- 复用现有错误识别和重试调度，并为该错误码增加窄范围自动禁用例外。
 - 明确禁止部分流重试，降低工具重复执行与客户端协议错乱风险。
 - 无数据库结构变更、无跨数据库迁移风险、无计费规则改动。
 
@@ -142,5 +141,5 @@ go test ./relay/channel/openai ./controller ./types
 
 - 获取一份已脱敏的实际 SSE 错误事件结构，验证上游使用的是顶层 `error` 还是 `response.failed`；实现必须兼容两者。
 - 调整 `shouldRetry` 的优先级会影响所有同时具备 `channel:` 与 `SkipRetry` 的错误；先补回归测试再改逻辑。
-- 对已经发送 SSE 事件的请求，HTTP 状态码可能已提交；该场景以流内规范终止错误和后端渠道禁用为准，不能承诺改写为新的 HTTP 502 响应。
-- 单次上游停滞会导致当前 Key 或渠道自动禁用。若业务希望按连续失败次数禁用，需要另行设计失败计数与恢复策略，不应在本次修复中隐式加入。
+- 对已经发送 SSE 事件的请求，HTTP 状态码可能已提交；该场景以流内规范终止错误和后端错误日志为准，不能承诺改写为新的 HTTP 502 响应。
+- Responses SSE 终止失败当前不会导致渠道或 Key 自动禁用。若后续希望按连续失败次数禁用，需要另行设计失败计数与恢复策略，不应隐式加入。

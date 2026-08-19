@@ -49,6 +49,12 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
+	// Responses can report transient failures after an SSE connection has been
+	// established. Keep recognizing those failures for retry and diagnostics,
+	// but do not let a single stream termination automatically disable a channel.
+	if err.GetErrorCode() == types.ErrorCodeChannelUpstreamStreamTerminated {
+		return false
+	}
 	if types.IsChannelError(err) {
 		return true
 	}

@@ -64,6 +64,16 @@ web/             — Frontend themes container
 - A separate function is appropriate when it represents reusable behavior, a required interface/framework callback, an exported API, a test fixture, or complex business logic that deserves direct tests.
 - If a single-use helper is kept, its name must describe a durable domain concept rather than a mechanical step extracted only to shorten the caller.
 
+### 自定义功能与上游同步
+
+- 在不影响功能完整性、可读性、安全性和测试覆盖的前提下，自定义功能优先新增独立扩展点，尽量将对上游维护文件的修改收敛到少量、明确的调用点。
+- 不得为缩小 diff 而机械拆分函数或增加抽象；仅将可复用、稳定的领域规则集中到统一扩展边界，避免复制粘贴导致规则分叉。
+
+### 部署与镜像构建
+
+- 目标服务器（包括测试和生产）禁止本机 `docker build` 或任何源码编译构建，避免小规格机器因构建占用资源导致卡死。
+- 必须使用远端打包流程构建镜像（例如推送 `custom-prod-*` tag 触发 CI 构建并推送镜像），服务器仅允许执行 `docker compose pull` / `docker compose up` 更新容器。
+
 ### Backend Rules
 
 **JSON package:** All JSON marshal/unmarshal operations MUST use the wrapper functions in `common/json.go`:

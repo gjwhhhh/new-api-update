@@ -99,6 +99,11 @@ type RegistryEntry = {
 const sectionCardClassName =
   'relative shadow-sm ring-0 before:pointer-events-none before:absolute before:inset-0 before:rounded-xl before:border before:border-border/90'
 const sectionHeaderClassName = 'border-b bg-muted/20'
+const virtualTokenGroupAuto = 'auto'
+
+function isVirtualTokenGroup(name: string) {
+  return name.trim() === virtualTokenGroupAuto
+}
 
 let groupPricingIdCounter = 0
 function createGroupPricingId() {
@@ -166,6 +171,12 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
   for (const row of rows) {
     const name = row.name.trim()
     if (!name) continue
+    if (isVirtualTokenGroup(name)) {
+      if (row.selectable) {
+        userUsableGroups[name] = row.description
+      }
+      continue
+    }
     groupRatio[name] = normalizeRatio(row.ratio)
     if (row.selectable) {
       userUsableGroups[name] = row.description
@@ -566,7 +577,10 @@ function GroupPricingTable({
                 cell: (row) => (
                   <Input
                     value={row.name}
-                    disabled={persistedGroupNameSet.has(row.name.trim())}
+                    disabled={
+                      persistedGroupNameSet.has(row.name.trim()) ||
+                      isVirtualTokenGroup(row.name)
+                    }
                     onChange={(event) =>
                       updateRow(row._id, 'name', event.target.value)
                     }
@@ -578,34 +592,40 @@ function GroupPricingTable({
                 id: 'ratio',
                 header: t('Ratio'),
                 className: 'w-28',
-                cell: (row) => (
-                  <Input
-                    type='number'
-                    min={0}
-                    step={0.1}
-                    value={row.ratio}
-                    onChange={(event) =>
-                      updateRow(row._id, 'ratio', event.target.value)
-                    }
-                  />
-                ),
+                cell: (row) =>
+                  isVirtualTokenGroup(row.name) ? (
+                    <span className='text-muted-foreground px-3 text-sm'>-</span>
+                  ) : (
+                    <Input
+                      type='number'
+                      min={0}
+                      step={0.1}
+                      value={row.ratio}
+                      onChange={(event) =>
+                        updateRow(row._id, 'ratio', event.target.value)
+                      }
+                    />
+                  ),
               },
               {
                 id: 'topup-ratio',
                 header: t('Top-up ratio'),
                 className: 'w-28',
-                cell: (row) => (
-                  <Input
-                    type='number'
-                    min={0}
-                    step={0.1}
-                    value={row.topupRatio}
-                    placeholder={t('Not set')}
-                    onChange={(event) =>
-                      updateRow(row._id, 'topupRatio', event.target.value)
-                    }
-                  />
-                ),
+                cell: (row) =>
+                  isVirtualTokenGroup(row.name) ? (
+                    <span className='text-muted-foreground px-3 text-sm'>-</span>
+                  ) : (
+                    <Input
+                      type='number'
+                      min={0}
+                      step={0.1}
+                      value={row.topupRatio}
+                      placeholder={t('Not set')}
+                      onChange={(event) =>
+                        updateRow(row._id, 'topupRatio', event.target.value)
+                      }
+                    />
+                  ),
               },
               {
                 id: 'selectable',
@@ -673,7 +693,10 @@ function GroupPricingTable({
                       variant='ghost'
                       size='sm'
                       onClick={() => removeRow(row._id)}
-                      disabled={persistedGroupNameSet.has(row.name.trim())}
+                      disabled={
+                        persistedGroupNameSet.has(row.name.trim()) &&
+                        !isVirtualTokenGroup(row.name)
+                      }
                       aria-label={t('Delete')}
                     >
                       <Trash2 className='h-4 w-4' />

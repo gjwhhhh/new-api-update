@@ -50,6 +50,12 @@ export function serializeGroupTable(rows) {
 
   rows.forEach((row) => {
     if (!row.name) return;
+    if (row.name === 'auto') {
+      if (row.selectable) {
+        userUsableGroups[row.name] = row.description;
+      }
+      return;
+    }
     groupRatio[row.name] = row.ratio;
     if (row.selectable) {
       userUsableGroups[row.name] = row.description;
@@ -153,7 +159,7 @@ export default function GroupTable({
           <Input
             size='small'
             value={record.name}
-            disabled={record.persisted}
+            disabled={record.persisted || record.name === 'auto'}
             status={
               duplicateNamesRef.current.has(record.name) ? 'warning' : undefined
             }
@@ -166,16 +172,21 @@ export default function GroupTable({
         dataIndex: 'ratio',
         key: 'ratio',
         width: 120,
-        render: (_, record) => (
-          <InputNumber
-            size='small'
-            min={0}
-            step={0.1}
-            value={record.ratio}
-            style={{ width: '100%' }}
-            onChange={(v) => updateRow(record._id, 'ratio', v ?? 0)}
-          />
-        ),
+        render: (_, record) =>
+          record.name === 'auto' ? (
+            <Text type='tertiary' size='small'>
+              -
+            </Text>
+          ) : (
+            <InputNumber
+              size='small'
+              min={0}
+              step={0.1}
+              value={record.ratio}
+              style={{ width: '100%' }}
+              onChange={(v) => updateRow(record._id, 'ratio', v ?? 0)}
+            />
+          ),
       },
       {
         title: t('用户可选'),
@@ -231,14 +242,14 @@ export default function GroupTable({
               title={t('确认删除该分组？')}
               onConfirm={() => removeRow(record._id)}
               position='left'
-              disabled={record.persisted}
+              disabled={record.persisted && record.name !== 'auto'}
             >
               <Button
                 icon={<IconDelete />}
                 type='danger'
                 theme='borderless'
                 size='small'
-                disabled={record.persisted}
+                disabled={record.persisted && record.name !== 'auto'}
               />
             </Popconfirm>
           </div>

@@ -43,3 +43,49 @@ func TestValidateGroupConfigRejectsDeletedExistingGroup(t *testing.T) {
 	proposed := map[string]float64{"default": 1, "premium": 1}
 	assert.False(t, currentGroupsPreserved(current, proposed))
 }
+
+func TestValidateGroupConfigAllowsAutoInUserUsableGroupsWithoutDefault(t *testing.T) {
+	config := dto.GroupConfig{
+		GroupRatio:              map[string]float64{"vip": 1},
+		TopupGroupRatio:         map[string]float64{},
+		UserUsableGroups:        map[string]string{"auto": "Auto group description", "vip": "VIP"},
+		GroupGroupRatio:         map[string]map[string]float64{},
+		AutoGroups:              []string{"vip"},
+		GroupSpecialUsableGroup: map[string]map[string]string{},
+		ModelRequestRateLimit:   map[string][2]int{},
+	}
+	require.NoError(t, validateGroupConfig(config))
+}
+
+func TestNormalizeGroupConfigStripsAutoFromBillingMaps(t *testing.T) {
+	config := dto.GroupConfig{
+		GroupRatio:              map[string]float64{"vip": 1, "auto": 0},
+		TopupGroupRatio:         map[string]float64{"auto": 1},
+		UserUsableGroups:        map[string]string{"auto": "Auto group description"},
+		GroupGroupRatio: map[string]map[string]float64{
+			"vip":  {"auto": 0.5},
+			"auto": {"vip": 0.5},
+		},
+		AutoGroups:              []string{"vip", "auto"},
+		GroupSpecialUsableGroup: map[string]map[string]string{"auto": {"+:vip": "VIP"}},
+		ModelRequestRateLimit:   map[string][2]int{"auto": {10, 20}},
+	}
+
+	normalizeGroupConfig(&config)
+
+	assert.NotContains(t, config.GroupRatio, "auto")
+	assert.NotContains(t, config.TopupGroupRatio, "auto")
+	assert.Equal(t, "Auto group description", config.UserUsableGroups["auto"])
+	assert.Equal(t, []string{"vip"}, config.AutoGroups)
+	assert.NotContains(t, config.GroupGroupRatio, "auto")
+	assert.NotContains(t, config.GroupGroupRatio["vip"], "auto")
+	assert.NotContains(t, config.GroupSpecialUsableGroup, "auto")
+	assert.NotContains(t, config.ModelRequestRateLimit, "auto")
+	require.NoError(t, validateGroupConfig(config))
+}
+
+func TestCurrentGroupsPreservedIgnoresAutoCleanup(t *testing.T) {
+	current := map[string]float64{"vip": 1, "auto": 0}
+	proposed := map[string]float64{"vip": 1}
+	assert.True(t, currentGroupsPreserved(current, proposed))
+}

@@ -106,13 +106,42 @@ func validateGroupName(name string, allowDefault bool) error {
 	return nil
 }
 
+func normalizeGroupConfig(config *dto.GroupConfig) {
+	delete(config.GroupRatio, "auto")
+	delete(config.TopupGroupRatio, "auto")
+	delete(config.ModelRequestRateLimit, "auto")
+	delete(config.GroupGroupRatio, "auto")
+	for userGroup, ratios := range config.GroupGroupRatio {
+		delete(ratios, "auto")
+		config.GroupGroupRatio[userGroup] = ratios
+	}
+	filteredAutoGroups := make([]string, 0, len(config.AutoGroups))
+	for _, group := range config.AutoGroups {
+		if group != "auto" {
+			filteredAutoGroups = append(filteredAutoGroups, group)
+		}
+	}
+	config.AutoGroups = filteredAutoGroups
+	delete(config.GroupSpecialUsableGroup, "auto")
+	for userGroup, rules := range config.GroupSpecialUsableGroup {
+		for ruleGroup := range rules {
+			group := strings.TrimPrefix(strings.TrimPrefix(ruleGroup, "+:"), "-:")
+			if group == "auto" {
+				delete(rules, ruleGroup)
+			}
+		}
+		if len(rules) == 0 {
+			delete(config.GroupSpecialUsableGroup, userGroup)
+			continue
+		}
+		config.GroupSpecialUsableGroup[userGroup] = rules
+	}
+}
+
 func validateGroupConfig(config dto.GroupConfig) error {
 	if config.GroupRatio == nil || config.TopupGroupRatio == nil || config.UserUsableGroups == nil ||
 		config.GroupGroupRatio == nil || config.AutoGroups == nil || config.GroupSpecialUsableGroup == nil || config.ModelRequestRateLimit == nil {
 		return errors.New("分组配置必须包含完整的配置快照")
-	}
-	if _, ok := config.GroupRatio["default"]; !ok {
-		return errors.New("default 分组不可删除")
 	}
 	for name, ratio := range config.GroupRatio {
 		if err := validateGroupName(name, true); err != nil {
@@ -123,6 +152,9 @@ func validateGroupConfig(config dto.GroupConfig) error {
 		}
 	}
 	assertKnownGroup := func(name string) error {
+		if name == "auto" {
+			return nil
+		}
 		if _, ok := config.GroupRatio[name]; !ok {
 			return fmt.Errorf("分组 %s 未在 GroupRatio 中定义", name)
 		}
@@ -214,6 +246,9 @@ func groupConfigOptionValues(config dto.GroupConfig) (map[string]string, error) 
 
 func currentGroupsPreserved(current map[string]float64, proposed map[string]float64) bool {
 	for name := range current {
+		if name == "auto" {
+			continue
+		}
 		if _, ok := proposed[name]; !ok {
 			return false
 		}
@@ -236,6 +271,7 @@ func UpdateGroupConfig(request dto.GroupConfigUpdateRequest) (string, error) {
 	if request.Revision != revision {
 		return "", errors.New("分组配置已被其他操作修改，请刷新后重试")
 	}
+	normalizeGroupConfig(&request.Config)
 	if err := validateGroupConfig(request.Config); err != nil {
 		return "", err
 	}

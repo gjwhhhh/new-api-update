@@ -13,7 +13,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const maxSSEFrameBytes = 1024 * 1024
+const (
+	maxSSEFrameBytes                      = 1024 * 1024
+	captureErrorRequestParseLimitExceeded = "request_parse_limit_exceeded"
+)
 
 type conversationProtocol int
 
@@ -70,7 +73,20 @@ func CaptureMiddleware() gin.HandlerFunc {
 		}
 
 		cfg := currentConfig()
+		if !cfg.CaptureFullPayload {
+			if exceeded, requestBytes, known := auditParseLimitState(c, cfg.MaxParseBytes); known && exceeded {
+				c.Next()
+				logCaptureDiagnostic(c, protocol, "skipped", captureErrorRequestParseLimitExceeded, "not_applicable", requestBytes, 0, 0)
+				return
+			}
+		}
+
 		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, cfg.CaptureFullPayload)
+		if !cfg.CaptureFullPayload && request.captureError == captureErrorRequestParseLimitExceeded {
+			c.Next()
+			logCaptureDiagnostic(c, protocol, "skipped", captureErrorRequestParseLimitExceeded, "not_applicable", request.requestBytes, 0, 0)
+			return
+		}
 
 		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes, cfg.CaptureFullPayload)
 		writer := &captureWriter{ResponseWriter: c.Writer, collector: collector}
@@ -180,6 +196,20 @@ func protocolForRequest(request *http.Request) conversationProtocol {
 	return protocolUnknown
 }
 
+func auditParseLimitState(c *gin.Context, maxParseBytes int) (exceeded bool, requestBytes int, known bool) {
+	if maxParseBytes <= 0 {
+		return false, -1, false
+	}
+	if storage, ok := common.PeekBodyStorage(c); ok {
+		size := storage.Size()
+		return size > int64(maxParseBytes), int(size), true
+	}
+	if c.Request != nil && c.Request.ContentLength > 0 {
+		return c.Request.ContentLength > int64(maxParseBytes), int(c.Request.ContentLength), true
+	}
+	return false, -1, false
+}
+
 func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int, captureFullPayload bool) (capture requestCapture) {
 	capture.requestBytes = -1
 	if protocol == protocolLegacyCompletion && !captureFullPayload {
@@ -187,6 +217,14 @@ func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes
 		return capture
 	}
 	capture.fullPayload = captureFullPayload
+
+	if !captureFullPayload {
+		if exceeded, requestBytes, known := auditParseLimitState(c, maxParseBytes); known && exceeded {
+			capture.requestBytes = requestBytes
+			capture.captureError = captureErrorRequestParseLimitExceeded
+			return capture
+		}
+	}
 
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
@@ -201,7 +239,7 @@ func captureRequest(c *gin.Context, protocol conversationProtocol, maxParseBytes
 	}()
 
 	if !captureFullPayload && storage.Size() > int64(maxParseBytes) {
-		capture.captureError = "request_parse_limit_exceeded"
+		capture.captureError = captureErrorRequestParseLimitExceeded
 		return capture
 	}
 	if _, err = storage.Seek(0, io.SeekStart); err != nil {

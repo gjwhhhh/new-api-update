@@ -171,7 +171,23 @@ func IsDiskCacheAvailable(requestSize int64) bool {
 	if !IsDiskCacheEnabled() {
 		return false
 	}
+	return diskQuotaAllows(requestSize)
+}
+
+func diskQuotaAllows(requestSize int64) bool {
 	maxBytes := GetDiskCacheMaxSizeBytes()
 	currentUsage := atomic.LoadInt64(&diskCacheStats.CurrentDiskUsageBytes)
 	return currentUsage+requestSize <= maxBytes
+}
+
+// ShouldSpillRequestBodyToDisk reports whether a request body should be stored
+// on disk instead of the heap. Large relay bodies spill even when the admin
+// "disk cache" toggle is off, because that toggle only controls optional
+// file-result caching; keeping a multi-megabyte JSON body in RAM is what
+// trips the memory circuit breaker.
+func ShouldSpillRequestBodyToDisk(dataSize int64) bool {
+	if dataSize < GetDiskCacheThresholdBytes() {
+		return false
+	}
+	return diskQuotaAllows(dataSize)
 }

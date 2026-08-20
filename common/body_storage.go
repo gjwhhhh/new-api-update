@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -240,15 +241,9 @@ func (d *diskStorage) IsDisk() bool {
 // CreateBodyStorage 根据数据大小创建合适的存储
 func CreateBodyStorage(data []byte) (BodyStorage, error) {
 	size := int64(len(data))
-	threshold := GetDiskCacheThresholdBytes()
-
-	// 检查是否应该使用磁盘缓存
-	if IsDiskCacheEnabled() &&
-		size >= threshold &&
-		IsDiskCacheAvailable(size) {
+	if ShouldSpillRequestBodyToDisk(size) {
 		storage, err := newDiskStorage(data, GetDiskCachePath())
 		if err != nil {
-			// 如果磁盘存储失败，回退到内存存储
 			SysError(fmt.Sprintf("failed to create disk storage, falling back to memory: %v", err))
 			return newMemoryStorage(data), nil
 		}
@@ -260,27 +255,33 @@ func CreateBodyStorage(data []byte) (BodyStorage, error) {
 
 // CreateBodyStorageFromReader 从 Reader 创建存储（用于大请求的流式处理）
 func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes int64) (BodyStorage, error) {
-	threshold := GetDiskCacheThresholdBytes()
-
-	// 如果启用了磁盘缓存且内容长度超过阈值，直接使用磁盘存储
-	if IsDiskCacheEnabled() &&
-		contentLength > 0 &&
-		contentLength >= threshold &&
-		IsDiskCacheAvailable(contentLength) {
-		storage, err := newDiskStorageFromReader(reader, maxBytes, GetDiskCachePath())
-		if err != nil {
-			if IsRequestBodyTooLargeError(err) {
-				return nil, err
-			}
-			// 磁盘存储失败，reader 已被消费，无法安全回退
-			// 直接返回错误而非尝试回退（因为 reader 数据已丢失）
-			return nil, fmt.Errorf("disk storage creation failed: %w", err)
-		}
-		IncrementDiskCacheHits()
-		return storage, nil
+	if maxBytes > 0 && contentLength > maxBytes {
+		return nil, ErrRequestBodyTooLarge
 	}
 
-	// 使用内存读取
+	threshold := GetDiskCacheThresholdBytes()
+	if contentLength > 0 && ShouldSpillRequestBodyToDisk(contentLength) {
+		return createDiskBodyStorageFromReader(reader, maxBytes)
+	}
+	if contentLength > 0 {
+		return createMemoryBodyStorageFromReader(reader, maxBytes)
+	}
+	return createBodyStorageFromUnknownLength(reader, threshold, maxBytes)
+}
+
+func createDiskBodyStorageFromReader(reader io.Reader, maxBytes int64) (BodyStorage, error) {
+	storage, err := newDiskStorageFromReader(reader, maxBytes, GetDiskCachePath())
+	if err != nil {
+		if IsRequestBodyTooLargeError(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("disk storage creation failed: %w", err)
+	}
+	IncrementDiskCacheHits()
+	return storage, nil
+}
+
+func createMemoryBodyStorageFromReader(reader io.Reader, maxBytes int64) (BodyStorage, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
 	if err != nil {
 		return nil, err
@@ -293,13 +294,36 @@ func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes
 	if err != nil {
 		return nil, err
 	}
-	// 如果最终使用内存存储，记录内存缓存命中
 	if !storage.IsDisk() {
 		IncrementMemoryCacheHits()
 	} else {
 		IncrementDiskCacheHits()
 	}
 	return storage, nil
+}
+
+func createBodyStorageFromUnknownLength(reader io.Reader, threshold, maxBytes int64) (BodyStorage, error) {
+	limited := io.LimitReader(reader, maxBytes+1)
+	if threshold <= 0 || !diskQuotaAllows(threshold) {
+		return createMemoryBodyStorageFromReader(limited, maxBytes)
+	}
+
+	var buf bytes.Buffer
+	copied, err := io.CopyN(&buf, limited, threshold)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if copied < threshold || errors.Is(err, io.EOF) {
+		data := buf.Bytes()
+		if int64(len(data)) > maxBytes {
+			return nil, ErrRequestBodyTooLarge
+		}
+		return CreateBodyStorage(data)
+	}
+	if !ShouldSpillRequestBodyToDisk(threshold) {
+		return createMemoryBodyStorageFromReader(io.MultiReader(bytes.NewReader(buf.Bytes()), limited), maxBytes)
+	}
+	return createDiskBodyStorageFromReader(io.MultiReader(bytes.NewReader(buf.Bytes()), limited), maxBytes)
 }
 
 // ReaderOnly wraps an io.Reader to hide io.Closer, preventing http.NewRequest

@@ -228,6 +228,36 @@ func TestCaptureMiddlewareFullPayloadPersistsOriginalTransaction(t *testing.T) {
 	assert.Equal(t, `{"id":"msg_test","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"visible"}]}`, mustDecryptAuditContent(t, &audit, "response"))
 }
 
+func TestCaptureMiddlewareSkipsOversizedRequestWithoutWriterOrPersist(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	runtimeState.Lock()
+	runtimeState.config.MaxParseBytes = 2048
+	runtimeState.Unlock()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	var sawCaptureWriter bool
+	var sawBodyStorage bool
+	router.Use(CaptureMiddleware())
+	router.POST("/v1/responses", func(c *gin.Context) {
+		_, sawCaptureWriter = c.Writer.(*captureWriter)
+		_, sawBodyStorage = common.PeekBodyStorage(c)
+		c.Data(http.StatusOK, "application/json", []byte(`{"id":"resp_skip","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible orphan that must not persist"}]}]}`))
+	})
+
+	body := `{"input":[{"role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("x", 4096) + `"}]}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Test-Request-ID", "oversized-skip")
+	router.ServeHTTP(httptest.NewRecorder(), request)
+
+	assert.False(t, sawCaptureWriter)
+	assert.False(t, sawBodyStorage)
+	var count int64
+	require.NoError(t, db.Model(&ConversationAudit{}).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
 func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testing.T) {
 	db := setupResponseTurnTest(t)
 	router := gin.New()

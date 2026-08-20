@@ -110,7 +110,32 @@ func TestCaptureRequestOverParseLimitStoresOnlyErrorCode(t *testing.T) {
 
 	captured := captureRequest(context, protocolOpenAIChat, 1024, defaultMaxContentBytes, false)
 	assert.Empty(t, captured.body)
-	assert.Equal(t, "request_parse_limit_exceeded", captured.captureError)
+	assert.Equal(t, captureErrorRequestParseLimitExceeded, captured.captureError)
+}
+
+func TestCaptureRequestSkipsOversizedContentLengthWithoutReadingBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", http.NoBody)
+	request.Body = io.NopCloser(errorReader{err: io.ErrUnexpectedEOF})
+	request.ContentLength = 8 << 20
+	request.Header.Set("Content-Type", "application/json")
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+
+	captured := captureRequest(context, protocolOpenAIChat, 1024, defaultMaxContentBytes, false)
+	assert.Empty(t, captured.body)
+	assert.Equal(t, captureErrorRequestParseLimitExceeded, captured.captureError)
+	assert.Equal(t, 8<<20, captured.requestBytes)
+	_, exists := context.Get(common.KeyBodyStorage)
+	assert.False(t, exists)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func TestCaptureRequestFullPayloadPreservesRawJSONBeyondSummaryLimit(t *testing.T) {

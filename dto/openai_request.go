@@ -885,6 +885,38 @@ type OpenAIResponsesRequest struct {
 	Preset json.RawMessage `json:"preset,omitempty"`
 }
 
+// CloneOpenAIResponsesRequest copies scalar fields and small mutable pointers
+// without duplicating json.RawMessage payloads such as Input.
+func CloneOpenAIResponsesRequest(src *OpenAIResponsesRequest) *OpenAIResponsesRequest {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	dst.MaxOutputTokens = clonePointer(src.MaxOutputTokens)
+	dst.TopLogProbs = clonePointer(src.TopLogProbs)
+	dst.Temperature = clonePointer(src.Temperature)
+	dst.TopP = clonePointer(src.TopP)
+	dst.Stream = clonePointer(src.Stream)
+	dst.MaxToolCalls = clonePointer(src.MaxToolCalls)
+	if src.Reasoning != nil {
+		reasoning := *src.Reasoning
+		dst.Reasoning = &reasoning
+	}
+	if src.StreamOptions != nil {
+		options := *src.StreamOptions
+		dst.StreamOptions = &options
+	}
+	return &dst
+}
+
+func clonePointer[T any](src *T) *T {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
+}
+
 func (r *OpenAIResponsesRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	var fileMeta = make([]*types.FileMeta, 0)
 	var texts = make([]string, 0)
@@ -893,7 +925,7 @@ func (r *OpenAIResponsesRequest) GetTokenCountMeta() *types.TokenCountMeta {
 		inputs := r.ParseInput()
 		for _, input := range inputs {
 			if input.Type == "input_image" {
-				if input.ImageUrl != "" {
+				if input.ImageUrl != "" && !isInlineDataURI(input.ImageUrl) {
 					fileMeta = append(fileMeta, &types.FileMeta{
 						FileType: types.FileTypeImage,
 						Source:   types.NewFileSourceFromData(input.ImageUrl, ""),
@@ -901,7 +933,7 @@ func (r *OpenAIResponsesRequest) GetTokenCountMeta() *types.TokenCountMeta {
 					})
 				}
 			} else if input.Type == "input_file" {
-				if input.FileUrl != "" {
+				if input.FileUrl != "" && !isInlineDataURI(input.FileUrl) {
 					fileMeta = append(fileMeta, &types.FileMeta{
 						FileType: types.FileTypeFile,
 						Source:   types.NewFileSourceFromData(input.FileUrl, ""),
@@ -1053,6 +1085,9 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 								imageUrl = url
 							}
 						}
+						if isInlineDataURI(imageUrl) {
+							continue
+						}
 						mediaInputs = append(mediaInputs, MediaInput{Type: "input_image", ImageUrl: imageUrl})
 					case "input_file":
 						// file_url may be string or object with url field
@@ -1065,6 +1100,9 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 								fileUrl = url
 							}
 						}
+						if isInlineDataURI(fileUrl) {
+							continue
+						}
 						mediaInputs = append(mediaInputs, MediaInput{Type: "input_file", FileUrl: fileUrl})
 					}
 				}
@@ -1073,4 +1111,9 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 	}
 
 	return mediaInputs
+}
+
+func isInlineDataURI(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return len(trimmed) >= 5 && strings.EqualFold(trimmed[:5], "data:")
 }

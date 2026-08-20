@@ -95,6 +95,18 @@ func GetBodyStorage(c *gin.Context) (BodyStorage, error) {
 	return bs, nil
 }
 
+// PeekBodyStorage returns an already-buffered request body without reading
+// the HTTP stream. Callers that only need Size() should use this so they
+// cannot become the first heap copy of a large payload.
+func PeekBodyStorage(c *gin.Context) (BodyStorage, bool) {
+	if storage, exists := c.Get(KeyBodyStorage); exists && storage != nil {
+		if bs, ok := storage.(BodyStorage); ok {
+			return bs, true
+		}
+	}
+	return nil, false
+}
+
 // CleanupBodyStorage 清理请求体存储（应在请求结束时调用）
 func CleanupBodyStorage(c *gin.Context) {
 	if storage, exists := c.Get(KeyBodyStorage); exists && storage != nil {

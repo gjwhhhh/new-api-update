@@ -20,15 +20,18 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
 	"github.com/tidwall/gjson"
 
@@ -243,6 +246,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewError(err, types.ErrorCodeGenRelayInfoFailed),
 		}
 	}
+
+	sampleSuccess := false
+	sampleTokens := int64(0)
+	defer func() {
+		recordChannelTestSample(channel, info, sampleSuccess, sampleTokens)
+	}()
 
 	info.IsChannelTest = true
 	info.InitChannelMeta(c)
@@ -497,6 +506,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+	sampleSuccess = true
+	sampleTokens = int64(usage.CompletionTokens)
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
@@ -516,6 +527,22 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		localErr:    nil,
 		newAPIError: nil,
 	}
+}
+
+func recordChannelTestSample(channel *model.Channel, info *relaycommon.RelayInfo, success bool, outputTokens int64) {
+	if !perf_metrics_setting.IncludeChannelTestEnabled() || info == nil {
+		return
+	}
+	var groups []string
+	if channel != nil {
+		groups = channel.GetGroups()
+	}
+	// Snapshot end time on the request goroutine so gopool queue delay is not
+	// included in latency / generation metrics.
+	endedAt := time.Now()
+	gopool.Go(func() {
+		perfmetrics.RecordRelaySampleToGroupsAt(info, groups, success, outputTokens, endedAt)
+	})
 }
 
 func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {

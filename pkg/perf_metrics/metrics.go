@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,30 +29,72 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
 	if info == nil {
 		return
 	}
-	now := time.Now()
+	RecordRelaySampleToGroups(info, []string{info.UsingGroup}, success, outputTokens)
+}
+
+// RecordRelaySampleToGroups records the same relay timing sample once per model group.
+// Empty or blank group names are skipped; if none remain, the sample is recorded under "default".
+func RecordRelaySampleToGroups(info *relaycommon.RelayInfo, groups []string, success bool, outputTokens int64) {
+	RecordRelaySampleToGroupsAt(info, groups, success, outputTokens, time.Now())
+}
+
+// RecordRelaySampleToGroupsAt is like RecordRelaySampleToGroups but uses a fixed end time
+// so callers can snapshot timing before scheduling async work.
+func RecordRelaySampleToGroupsAt(info *relaycommon.RelayInfo, groups []string, success bool, outputTokens int64, endedAt time.Time) {
+	if info == nil {
+		return
+	}
+	base := relaySampleFromInfo(info, success, outputTokens, endedAt)
+	for _, group := range normalizeSampleGroups(groups) {
+		sample := base
+		sample.Group = group
+		Record(sample)
+	}
+}
+
+func relaySampleFromInfo(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) Sample {
 	hasTtft := info.IsStream && info.HasSendResponse()
 	ttftMs := int64(0)
 	if hasTtft {
 		ttftMs = info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
 	}
-	latencyMs := now.Sub(info.StartTime).Milliseconds()
+	latencyMs := endedAt.Sub(info.StartTime).Milliseconds()
 	generationMs := latencyMs
 	if hasTtft {
-		generationMs = now.Sub(info.FirstResponseTime).Milliseconds()
+		generationMs = endedAt.Sub(info.FirstResponseTime).Milliseconds()
 	}
 	if generationMs <= 0 {
 		generationMs = latencyMs
 	}
-	Record(Sample{
+	return Sample{
 		Model:        info.OriginModelName,
-		Group:        info.UsingGroup,
 		LatencyMs:    latencyMs,
 		TtftMs:       ttftMs,
 		HasTtft:      hasTtft,
 		Success:      success,
 		OutputTokens: outputTokens,
 		GenerationMs: generationMs,
-	})
+	}
+}
+
+func normalizeSampleGroups(groups []string) []string {
+	seen := make(map[string]struct{}, len(groups))
+	out := make([]string, 0, len(groups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		out = append(out, group)
+	}
+	if len(out) == 0 {
+		return []string{"default"}
+	}
+	return out
 }
 
 func Record(sample Sample) {
@@ -74,6 +117,21 @@ func Record(sample Sample) {
 	actual, _ := hotBuckets.LoadOrStore(key, &atomicBucket{})
 	actual.(*atomicBucket).add(sample)
 	recordRedis(key, sample)
+}
+
+// HotCountersForTest returns in-memory hot-bucket counters for tests.
+func HotCountersForTest(modelName, group string) (requestCount, successCount int64) {
+	hotBuckets.Range(func(key, value any) bool {
+		k := key.(bucketKey)
+		if k.model != modelName || k.group != group {
+			return true
+		}
+		snap := value.(*atomicBucket).snapshot()
+		requestCount += snap.requestCount
+		successCount += snap.successCount
+		return true
+	})
+	return requestCount, successCount
 }
 
 func Query(params QueryParams) (QueryResult, error) {

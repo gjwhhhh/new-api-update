@@ -20,13 +20,14 @@ import { getStatus } from '@/lib/api'
 
 export type ModuleAccess = { enabled: boolean; requireAuth: boolean }
 
-export type HeaderNavModule = 'rankings' | 'pricing'
+export type HeaderNavModule = 'rankings' | 'pricing' | 'channel_status'
 
 export type HeaderNavModules = {
   home: boolean
   console: boolean
   pricing: ModuleAccess
   rankings: ModuleAccess
+  channel_status: ModuleAccess
   docs: boolean
   about: boolean
   [key: string]: boolean | ModuleAccess
@@ -37,6 +38,7 @@ const DEFAULT_HEADER_NAV_MODULES: HeaderNavModules = {
   console: true,
   pricing: { enabled: true, requireAuth: false },
   rankings: { enabled: true, requireAuth: false },
+  channel_status: { enabled: true, requireAuth: true },
   docs: true,
   about: true,
 }
@@ -44,6 +46,7 @@ const DEFAULT_HEADER_NAV_MODULES: HeaderNavModules = {
 const DEFAULTS: Record<HeaderNavModule, ModuleAccess> = {
   pricing: DEFAULT_HEADER_NAV_MODULES.pricing,
   rankings: DEFAULT_HEADER_NAV_MODULES.rankings,
+  channel_status: DEFAULT_HEADER_NAV_MODULES.channel_status,
 }
 
 function cloneHeaderNavDefaults(): HeaderNavModules {
@@ -51,6 +54,7 @@ function cloneHeaderNavDefaults(): HeaderNavModules {
     ...DEFAULT_HEADER_NAV_MODULES,
     pricing: { ...DEFAULT_HEADER_NAV_MODULES.pricing },
     rankings: { ...DEFAULT_HEADER_NAV_MODULES.rankings },
+    channel_status: { ...DEFAULT_HEADER_NAV_MODULES.channel_status },
   }
 }
 
@@ -116,6 +120,12 @@ export function parseHeaderNavModules(raw: unknown): HeaderNavModules {
     }
     if (key === 'rankings') {
       result.rankings = parseAccess(value, result.rankings)
+      return
+    }
+    if (key === 'channel_status') {
+      // Page lives under authenticated routes; requireAuth is not configurable.
+      const access = parseAccess(value, result.channel_status)
+      result.channel_status = { enabled: access.enabled, requireAuth: true }
       return
     }
 
@@ -208,4 +218,11 @@ export function isSidebarModuleEnabled(
   } catch {
     return true
   }
+}
+
+export function isChannelStatusPageEnabled(): boolean {
+  if (isSidebarModuleEnabled('console', 'channel_status')) {
+    return true
+  }
+  return getModuleAccess('channel_status').enabled
 }

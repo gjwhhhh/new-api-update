@@ -84,6 +84,11 @@ export function SidebarModulesCard() {
           description: t('System data statistics'),
         },
         {
+          key: 'channel_status',
+          title: t('Channel Status'),
+          description: t('Group availability and official OpenAI status'),
+        },
+        {
           key: 'token',
           title: t('Token Management'),
           description: t('API token management'),

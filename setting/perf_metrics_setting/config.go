@@ -3,17 +3,19 @@ package perf_metrics_setting
 import "github.com/QuantumNous/new-api/setting/config"
 
 type PerfMetricsSetting struct {
-	Enabled       bool   `json:"enabled"`
-	FlushInterval int    `json:"flush_interval"`
-	BucketTime    string `json:"bucket_time"`
-	RetentionDays int    `json:"retention_days"`
+	Enabled            bool   `json:"enabled"`
+	IncludeChannelTest bool   `json:"include_channel_test"`
+	FlushInterval      int    `json:"flush_interval"`
+	BucketTime         string `json:"bucket_time"`
+	RetentionDays      int    `json:"retention_days"`
 }
 
 var perfMetricsSetting = PerfMetricsSetting{
-	Enabled:       true,
-	FlushInterval: 5,
-	BucketTime:    "hour",
-	RetentionDays: 0,
+	Enabled:            true,
+	IncludeChannelTest: true,
+	FlushInterval:      5,
+	BucketTime:         "hour",
+	RetentionDays:      0,
 }
 
 func init() {
@@ -22,6 +24,14 @@ func init() {
 
 func GetSetting() PerfMetricsSetting {
 	return perfMetricsSetting
+}
+
+func RestoreSettingForTest(setting PerfMetricsSetting) {
+	perfMetricsSetting = setting
+}
+
+func IncludeChannelTestEnabled() bool {
+	return perfMetricsSetting.Enabled && perfMetricsSetting.IncludeChannelTest
 }
 
 func GetBucketSeconds() int64 {

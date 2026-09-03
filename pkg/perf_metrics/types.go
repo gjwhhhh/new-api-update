@@ -60,6 +60,51 @@ type SummaryAllResult struct {
 	Models []ModelSummary `json:"models"`
 }
 
+type GroupBucketPoint struct {
+	Ts           int64    `json:"ts"`
+	AvgTtftMs    int64    `json:"avg_ttft_ms"`
+	AvgLatencyMs int64    `json:"avg_latency_ms"`
+	SuccessRate  *float64 `json:"success_rate"`
+	AvgTps       float64  `json:"avg_tps"`
+	RequestCount int64    `json:"request_count"`
+}
+
+type GroupModelStat struct {
+	ModelName    string  `json:"model_name"`
+	RequestCount int64   `json:"request_count"`
+	SuccessCount int64   `json:"success_count"`
+	SuccessRate  float64 `json:"success_rate"`
+	AvgTtftMs    int64   `json:"avg_ttft_ms"`
+	AvgLatencyMs int64   `json:"avg_latency_ms"`
+	AvgTps       float64 `json:"avg_tps"`
+}
+
+type GroupMetric struct {
+	Group        string             `json:"group"`
+	RequestCount int64              `json:"request_count"`
+	SuccessCount int64              `json:"success_count"`
+	SuccessRate  float64            `json:"success_rate"`
+	AvgTtftMs    int64              `json:"avg_ttft_ms"`
+	AvgLatencyMs int64              `json:"avg_latency_ms"`
+	AvgTps       float64            `json:"avg_tps"`
+	Series       []GroupBucketPoint `json:"series"`
+	Models       []GroupModelStat   `json:"models"`
+}
+
+type GroupsQueryResult struct {
+	BucketSeconds int64         `json:"bucket_seconds"`
+	StartTs       int64         `json:"start_ts"`
+	EndTs         int64         `json:"end_ts"`
+	Groups        []GroupMetric `json:"groups"`
+}
+
+type groupBucketRow struct {
+	Group    string
+	Model    string
+	BucketTs int64
+	Value    counters
+}
+
 type bucketKey struct {
 	model    string
 	group    string

@@ -39,6 +39,7 @@ export type TopNavLink = {
  *   console: true,
  *   pricing: { enabled: true, requireAuth: false },
  *   rankings: { enabled: true, requireAuth: false },
+ *   channel_status: { enabled: true, requireAuth: true }, // always requires login
  *   docs: true,
  *   about: true
  * }
@@ -84,6 +85,16 @@ export function useTopNavLinks(): TopNavLink[] {
   if (rankings && typeof rankings === 'object' && rankings.enabled) {
     const requiresAuth = rankings.requireAuth && !isAuthed
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
+  }
+
+  // Channel status (authenticated route only; requireAuth is not configurable)
+  const channelStatus = modules?.channel_status
+  if (channelStatus && typeof channelStatus === 'object' && channelStatus.enabled) {
+    links.push({
+      title: t('Channel Status'),
+      href: '/performance',
+      requiresAuth: !isAuthed,
+    })
   }
 
   // Docs (supports external links)

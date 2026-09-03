@@ -49,6 +49,8 @@ const OPERATIONS_SECTIONS = [
           QuotaRemindThreshold: settings.QuotaRemindThreshold,
           'perf_metrics_setting.enabled':
             settings['perf_metrics_setting.enabled'] ?? true,
+          'perf_metrics_setting.include_channel_test':
+            settings['perf_metrics_setting.include_channel_test'] ?? true,
           'perf_metrics_setting.flush_interval':
             settings['perf_metrics_setting.flush_interval'] ?? 5,
           'perf_metrics_setting.bucket_time':

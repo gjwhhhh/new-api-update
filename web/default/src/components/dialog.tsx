@@ -42,7 +42,7 @@ type DialogProps = React.ComponentProps<typeof DialogRoot> & {
   descriptionClassName?: string
   bodyClassName?: string
   footerClassName?: string
-  initialFocus?: boolean
+  initialFocus?: React.ComponentProps<typeof DialogContent>['initialFocus']
   showCloseButton?: boolean
 }
 
@@ -64,10 +64,37 @@ export function Dialog({
   footerClassName,
   initialFocus,
   showCloseButton,
+  open,
+  onOpenChange,
   ...dialogProps
 }: DialogProps) {
+  const bodyScrollRef = React.useRef<HTMLDivElement>(null)
+  const titleFocusRef = React.useRef<HTMLHeadingElement>(null)
+
+  React.useLayoutEffect(() => {
+    if (!open) return
+    const body = bodyScrollRef.current
+    if (!body) return
+
+    const resetScroll = () => {
+      body.scrollTop = 0
+    }
+
+    resetScroll()
+    const frame = requestAnimationFrame(() => {
+      resetScroll()
+      requestAnimationFrame(resetScroll)
+    })
+    const timeout = window.setTimeout(resetScroll, 0)
+
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [open])
+
   return (
-    <DialogRoot {...dialogProps}>
+    <DialogRoot open={open} onOpenChange={onOpenChange} {...dialogProps}>
       {trigger ? <DialogTrigger render={trigger} /> : null}
       <DialogContent
         className={cn(
@@ -75,7 +102,9 @@ export function Dialog({
           contentClassName,
           dialogContentMotionClassName
         )}
-        initialFocus={initialFocus}
+        initialFocus={
+          initialFocus !== undefined ? initialFocus : titleFocusRef
+        }
         showCloseButton={showCloseButton}
         style={
           {
@@ -86,7 +115,13 @@ export function Dialog({
         <DialogHeader
           className={cn('flex-shrink-0 text-start', headerClassName)}
         >
-          <DialogTitle className={titleClassName}>{title}</DialogTitle>
+          <DialogTitle
+            ref={titleFocusRef}
+            tabIndex={-1}
+            className={cn('outline-none', titleClassName)}
+          >
+            {title}
+          </DialogTitle>
           {description ? (
             <DialogDescription className={descriptionClassName}>
               {description}
@@ -95,6 +130,7 @@ export function Dialog({
         </DialogHeader>
 
         <div
+          ref={bodyScrollRef}
           className={cn(
             '-mx-1 min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain',
             'h-[var(--dialog-content-height)] max-h-[calc(100vh-14rem)]'

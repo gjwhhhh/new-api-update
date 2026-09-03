@@ -64,6 +64,7 @@ const monitoringSchema = z.object({
   QuotaRemindThreshold: numericString,
   perf_metrics_setting: z.object({
     enabled: z.boolean(),
+    include_channel_test: z.boolean(),
     flush_interval: z.coerce.number().min(1),
     bucket_time: z.enum(['minute', '5min', 'hour']),
     retention_days: z.coerce.number().min(0),
@@ -76,6 +77,7 @@ type MonitoringFormValues = z.output<typeof monitoringSchema>
 type FlatMonitoringDefaults = {
   QuotaRemindThreshold: string
   'perf_metrics_setting.enabled': boolean
+  'perf_metrics_setting.include_channel_test': boolean
   'perf_metrics_setting.flush_interval': number
   'perf_metrics_setting.bucket_time': 'minute' | '5min' | 'hour'
   'perf_metrics_setting.retention_days': number
@@ -91,6 +93,7 @@ const buildFormDefaults = (
   QuotaRemindThreshold: defaults.QuotaRemindThreshold ?? '',
   perf_metrics_setting: {
     enabled: defaults['perf_metrics_setting.enabled'],
+    include_channel_test: defaults['perf_metrics_setting.include_channel_test'],
     flush_interval: defaults['perf_metrics_setting.flush_interval'],
     bucket_time: defaults['perf_metrics_setting.bucket_time'],
     retention_days: defaults['perf_metrics_setting.retention_days'],
@@ -102,6 +105,8 @@ const normalizeDefaults = (
 ): FlatMonitoringDefaults => ({
   QuotaRemindThreshold: (defaults.QuotaRemindThreshold ?? '').trim(),
   'perf_metrics_setting.enabled': defaults['perf_metrics_setting.enabled'],
+  'perf_metrics_setting.include_channel_test':
+    defaults['perf_metrics_setting.include_channel_test'],
   'perf_metrics_setting.flush_interval':
     defaults['perf_metrics_setting.flush_interval'],
   'perf_metrics_setting.bucket_time':
@@ -115,6 +120,8 @@ const normalizeFormValues = (
 ): FlatMonitoringDefaults => ({
   QuotaRemindThreshold: values.QuotaRemindThreshold.trim(),
   'perf_metrics_setting.enabled': values.perf_metrics_setting.enabled,
+  'perf_metrics_setting.include_channel_test':
+    values.perf_metrics_setting.include_channel_test,
   'perf_metrics_setting.flush_interval':
     values.perf_metrics_setting.flush_interval,
   'perf_metrics_setting.bucket_time': values.perf_metrics_setting.bucket_time,
@@ -233,6 +240,31 @@ export function MonitoringSettingsSection({
                     <Switch
                       checked={field.value}
                       onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='perf_metrics_setting.include_channel_test'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>
+                      {t('Include channel tests in status')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'When enabled, channel model tests count toward site status metrics'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      disabled={!perfMetricsEnabled}
                     />
                   </FormControl>
                 </SettingsSwitchItem>

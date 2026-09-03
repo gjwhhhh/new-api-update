@@ -53,6 +53,7 @@ const defaultOperationsSettings: OperationsSettings = {
   'performance_setting.monitor_memory_threshold': 90,
   'performance_setting.monitor_disk_threshold': 95,
   'perf_metrics_setting.enabled': true,
+  'perf_metrics_setting.include_channel_test': true,
   'perf_metrics_setting.flush_interval': 5,
   'perf_metrics_setting.bucket_time': 'hour',
   'perf_metrics_setting.retention_days': 0,

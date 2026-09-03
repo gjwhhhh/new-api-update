@@ -55,6 +55,7 @@ const headerNavSchema = z.object({
   pricingRequireAuth: z.boolean(),
   rankingsEnabled: z.boolean(),
   rankingsRequireAuth: z.boolean(),
+  channelStatusEnabled: z.boolean(),
   docs: z.boolean(),
   about: z.boolean(),
 })
@@ -89,6 +90,10 @@ const toFormValues = (config: HeaderNavModulesConfig): HeaderNavFormValues => ({
     config.rankings?.requireAuth === undefined
       ? HEADER_NAV_DEFAULT.rankings.requireAuth
       : Boolean(config.rankings.requireAuth),
+  channelStatusEnabled:
+    config.channel_status?.enabled === undefined
+      ? HEADER_NAV_DEFAULT.channel_status.enabled
+      : Boolean(config.channel_status.enabled),
   docs:
     config.docs === undefined ? HEADER_NAV_DEFAULT.docs : Boolean(config.docs),
   about:
@@ -131,6 +136,10 @@ export function HeaderNavigationSection({
         enabled: values.rankingsEnabled,
         requireAuth: values.rankingsRequireAuth,
       },
+      channel_status: {
+        enabled: values.channelStatusEnabled,
+        requireAuth: true,
+      },
     }
 
     const serialized = serializeHeaderNavModules(payload)
@@ -172,6 +181,13 @@ export function HeaderNavigationSection({
       key: 'about',
       title: t('About'),
       description: t('Static page describing the platform.'),
+    },
+    {
+      key: 'channelStatusEnabled',
+      title: t('Channel Status'),
+      description: t(
+        'Top navigation link to measured group availability and OpenAI status. Always requires login.'
+      ),
     },
   ]
 

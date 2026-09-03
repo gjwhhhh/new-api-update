@@ -102,6 +102,12 @@ export function SidebarModulesSection({
         title: t('Dashboard'),
         description: t('Aggregated usage metrics and trend charts.'),
       },
+      channel_status: {
+        title: t('Channel Status'),
+        description: t(
+          'Measured group availability and official OpenAI API status.'
+        ),
+      },
       token: {
         title: t('Token management'),
         description: t('Create, revoke, and audit API tokens.'),

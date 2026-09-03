@@ -26,6 +26,7 @@ export type HeaderNavModulesConfig = {
   console: boolean
   pricing: HeaderNavAccessConfig
   rankings: HeaderNavAccessConfig
+  channel_status: HeaderNavAccessConfig
   docs: boolean
   about: boolean
   [key: string]: boolean | HeaderNavAccessConfig
@@ -49,6 +50,10 @@ export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
     enabled: true,
     requireAuth: false,
   },
+  channel_status: {
+    enabled: true,
+    requireAuth: true,
+  },
   docs: true,
   about: true,
 }
@@ -62,6 +67,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
   console: {
     enabled: true,
     detail: true,
+    channel_status: true,
     token: true,
     log: true,
     midjourney: true,
@@ -99,6 +105,7 @@ const cloneHeaderNavDefault = (): HeaderNavModulesConfig => ({
   ...HEADER_NAV_DEFAULT,
   pricing: { ...HEADER_NAV_DEFAULT.pricing },
   rankings: { ...HEADER_NAV_DEFAULT.rankings },
+  channel_status: { ...HEADER_NAV_DEFAULT.channel_status },
 })
 
 const parseAccessModule = (
@@ -147,6 +154,7 @@ export function parseHeaderNavModules(
       ...base,
       pricing: { ...base.pricing },
       rankings: { ...base.rankings },
+      channel_status: { ...base.channel_status },
     }
 
     Object.entries(parsed).forEach(([key, raw]) => {
@@ -156,6 +164,12 @@ export function parseHeaderNavModules(
       }
       if (key === 'rankings') {
         result.rankings = parseAccessModule(raw, base.rankings)
+        return
+      }
+      if (key === 'channel_status') {
+        // Page lives under authenticated routes; requireAuth is not configurable.
+        const access = parseAccessModule(raw, base.channel_status)
+        result.channel_status = { enabled: access.enabled, requireAuth: true }
         return
       }
 
@@ -178,7 +192,13 @@ export function parseHeaderNavModules(
 export function serializeHeaderNavModules(
   config: HeaderNavModulesConfig
 ): string {
-  return JSON.stringify(config)
+  return JSON.stringify({
+    ...config,
+    channel_status: {
+      enabled: Boolean(config.channel_status?.enabled),
+      requireAuth: true,
+    },
+  })
 }
 
 export function parseSidebarModulesAdmin(

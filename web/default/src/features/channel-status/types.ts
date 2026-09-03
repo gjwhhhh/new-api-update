@@ -102,6 +102,7 @@ export type OpenAIStatusIncident = {
   status: string
   impact: string
   affected_components: string[]
+  affected_groups: string[]
   updated_at: string
   url: string
 }

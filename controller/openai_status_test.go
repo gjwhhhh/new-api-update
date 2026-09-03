@@ -8,132 +8,143 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeOpenAIStatusOperational(t *testing.T) {
+func TestNormalizeOpenAIStatusTracksChatGPTAndCodex(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	result := normalizeOpenAIStatus(openaiWidgetPayload{
-		Summary: openaiWidgetSummary{
-			PublicURL: openaiStatusPageURL,
-			Structure: openaiWidgetStructure{
-				Items: []openaiWidgetStructureItem{
-					{Group: &openaiWidgetGroup{
-						ID:   "apis-group",
-						Name: "APIs",
-						Components: []openaiWidgetGroupComponent{
-							{ComponentID: "chat", Name: "Chat Completions"},
-							{ComponentID: "responses", Name: "Responses"},
-						},
-					}},
-					{Group: &openaiWidgetGroup{
-						Name: "ChatGPT",
-						Components: []openaiWidgetGroupComponent{
-							{ComponentID: "login", Name: "Login"},
-						},
-					}},
-				},
-			},
-			OngoingIncidents: []openaiWidgetIncident{
-				{
-					ID:     "chatgpt-only",
-					Name:   "ChatGPT login issues",
-					Impact: "major",
-					AffectedComponents: []openaiWidgetComponent{
-						{ID: "login", Status: "partial_outage"},
-					},
-				},
-			},
-		},
-	}, nil, now)
-
-	require.True(t, result.Available)
-	assert.Equal(t, "none", result.Indicator)
-	require.Len(t, result.Groups, 1)
-	assert.Equal(t, "APIs", result.Groups[0].Name)
-	require.Len(t, result.Groups[0].Components, 2)
-	assert.Equal(t, "operational", result.Groups[0].Components[0].Status)
-	assert.Empty(t, result.Incidents)
-	assert.Empty(t, result.History)
-	assert.Empty(t, result.Groups[0].Series)
-}
-
-func TestNormalizeOpenAIStatusDegradedResponses(t *testing.T) {
-	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	result := normalizeOpenAIStatus(openaiWidgetPayload{
-		Summary: openaiWidgetSummary{
+	payload := openAITrackedGroupsTestPayload()
+	payload.Summary.AffectedComponents = []openaiWidgetComponent{
+		{ID: "chatgpt-login", Status: "partial_outage"},
+		{ID: "codex-api", Status: "degraded_performance"},
+		{ID: "responses", Status: "full_outage"},
+	}
+	payload.Summary.OngoingIncidents = []openaiWidgetIncident{
+		{
+			ID:        "chatgpt-codex",
+			Name:      "Elevated errors across ChatGPT and Codex",
+			Status:    "investigating",
+			Impact:    "major",
+			UpdatedAt: "2026-09-02T08:00:00Z",
 			AffectedComponents: []openaiWidgetComponent{
-				{ID: "responses", Status: "degraded_performance"},
-			},
-			Structure: openaiWidgetStructure{
-				Items: []openaiWidgetStructureItem{
-					{Group: &openaiWidgetGroup{
-						Name: "APIs",
-						Components: []openaiWidgetGroupComponent{
-							{ComponentID: "chat", Name: "Chat Completions"},
-							{ComponentID: "responses", Name: "Responses"},
-						},
-					}},
-				},
-			},
-			OngoingIncidents: []openaiWidgetIncident{
-				{
-					ID:        "inc-1",
-					Name:      "Increased error rates for Responses API",
-					Status:    "investigating",
-					Impact:    "minor",
-					UpdatedAt: "2026-09-02T08:00:00Z",
-					URL:       "https://status.openai.com/incidents/inc-1",
-					AffectedComponents: []openaiWidgetComponent{
-						{ID: "responses", Status: "degraded_performance"},
-					},
-				},
+				{ID: "chatgpt-login", Status: "partial_outage"},
+				{ID: "codex-api", Status: "degraded_performance"},
 			},
 		},
-	}, nil, now)
+		{
+			ID:     "api-only",
+			Name:   "Responses API disruption",
+			Impact: "critical",
+			AffectedComponents: []openaiWidgetComponent{
+				{ID: "responses", Status: "full_outage"},
+			},
+		},
+	}
+
+	result := normalizeOpenAIStatus(payload, nil, now)
 
 	require.True(t, result.Available)
-	assert.Equal(t, "minor", result.Indicator)
+	assert.Equal(t, "major", result.Indicator)
+	require.Len(t, result.Groups, 2)
+	assert.Equal(t, []string{"ChatGPT", "Codex"}, []string{result.Groups[0].Name, result.Groups[1].Name})
+	assert.Equal(t, "partial_outage", result.Groups[0].Components[0].Status)
+	assert.Equal(t, "degraded_performance", result.Groups[1].Components[0].Status)
+
 	require.Len(t, result.Incidents, 1)
-	assert.Equal(t, "Increased error rates for Responses API", result.Incidents[0].Name)
-	assert.Equal(t, []string{"Responses"}, result.Incidents[0].AffectedComponents)
-	require.Len(t, result.Groups[0].Components, 2)
-	assert.Equal(t, "operational", result.Groups[0].Components[0].Status)
-	assert.Equal(t, "degraded_performance", result.Groups[0].Components[1].Status)
+	assert.Equal(t, "chatgpt-codex", result.Incidents[0].ID)
+	assert.Equal(t, []string{"Login", "Codex API"}, result.Incidents[0].AffectedComponents)
+	assert.Equal(t, []string{"ChatGPT", "Codex"}, result.Incidents[0].AffectedGroups)
 }
 
-func TestNormalizeOpenAIStatusOngoingAlsoInHistory(t *testing.T) {
+func TestNormalizeOpenAIStatusHistoryUsesTrackedGroups(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	payload := openaiAPIsTestPayload()
-	payload.Summary.OngoingIncidents = []openaiWidgetIncident{{
-		ID:     "inc-1",
-		Name:   "Increased error rates for Responses API",
-		Status: "investigating",
-		Impact: "minor",
-		URL:    "https://status.openai.com/incidents/inc-1",
-		AffectedComponents: []openaiWidgetComponent{
-			{ID: "chat", Status: "degraded_performance"},
+	result := normalizeOpenAIStatus(openAITrackedGroupsTestPayload(), &openaiImpactsPayload{
+		ComponentImpacts: []openaiImpactWindow{
+			{
+				ID:                   "chatgpt-impact",
+				ComponentID:          "chatgpt-login",
+				Status:               "partial_outage",
+				StartAt:              "2026-08-20T10:00:00Z",
+				EndAt:                "2026-08-20T12:00:00Z",
+				StatusPageIncidentID: "chatgpt-incident",
+			},
+			{
+				ID:                   "codex-impact",
+				ComponentID:          "codex-api",
+				Status:               "degraded_performance",
+				StartAt:              "2026-08-15T10:00:00Z",
+				EndAt:                "2026-08-15T12:00:00Z",
+				StatusPageIncidentID: "codex-incident",
+			},
+			{
+				ID:                   "api-impact",
+				ComponentID:          "responses",
+				Status:               "full_outage",
+				StartAt:              "2026-08-25T10:00:00Z",
+				EndAt:                "2026-08-25T12:00:00Z",
+				StatusPageIncidentID: "api-incident",
+			},
 		},
-	}}
-	result := normalizeOpenAIStatus(payload, &openaiImpactsPayload{
-		ComponentImpacts: []openaiImpactWindow{{
-			ID:                   "impact-1",
-			ComponentID:          "chat",
-			Status:               "degraded_performance",
-			StartAt:              "2026-09-02T08:00:00Z",
-			StatusPageIncidentID: "inc-1",
-		}},
-		IncidentLinks: []openaiIncidentLink{{
-			ID:          "inc-1",
-			Name:        "Increased error rates for Responses API",
-			Status:      "investigating",
-			Permalink:   "https://status.openai.com/incidents/inc-1",
-			PublishedAt: "2026-09-02T08:00:00Z",
-		}},
+		IncidentLinks: []openaiIncidentLink{
+			{
+				ID:          "chatgpt-incident",
+				Name:        "ChatGPT login issues",
+				Status:      "resolved",
+				Permalink:   "https://status.openai.com/incidents/chatgpt-incident",
+				PublishedAt: "2026-08-20T10:05:00Z",
+			},
+			{
+				ID:          "codex-incident",
+				Name:        "Codex API latency",
+				Status:      "resolved",
+				Permalink:   "https://status.openai.com/incidents/codex-incident",
+				PublishedAt: "2026-08-15T10:05:00Z",
+			},
+		},
 	}, now)
 
-	require.Len(t, result.Incidents, 1)
-	require.Len(t, result.History, 1)
-	assert.Equal(t, "inc-1", result.Incidents[0].ID)
-	assert.Equal(t, "inc-1", result.History[0].ID)
-	assert.Equal(t, "investigating", result.History[0].Status)
+	require.Len(t, result.History, 2)
+	assert.Equal(t, "chatgpt-incident", result.History[0].ID)
+	assert.Equal(t, []string{"ChatGPT"}, result.History[0].AffectedGroups)
+	assert.Equal(t, "codex-incident", result.History[1].ID)
+	assert.Equal(t, []string{"Codex"}, result.History[1].AffectedGroups)
+}
+
+func TestNormalizeOpenAIStatusBuildsSeparateGroupUptimeBars(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	result := normalizeOpenAIStatus(openAITrackedGroupsTestPayload(), &openaiImpactsPayload{
+		ComponentUptimes: []openaiComponentUptime{
+			{GroupID: "chatgpt-group", Uptime: "99.62"},
+			{GroupID: "codex-group", Uptime: "99.81"},
+			{ComponentID: "chatgpt-login", Uptime: "99.62"},
+			{ComponentID: "codex-api", Uptime: "99.81"},
+		},
+		ComponentImpacts: []openaiImpactWindow{
+			{
+				ComponentID: "chatgpt-login",
+				Status:      "full_outage",
+				StartAt:     "2026-08-20T10:00:00Z",
+				EndAt:       "2026-08-20T12:00:00Z",
+			},
+			{
+				ComponentID: "codex-api",
+				Status:      "partial_outage",
+				StartAt:     "2026-08-15T10:00:00Z",
+				EndAt:       "2026-08-15T12:00:00Z",
+			},
+		},
+	}, now)
+
+	require.Len(t, result.Groups, 2)
+	chatGPT := result.Groups[0]
+	codex := result.Groups[1]
+	require.NotNil(t, chatGPT.UptimePercent)
+	require.NotNil(t, codex.UptimePercent)
+	assert.InDelta(t, 99.62, *chatGPT.UptimePercent, 0.0001)
+	assert.InDelta(t, 99.81, *codex.UptimePercent, 0.0001)
+	require.Len(t, chatGPT.Series, 90)
+	require.Len(t, codex.Series, 90)
+	assert.Equal(t, "full_outage", uptimeStatusOn(t, chatGPT.Series, "2026-08-20"))
+	assert.Equal(t, "operational", uptimeStatusOn(t, chatGPT.Series, "2026-08-15"))
+	assert.Equal(t, "partial_outage", uptimeStatusOn(t, codex.Series, "2026-08-15"))
+	assert.Equal(t, "operational", uptimeStatusOn(t, codex.Series, "2026-08-20"))
 }
 
 func TestNormalizeOpenAIStatusEmptyPayload(t *testing.T) {
@@ -147,176 +158,13 @@ func TestNormalizeOpenAIStatusEmptyPayload(t *testing.T) {
 	assert.Equal(t, openaiStatusPageURL, result.SourceURL)
 }
 
-func TestNormalizeOpenAIStatusUptimeBars(t *testing.T) {
-	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	apis := openaiAPIsTestPayload()
-	result := normalizeOpenAIStatus(apis, &openaiImpactsPayload{
-		ComponentUptimes: []openaiComponentUptime{
-			{GroupID: "apis-group", Uptime: "99.94"},
-			{ComponentID: "chat", Uptime: "100.00"},
-			{ComponentID: "images", Uptime: "99.96"},
-			{GroupID: "chatgpt-group", Uptime: "99.62"},
-		},
-		ComponentImpacts: []openaiImpactWindow{
-			{
-				ID:          "impact-images-degraded",
-				ComponentID: "images",
-				Status:      "degraded_performance",
-				StartAt:     "2026-08-20T10:00:00.000Z",
-				EndAt:       "2026-08-20T12:00:00.000Z",
-			},
-			{
-				ID:          "impact-images-outage",
-				ComponentID: "images",
-				Status:      "full_outage",
-				StartAt:     "2026-08-20T11:00:00.000Z",
-				EndAt:       "2026-08-20T11:30:00.000Z",
-			},
-			{
-				ID:          "impact-chat-partial",
-				ComponentID: "chat",
-				Status:      "partial_outage",
-				StartAt:     "2026-08-01T08:00:00Z",
-				EndAt:       "2026-08-01T09:00:00Z",
-			},
-			{
-				ID:          "impact-chatgpt",
-				ComponentID: "chatgpt-login",
-				Status:      "full_outage",
-				StartAt:     "2026-08-15T00:00:00Z",
-				EndAt:       "2026-08-15T23:00:00Z",
-			},
-		},
-	}, now)
-
-	require.True(t, result.Available)
-	require.Len(t, result.Groups, 1)
-	group := result.Groups[0]
-	require.NotNil(t, group.UptimePercent)
-	assert.InDelta(t, 99.94, *group.UptimePercent, 0.0001)
-	assert.Equal(t, 90, group.UptimeDays)
-	assert.Equal(t, 24, group.HourlyHours)
-	require.Len(t, group.Series, 90)
-	require.Len(t, group.HourlySeries, 24)
-	assert.Equal(t, "2026-09-01T13:00:00Z", group.HourlySeries[0].Ts)
-	assert.Equal(t, "2026-09-02T12:00:00Z", group.HourlySeries[23].Ts)
-	for _, hour := range group.HourlySeries {
-		assert.Equal(t, "operational", hour.Status)
-	}
-	assert.Equal(t, "2026-06-05", group.Series[0].Date)
-	assert.Equal(t, "2026-09-02", group.Series[89].Date)
-	assert.Equal(t, "operational", group.Series[0].Status)
-	assert.Equal(t, "full_outage", uptimeStatusOn(t, group.Series, "2026-08-20"))
-	assert.Equal(t, "partial_outage", uptimeStatusOn(t, group.Series, "2026-08-01"))
-	assert.Equal(t, "operational", uptimeStatusOn(t, group.Series, "2026-08-15"))
-
-	require.Len(t, group.Components, 2)
-	assert.Equal(t, "Chat Completions", group.Components[0].Name)
-	require.NotNil(t, group.Components[0].UptimePercent)
-	assert.InDelta(t, 100, *group.Components[0].UptimePercent, 0.0001)
-	assert.Equal(t, "partial_outage", uptimeStatusOn(t, group.Components[0].Series, "2026-08-01"))
-	assert.Equal(t, "operational", uptimeStatusOn(t, group.Components[0].Series, "2026-08-20"))
-	require.NotNil(t, group.Components[1].UptimePercent)
-	assert.InDelta(t, 99.96, *group.Components[1].UptimePercent, 0.0001)
-	assert.Equal(t, "full_outage", uptimeStatusOn(t, group.Components[1].Series, "2026-08-20"))
-}
-
-func TestNormalizeOpenAIStatusHistory(t *testing.T) {
-	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	result := normalizeOpenAIStatus(openaiAPIsTestPayload(), &openaiImpactsPayload{
-		ComponentImpacts: []openaiImpactWindow{
-			{
-				ID:                   "impact-chat",
-				ComponentID:          "chat",
-				Status:               "partial_outage",
-				StartAt:              "2026-08-01T08:00:00Z",
-				EndAt:                "2026-08-01T09:00:00Z",
-				StatusPageIncidentID: "inc-chat",
-			},
-			{
-				ID:                   "impact-images",
-				ComponentID:          "images",
-				Status:               "degraded_performance",
-				StartAt:              "2026-08-20T10:00:00Z",
-				EndAt:                "2026-08-20T12:00:00Z",
-				StatusPageIncidentID: "inc-images",
-			},
-			{
-				ID:                   "impact-images-outage",
-				ComponentID:          "images",
-				Status:               "full_outage",
-				StartAt:              "2026-08-20T11:00:00Z",
-				EndAt:                "2026-08-20T11:30:00Z",
-				StatusPageIncidentID: "inc-images",
-			},
-			{
-				ID:          "impact-unlinked",
-				ComponentID: "chat",
-				Status:      "degraded_performance",
-				StartAt:     "2026-07-10T04:00:00Z",
-				EndAt:       "2026-07-10T05:00:00Z",
-			},
-			{
-				ID:                   "impact-chatgpt",
-				ComponentID:          "chatgpt-login",
-				Status:               "full_outage",
-				StartAt:              "2026-08-15T00:00:00Z",
-				EndAt:                "2026-08-15T23:00:00Z",
-				StatusPageIncidentID: "inc-chatgpt",
-			},
-		},
-		IncidentLinks: []openaiIncidentLink{
-			{
-				ID:          "inc-chat",
-				Name:        "Partial outage in Chat Completions",
-				Status:      "resolved",
-				Permalink:   "https://status.openai.com/incidents/inc-chat",
-				PublishedAt: "2026-08-01T08:10:00Z",
-			},
-			{
-				ID:          "inc-images",
-				Name:        "Images API disruption",
-				Status:      "resolved",
-				Permalink:   "https://status.openai.com/incidents/inc-images",
-				PublishedAt: "2026-08-20T10:05:00Z",
-			},
-			{
-				ID:          "inc-chatgpt",
-				Name:        "ChatGPT login issues",
-				Status:      "resolved",
-				Permalink:   "https://status.openai.com/incidents/inc-chatgpt",
-				PublishedAt: "2026-08-15T00:10:00Z",
-			},
-		},
-	}, now)
-
-	require.Len(t, result.History, 3)
-	assert.Equal(t, "inc-images", result.History[0].ID)
-	assert.Equal(t, "Images API disruption", result.History[0].Name)
-	assert.Equal(t, "resolved", result.History[0].Status)
-	assert.Equal(t, "full_outage", result.History[0].Impact)
-	assert.Equal(t, []string{"Images"}, result.History[0].AffectedComponents)
-	assert.Equal(t, "2026-08-20T10:05:00Z", result.History[0].UpdatedAt)
-	assert.Equal(t, "https://status.openai.com/incidents/inc-images", result.History[0].URL)
-
-	assert.Equal(t, "inc-chat", result.History[1].ID)
-	assert.Equal(t, "impact-unlinked", result.History[2].ID)
-	assert.Equal(t, "Chat Completions", result.History[2].Name)
-	assert.Equal(t, "degraded_performance", result.History[2].Impact)
-	assert.Empty(t, result.History[2].URL)
-	for _, item := range result.History {
-		assert.NotEqual(t, "inc-chatgpt", item.ID)
-		assert.NotContains(t, item.AffectedComponents, "Login")
-	}
-}
-
 func TestBuildOpenAIUptimeSeriesOngoingImpact(t *testing.T) {
 	now := time.Date(2026, 9, 2, 18, 0, 0, 0, time.UTC)
 	series := buildOpenAIUptimeSeries(
-		map[string]struct{}{"chat": {}},
-		map[string]string{"chat": "Chat Completions"},
+		map[string]struct{}{"chatgpt-login": {}},
+		map[string]string{"chatgpt-login": "Login"},
 		[]openaiImpactWindow{{
-			ComponentID: "chat",
+			ComponentID: "chatgpt-login",
 			Status:      "degraded_performance",
 			StartAt:     "2026-09-02T10:00:00Z",
 		}},
@@ -327,54 +175,14 @@ func TestBuildOpenAIUptimeSeriesOngoingImpact(t *testing.T) {
 	assert.Equal(t, "operational", uptimeStatusOn(t, series, "2026-09-01"))
 }
 
-func TestBuildOpenAIHourlySeries(t *testing.T) {
-	now := time.Date(2026, 9, 2, 12, 30, 0, 0, time.UTC)
-	series := buildOpenAIHourlySeries(
-		map[string]struct{}{"images": {}, "chat": {}},
-		map[string]string{
-			"images": "Images",
-			"chat":   "Chat Completions",
-		},
-		[]openaiImpactWindow{
-			{
-				ComponentID: "images",
-				Status:      "degraded_performance",
-				StartAt:     "2026-09-02T10:00:00Z",
-				EndAt:       "2026-09-02T11:30:00Z",
-			},
-			{
-				ComponentID: "images",
-				Status:      "full_outage",
-				StartAt:     "2026-09-02T11:00:00Z",
-				EndAt:       "2026-09-02T11:20:00Z",
-			},
-			{
-				ComponentID: "chatgpt-login",
-				Status:      "full_outage",
-				StartAt:     "2026-09-02T09:00:00Z",
-				EndAt:       "2026-09-02T12:00:00Z",
-			},
-		},
-		nil,
-		now,
-	)
-	require.Len(t, series, 24)
-	assert.Equal(t, "2026-09-01T13:00:00Z", series[0].Ts)
-	assert.Equal(t, "2026-09-02T12:00:00Z", series[23].Ts)
-	assert.Equal(t, "operational", hourlyStatusOn(t, series, "2026-09-02T09:00:00Z"))
-	assert.Equal(t, "degraded_performance", hourlyStatusOn(t, series, "2026-09-02T10:00:00Z"))
-	assert.Equal(t, "full_outage", hourlyStatusOn(t, series, "2026-09-02T11:00:00Z"))
-	assert.Equal(t, "operational", hourlyStatusOn(t, series, "2026-09-02T12:00:00Z"))
-}
-
 func TestBuildOpenAIHourlySeriesWithIncidentDetails(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 30, 0, 0, time.UTC)
 	series := buildOpenAIHourlySeries(
-		map[string]struct{}{"responses": {}},
-		map[string]string{"responses": "Responses"},
+		map[string]struct{}{"codex-api": {}},
+		map[string]string{"codex-api": "Codex API"},
 		[]openaiImpactWindow{{
 			ID:                   "impact-1",
-			ComponentID:          "responses",
+			ComponentID:          "codex-api",
 			Status:               "degraded_performance",
 			StartAt:              "2026-09-02T10:00:00Z",
 			EndAt:                "2026-09-02T11:30:00Z",
@@ -382,22 +190,23 @@ func TestBuildOpenAIHourlySeriesWithIncidentDetails(t *testing.T) {
 		}},
 		[]openaiIncidentLink{{
 			ID:        "inc-1",
-			Name:      "Elevated latency in the Responses API",
-			Status:    "resolved",
+			Name:      "Elevated errors in Codex",
+			Status:    "monitoring",
 			Permalink: "https://status.openai.com/incidents/inc-1",
 		}},
 		now,
 	)
+
 	hour := series[21]
 	require.Equal(t, "2026-09-02T10:00:00Z", hour.Ts)
 	require.Equal(t, "degraded_performance", hour.Status)
 	require.Len(t, hour.Events, 1)
-	assert.Equal(t, "Elevated latency in the Responses API", hour.Events[0].Name)
-	assert.Equal(t, []string{"Responses"}, hour.Events[0].ComponentNames)
-	assert.Equal(t, "resolved", hour.Events[0].IncidentStatus)
+	assert.Equal(t, "Elevated errors in Codex", hour.Events[0].Name)
+	assert.Equal(t, []string{"Codex API"}, hour.Events[0].ComponentNames)
+	assert.Equal(t, "monitoring", hour.Events[0].IncidentStatus)
 }
 
-func openaiAPIsTestPayload() openaiWidgetPayload {
+func openAITrackedGroupsTestPayload() openaiWidgetPayload {
 	return openaiWidgetPayload{
 		Summary: openaiWidgetSummary{
 			Structure: openaiWidgetStructure{
@@ -406,8 +215,7 @@ func openaiAPIsTestPayload() openaiWidgetPayload {
 						ID:   "apis-group",
 						Name: "APIs",
 						Components: []openaiWidgetGroupComponent{
-							{ComponentID: "chat", Name: "Chat Completions"},
-							{ComponentID: "images", Name: "Images"},
+							{ComponentID: "responses", Name: "Responses"},
 						},
 					}},
 					{Group: &openaiWidgetGroup{
@@ -417,21 +225,17 @@ func openaiAPIsTestPayload() openaiWidgetPayload {
 							{ComponentID: "chatgpt-login", Name: "Login"},
 						},
 					}},
+					{Group: &openaiWidgetGroup{
+						ID:   "codex-group",
+						Name: "Codex",
+						Components: []openaiWidgetGroupComponent{
+							{ComponentID: "codex-api", Name: "Codex API"},
+						},
+					}},
 				},
 			},
 		},
 	}
-}
-
-func hourlyStatusOn(t *testing.T, series []openaiUptimeHour, ts string) string {
-	t.Helper()
-	for _, hour := range series {
-		if hour.Ts == ts {
-			return hour.Status
-		}
-	}
-	t.Fatalf("missing uptime hour %s", ts)
-	return ""
 }
 
 func uptimeStatusOn(t *testing.T, series []openaiUptimeDay, date string) string {

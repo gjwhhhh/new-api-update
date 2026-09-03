@@ -62,9 +62,16 @@ export function OpenAIStatusPanel(props: {
   const [openGroup, setOpenGroup] = useState<OpenAIStatusGroup | null>(null)
   const groups = props.data?.groups ?? []
   const incidents = props.data?.incidents ?? []
-  const ongoingIds = new Set(incidents.map((incident) => incident.id))
+  const selectedIncidents = openGroup
+    ? incidents.filter((incident) =>
+        incident.affected_groups.includes(openGroup.name)
+      )
+    : []
+  const ongoingIds = new Set(selectedIncidents.map((incident) => incident.id))
   const history = (props.data?.history ?? []).filter(
-    (item) => !ongoingIds.has(item.id)
+    (item) =>
+      !ongoingIds.has(item.id) &&
+      (openGroup == null || item.affected_groups.includes(openGroup.name))
   )
   const historyGroups = groupHistoryByDate(history)
   const openHealth = openGroup
@@ -111,8 +118,8 @@ export function OpenAIStatusPanel(props: {
     return (
       <EmptyState
         bordered
-        title={t('No official API components')}
-        description={t('OpenAI did not report any API components.')}
+        title={t('No ChatGPT or Codex status components')}
+        description={t('OpenAI did not report ChatGPT or Codex status.')}
       />
     )
   }
@@ -120,7 +127,7 @@ export function OpenAIStatusPanel(props: {
   return (
     <div className='space-y-4'>
       <div className='text-foreground flex flex-wrap items-center justify-between gap-2 text-sm'>
-        <p>{props.data.description || t('Official OpenAI API status')}</p>
+        <p>{props.data.description || t('Official status')}</p>
         <Button
           variant='link'
           size='sm'
@@ -143,7 +150,11 @@ export function OpenAIStatusPanel(props: {
             key={group.name}
             group={group}
             available={props.data?.available ?? false}
-            incidentCount={incidents.length}
+            incidentCount={
+              incidents.filter((incident) =>
+                incident.affected_groups.includes(group.name)
+              ).length
+            }
             onOpen={() => setOpenGroup(group)}
           />
         ))}
@@ -157,7 +168,7 @@ export function OpenAIStatusPanel(props: {
           openGroup ? (
             <span className='flex flex-wrap items-center gap-2'>
               <span>
-                {openGroup.name === 'APIs' ? t('OpenAI APIs') : openGroup.name}
+                {openGroup.name}
               </span>
               <StatusBadge
                 label={t(CHANNEL_HEALTH_LABEL[openHealth])}
@@ -169,7 +180,7 @@ export function OpenAIStatusPanel(props: {
             t('Official status')
           )
         }
-        description={props.data.description || t('Official OpenAI API status')}
+        description={props.data.description || t('Official status')}
         descriptionClassName='text-foreground'
         contentClassName='sm:max-w-3xl max-h-[85dvh]'
         bodyClassName='space-y-5'
@@ -223,9 +234,9 @@ export function OpenAIStatusPanel(props: {
             {(openGroup.components?.length ?? 0) > 0 ? (
               <div>
                 <div className='mb-2 flex items-center justify-between'>
-                  <h3 className='text-sm font-semibold'>{t('API components')}</h3>
+                  <h3 className='text-sm font-semibold'>{t('Components')}</h3>
                   <span className='text-foreground text-xs'>
-                    {t('{{count}} API components', {
+                    {t('{{count}} components', {
                       count: openGroup.components?.length ?? 0,
                     })}
                   </span>
@@ -307,13 +318,13 @@ export function OpenAIStatusPanel(props: {
               </div>
             ) : null}
 
-            {incidents.length > 0 ? (
+            {selectedIncidents.length > 0 ? (
               <div>
                 <h3 className='mb-2 text-sm font-semibold'>
                   {t('Active incidents')}
                 </h3>
                 <ul className='space-y-3'>
-                  {incidents.map((incident) => (
+                  {selectedIncidents.map((incident) => (
                     <IncidentListItem key={incident.id} incident={incident} />
                   ))}
                 </ul>

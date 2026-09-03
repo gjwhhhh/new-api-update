@@ -129,7 +129,7 @@ export function OpenAIStatusCard(props: {
       {historyBar}
 
       <div className='text-foreground flex items-center justify-between text-sm'>
-        <span>{t('{{count}} API components', { count: componentCount })}</span>
+        <span>{t('{{count}} components', { count: componentCount })}</span>
         <span className='inline-flex items-center'>
           {t('View details')}
           <ChevronRight className='size-3.5' />

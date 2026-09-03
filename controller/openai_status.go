@@ -21,7 +21,8 @@ const (
 	openaiStatusTimeout = 8 * time.Second
 	openaiStatusTTL     = 60 * time.Second
 	openaiStatusFailTTL = 15 * time.Second
-	openaiAPIsGroupName = "APIs"
+	openaiChatGPTGroupName = "ChatGPT"
+	openaiCodexGroupName   = "Codex"
 	openaiUptimeDays    = 90
 	openaiUptimeHours   = 24
 )
@@ -71,6 +72,7 @@ type openaiStatusIncident struct {
 	Status             string   `json:"status"`
 	Impact             string   `json:"impact"`
 	AffectedComponents []string `json:"affected_components"`
+	AffectedGroups     []string `json:"affected_groups"`
 	UpdatedAt          string   `json:"updated_at"`
 	URL                string   `json:"url"`
 }
@@ -295,21 +297,40 @@ func normalizeOpenAIStatus(payload openaiWidgetPayload, impacts *openaiImpactsPa
 		sourceURL = openaiStatusPageURL
 	}
 
-	apiComponentIDs := map[string]string{}
-	var apiGroupID string
-	var apiComponents []openaiWidgetGroupComponent
+	trackedComponentNames := map[string]string{}
+	trackedComponentGroups := map[string]string{}
+	groupIDs := map[string]string{}
+	groupComponentNames := map[string]map[string]string{}
+	groups := make([]openaiStatusGroup, 0, 2)
 	for _, item := range summary.Structure.Items {
-		if item.Group == nil || item.Group.Name != openaiAPIsGroupName {
+		if item.Group == nil || (item.Group.Name != openaiChatGPTGroupName && item.Group.Name != openaiCodexGroupName) {
 			continue
 		}
-		apiGroupID = item.Group.ID
+
+		components := make([]openaiStatusComponent, 0, len(item.Group.Components))
+		componentNames := make(map[string]string, len(item.Group.Components))
 		for _, component := range item.Group.Components {
 			if component.Hidden || component.ComponentID == "" {
 				continue
 			}
-			apiComponentIDs[component.ComponentID] = component.Name
-			apiComponents = append(apiComponents, component)
+			trackedComponentNames[component.ComponentID] = component.Name
+			trackedComponentGroups[component.ComponentID] = item.Group.Name
+			componentNames[component.ComponentID] = component.Name
+			components = append(components, openaiStatusComponent{
+				ID:     component.ComponentID,
+				Name:   component.Name,
+				Status: "operational",
+			})
 		}
+		if len(components) == 0 {
+			continue
+		}
+		groupIDs[item.Group.Name] = item.Group.ID
+		groupComponentNames[item.Group.Name] = componentNames
+		groups = append(groups, openaiStatusGroup{
+			Name:       item.Group.Name,
+			Components: components,
+		})
 	}
 
 	statusByID := map[string]string{}
@@ -324,7 +345,7 @@ func normalizeOpenAIStatus(payload openaiWidgetPayload, impacts *openaiImpactsPa
 	incidents := make([]openaiStatusIncident, 0, len(summary.OngoingIncidents))
 	for _, incident := range summary.OngoingIncidents {
 		affectedNames := make([]string, 0)
-		touchesAPIs := false
+		affectedGroups := make([]string, 0)
 		for _, affected := range append(incident.AffectedComponents, incident.ComponentImpacts...) {
 			id := firstNonEmpty(affected.ID, affected.ComponentID)
 			if id == "" {
@@ -335,14 +356,14 @@ func normalizeOpenAIStatus(payload openaiWidgetPayload, impacts *openaiImpactsPa
 					statusByID[id] = affected.Status
 				}
 			}
-			name, ok := apiComponentIDs[id]
+			name, ok := trackedComponentNames[id]
 			if !ok {
 				continue
 			}
-			touchesAPIs = true
 			affectedNames = append(affectedNames, name)
+			affectedGroups = append(affectedGroups, trackedComponentGroups[id])
 		}
-		if !touchesAPIs {
+		if len(affectedGroups) == 0 {
 			continue
 		}
 		incidents = append(incidents, openaiStatusIncident{
@@ -351,26 +372,23 @@ func normalizeOpenAIStatus(payload openaiWidgetPayload, impacts *openaiImpactsPa
 			Status:             incident.Status,
 			Impact:             incident.Impact,
 			AffectedComponents: uniqueStrings(affectedNames),
+			AffectedGroups:     uniqueStrings(affectedGroups),
 			UpdatedAt:          incident.UpdatedAt,
 			URL:                incident.URL,
 		})
 	}
 
-	components := make([]openaiStatusComponent, 0, len(apiComponents))
 	worstComponent := "operational"
-	for _, component := range apiComponents {
-		status := statusByID[component.ComponentID]
-		if status == "" {
-			status = "operational"
+	for groupIndex := range groups {
+		for componentIndex := range groups[groupIndex].Components {
+			component := &groups[groupIndex].Components[componentIndex]
+			if status, ok := statusByID[component.ID]; ok {
+				component.Status = status
+			}
+			if openaiComponentImpactRank[component.Status] > openaiComponentImpactRank[worstComponent] {
+				worstComponent = component.Status
+			}
 		}
-		if openaiComponentImpactRank[status] > openaiComponentImpactRank[worstComponent] {
-			worstComponent = status
-		}
-		components = append(components, openaiStatusComponent{
-			ID:     component.ComponentID,
-			Name:   component.Name,
-			Status: status,
-		})
 	}
 
 	indicator := "none"
@@ -400,14 +418,9 @@ func normalizeOpenAIStatus(payload openaiWidgetPayload, impacts *openaiImpactsPa
 		description = "Major System Outage"
 	}
 
-	groups := []openaiStatusGroup{}
-	if len(components) > 0 {
-		group := openaiStatusGroup{
-			Name:       openaiAPIsGroupName,
-			Components: components,
-		}
-		attachOpenAIUptime(&group, apiGroupID, apiComponentIDs, impacts, now)
-		groups = append(groups, group)
+	for groupIndex := range groups {
+		group := &groups[groupIndex]
+		attachOpenAIUptime(group, groupIDs[group.Name], groupComponentNames[group.Name], impacts, now)
 	}
 
 	if now.IsZero() {
@@ -416,7 +429,7 @@ func normalizeOpenAIStatus(payload openaiWidgetPayload, impacts *openaiImpactsPa
 
 	history := []openaiStatusIncident{}
 	if impacts != nil {
-		history = buildOpenAIHistory(apiComponentIDs, impacts.ComponentImpacts, impacts.IncidentLinks, now)
+		history = buildOpenAIHistory(trackedComponentNames, trackedComponentGroups, impacts.ComponentImpacts, impacts.IncidentLinks, now)
 	}
 
 	return openaiStatusResponse{
@@ -434,7 +447,7 @@ func normalizeOpenAIStatus(payload openaiWidgetPayload, impacts *openaiImpactsPa
 func attachOpenAIUptime(
 	group *openaiStatusGroup,
 	groupID string,
-	apiComponentIDs map[string]string,
+	componentNamesByID map[string]string,
 	impacts *openaiImpactsPayload,
 	now time.Time,
 ) {
@@ -445,14 +458,14 @@ func attachOpenAIUptime(
 		now = time.Now().UTC()
 	}
 
-	ids := make(map[string]struct{}, len(apiComponentIDs))
-	for id := range apiComponentIDs {
+	ids := make(map[string]struct{}, len(componentNamesByID))
+	for id := range componentNamesByID {
 		ids[id] = struct{}{}
 	}
 	group.UptimeDays = openaiUptimeDays
 	group.HourlyHours = openaiUptimeHours
-	group.Series = buildOpenAIUptimeSeries(ids, apiComponentIDs, impacts.ComponentImpacts, impacts.IncidentLinks, now)
-	group.HourlySeries = buildOpenAIHourlySeries(ids, apiComponentIDs, impacts.ComponentImpacts, impacts.IncidentLinks, now)
+	group.Series = buildOpenAIUptimeSeries(ids, componentNamesByID, impacts.ComponentImpacts, impacts.IncidentLinks, now)
+	group.HourlySeries = buildOpenAIHourlySeries(ids, componentNamesByID, impacts.ComponentImpacts, impacts.IncidentLinks, now)
 	group.UptimePercent = openaiUptimeByGroupID(impacts.ComponentUptimes, groupID)
 
 	uptimeByComponent := map[string]*float64{}
@@ -748,19 +761,20 @@ func uniqueStrings(values []string) []string {
 }
 
 func buildOpenAIHistory(
-	apiComponentIDs map[string]string,
+	componentNamesByID map[string]string,
+	componentGroupsByID map[string]string,
 	impacts []openaiImpactWindow,
 	incidentLinks []openaiIncidentLink,
 	now time.Time,
 ) []openaiStatusIncident {
-	if len(apiComponentIDs) == 0 || len(impacts) == 0 {
+	if len(componentNamesByID) == 0 || len(impacts) == 0 {
 		return []openaiStatusIncident{}
 	}
 	start, endExclusive := openaiUptimeWindow(now)
 	linkByID := openaiIncidentLinkMap(incidentLinks)
 	byKey := map[string]*openaiStatusIncident{}
 	for _, impact := range impacts {
-		componentName, ok := apiComponentIDs[impact.ComponentID]
+		componentName, ok := componentNamesByID[impact.ComponentID]
 		if !ok {
 			continue
 		}
@@ -806,6 +820,7 @@ func buildOpenAIHistory(
 				Status:             status,
 				Impact:             impact.Status,
 				AffectedComponents: []string{},
+				AffectedGroups:     []string{},
 				UpdatedAt:          updatedAt,
 				URL:                url,
 			}
@@ -815,6 +830,7 @@ func buildOpenAIHistory(
 			item.Impact = impact.Status
 		}
 		item.AffectedComponents = uniqueStrings(append(item.AffectedComponents, componentName))
+		item.AffectedGroups = uniqueStrings(append(item.AffectedGroups, componentGroupsByID[impact.ComponentID]))
 	}
 
 	out := make([]openaiStatusIncident, 0, len(byKey))

@@ -115,6 +115,19 @@ func BumpGroupSampleGenerationInMemory(group string) int64 {
 	return perfMetricsSetting.GroupSampleGeneration[group]
 }
 
+// SetGroupSampleGenerationInMemory updates the local generation cache after a
+// successful clear. The database state remains authoritative during flush.
+func SetGroupSampleGenerationInMemory(group string, generation int64) {
+	group = strings.TrimSpace(group)
+	if group == "" || generation < 0 {
+		return
+	}
+	if perfMetricsSetting.GroupSampleGeneration == nil {
+		perfMetricsSetting.GroupSampleGeneration = map[string]int64{}
+	}
+	perfMetricsSetting.GroupSampleGeneration[group] = generation
+}
+
 func GetGroupDisplayOrder() []string {
 	return NormalizeGroupDisplayOrder(perfMetricsSetting.GroupDisplayOrder)
 }

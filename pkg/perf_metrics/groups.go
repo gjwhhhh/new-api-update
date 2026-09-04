@@ -62,6 +62,10 @@ func QueryGroups(hours int, groups []string) (GroupsQueryResult, error) {
 			generationMs:   row.GenerationMs,
 		})
 	}
+	generations, err := model.GetPerfMetricGroupGenerations(groups)
+	if err != nil {
+		return GroupsQueryResult{}, err
+	}
 
 	allowed := allowedGroupSet(groups)
 	hotBuckets.Range(func(key, value any) bool {
@@ -75,7 +79,7 @@ func QueryGroups(hours int, groups []string) (GroupsQueryResult, error) {
 			}
 		}
 		bucket := value.(*atomicBucket)
-		if !isCurrentHotBucket(k.group, bucket) {
+		if !matchesAuthoritativeGeneration(k.group, bucket, generations) {
 			return true
 		}
 		snap := bucket.snapshot()

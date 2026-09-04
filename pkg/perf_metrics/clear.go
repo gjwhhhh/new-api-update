@@ -29,13 +29,13 @@ func ClearGroupRecent(group string, hours int) (ClearGroupResult, error) {
 	endTs := time.Now().Unix()
 	startTs := endTs - int64(hours)*3600
 
-	clearHotBucketsInRange(group, startTs, endTs)
-	if err := model.DeletePerfMetricsInRange(group, startTs, endTs); err != nil {
+	generation, err := model.ClearPerfMetricGroupInRange(group, startTs, endTs)
+	if err != nil {
 		return ClearGroupResult{}, err
 	}
+	clearHotBucketsInRange(group, startTs, endTs)
 
-	nextGen := bumpAndPersistGroupSampleGeneration(group)
-	_ = nextGen
+	persistGroupSampleGeneration(group, generation)
 
 	return ClearGroupResult{
 		Group:   group,
@@ -59,23 +59,23 @@ func clearHotBucketsInRange(group string, startTs, endTs int64) {
 	})
 }
 
-func bumpAndPersistGroupSampleGeneration(group string) int64 {
+func persistGroupSampleGeneration(group string, generation int64) {
 	setting := perf_metrics_setting.GetSetting()
 	gens := map[string]int64{}
 	for k, v := range setting.GroupSampleGeneration {
 		gens[k] = v
 	}
-	gens[group] = gens[group] + 1
+	gens[group] = generation
 	encoded, err := common.Marshal(gens)
 	if err != nil {
-		perf_metrics_setting.BumpGroupSampleGenerationInMemory(group)
 		common.SysError("failed to marshal group_sample_generation: " + err.Error())
-		return perf_metrics_setting.GetGroupSampleGeneration(group)
+		perf_metrics_setting.SetGroupSampleGenerationInMemory(group, generation)
+		return
 	}
 	if err := model.UpdateOption("perf_metrics_setting.group_sample_generation", string(encoded)); err != nil {
-		perf_metrics_setting.BumpGroupSampleGenerationInMemory(group)
 		common.SysError("failed to persist group_sample_generation: " + err.Error())
-		return perf_metrics_setting.GetGroupSampleGeneration(group)
+		perf_metrics_setting.SetGroupSampleGenerationInMemory(group, generation)
+		return
 	}
-	return gens[group]
+	perf_metrics_setting.SetGroupSampleGenerationInMemory(group, generation)
 }

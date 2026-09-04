@@ -43,7 +43,7 @@ func flushCompletedBuckets() {
 			return true
 		}
 
-		err := model.UpsertPerfMetric(&model.PerfMetric{
+		persisted, err := model.UpsertPerfMetricIfCurrentGeneration(&model.PerfMetric{
 			ModelName:      k.model,
 			Group:          k.group,
 			BucketTs:       k.bucketTs,
@@ -54,10 +54,14 @@ func flushCompletedBuckets() {
 			TtftCount:      drained.ttftCount,
 			OutputTokens:   drained.outputTokens,
 			GenerationMs:   drained.generationMs,
-		})
+		}, bucket.sampleGeneration())
 		if err != nil {
 			bucket.addCounters(drained)
 			common.SysError(fmt.Sprintf("failed to flush perf metric bucket model=%s group=%s bucket=%d: %s", k.model, k.group, k.bucketTs, err.Error()))
+			return true
+		}
+		if !persisted {
+			hotBuckets.Delete(key)
 			return true
 		}
 

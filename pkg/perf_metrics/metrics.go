@@ -138,6 +138,13 @@ func isCurrentHotBucket(group string, bucket *atomicBucket) bool {
 	return bucket.sampleGeneration() >= perf_metrics_setting.GetGroupSampleGeneration(group)
 }
 
+func matchesAuthoritativeGeneration(group string, bucket *atomicBucket, generations map[string]int64) bool {
+	if bucket == nil {
+		return false
+	}
+	return bucket.sampleGeneration() == generations[group]
+}
+
 // HotCountersForTest returns in-memory hot-bucket counters for tests.
 func HotCountersForTest(modelName, group string) (requestCount, successCount int64) {
 	hotBuckets.Range(func(key, value any) bool {
@@ -187,6 +194,14 @@ func Query(params QueryParams) (QueryResult, error) {
 			generationMs:   row.GenerationMs,
 		})
 	}
+	generationGroups := []string(nil)
+	if params.Group != "" {
+		generationGroups = []string{params.Group}
+	}
+	generations, err := model.GetPerfMetricGroupGenerations(generationGroups)
+	if err != nil {
+		return QueryResult{}, err
+	}
 
 	hotBuckets.Range(func(key, value any) bool {
 		k := key.(bucketKey)
@@ -197,7 +212,7 @@ func Query(params QueryParams) (QueryResult, error) {
 			return true
 		}
 		bucket := value.(*atomicBucket)
-		if !isCurrentHotBucket(k.group, bucket) {
+		if !matchesAuthoritativeGeneration(k.group, bucket, generations) {
 			return true
 		}
 		mergeCounters(merged, k, bucket.snapshot())
@@ -236,6 +251,10 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 		mergeModelTotals(totals, row.ModelName, value)
 		mergeModelBucket(modelBuckets, row.ModelName, row.BucketTs, value)
 	}
+	generations, err := model.GetPerfMetricGroupGenerations(groups)
+	if err != nil {
+		return SummaryAllResult{}, err
+	}
 
 	hotBuckets.Range(func(key, value any) bool {
 		k := key.(bucketKey)
@@ -248,7 +267,7 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 			}
 		}
 		bucket := value.(*atomicBucket)
-		if !isCurrentHotBucket(k.group, bucket) {
+		if !matchesAuthoritativeGeneration(k.group, bucket, generations) {
 			return true
 		}
 		snap := bucket.snapshot()

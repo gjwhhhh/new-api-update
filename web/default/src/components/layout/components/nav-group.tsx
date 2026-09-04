@@ -123,7 +123,12 @@ function NavBadge({ children }: { children: ReactNode }) {
 function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   const { setOpenMobile } = useSidebar()
   const navigation = item.hardNavigation ? (
-    <a href={item.url} onClick={() => setOpenMobile(false)} />
+    <a
+      href={item.url}
+      target={item.openInNewTab ? '_blank' : undefined}
+      rel={item.openInNewTab ? 'noopener noreferrer' : undefined}
+      onClick={() => setOpenMobile(false)}
+    />
   ) : (
     <Link to={item.url} onClick={() => setOpenMobile(false)} />
   )

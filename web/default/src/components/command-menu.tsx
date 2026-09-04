@@ -76,6 +76,14 @@ export function CommandMenu() {
                         onSelect={() => {
                           runCommand(() => {
                             if (navItem.hardNavigation) {
+                              if (navItem.openInNewTab) {
+                                window.open(
+                                  String(navItem.url),
+                                  '_blank',
+                                  'noopener,noreferrer'
+                                )
+                                return
+                              }
                               window.location.assign(String(navItem.url))
                               return
                             }

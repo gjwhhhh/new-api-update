@@ -36,6 +36,8 @@ type BaseNavItem = {
   requiredRole?: number
   /** Navigate by loading the document instead of letting the SPA claim the URL. */
   hardNavigation?: boolean
+  /** Open the link in a new browser tab instead of replacing the current page. */
+  openInNewTab?: boolean
 }
 
 /**

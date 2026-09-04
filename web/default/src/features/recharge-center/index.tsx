@@ -58,7 +58,11 @@ export function RechargeCenter() {
           <p className='text-muted-foreground text-sm'>
             {t('This recharge center opens in an external page.')}
           </p>
-          <Button render={<a href={config.url} rel='noopener noreferrer' />}>
+          <Button
+            render={
+              <a href={config.url} target='_blank' rel='noopener noreferrer' />
+            }
+          >
             <ExternalLink className='size-4' aria-hidden='true' />
             {t('Open Recharge Center')}
           </Button>

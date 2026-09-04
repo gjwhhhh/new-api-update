@@ -127,6 +127,7 @@ export function useSidebarData(): SidebarData {
                   icon: CreditCard,
                   hardNavigation:
                     rechargeCenter.data.displayMode === 'redirect',
+                  openInNewTab: rechargeCenter.data.displayMode === 'redirect',
                 },
               ]
             : []),

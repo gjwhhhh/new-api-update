@@ -127,10 +127,30 @@ export function RechargeCenterSettingsSection(
         },
       },
       onSubmit: async (_data, changedFields) => {
-        for (const [key, value] of Object.entries(changedFields)) {
+        const updates = Object.entries(changedFields)
+        const enabledUpdate = updates.find(
+          ([key]) => key === 'recharge_center_setting.enabled'
+        )
+
+        if (enabledUpdate?.[1] === false) {
+          await updateOption.mutateAsync({
+            key: enabledUpdate[0],
+            value: false,
+          })
+        }
+
+        for (const [key, value] of updates) {
+          if (key === 'recharge_center_setting.enabled') continue
           await updateOption.mutateAsync({
             key,
             value: value as string | boolean,
+          })
+        }
+
+        if (enabledUpdate?.[1] === true) {
+          await updateOption.mutateAsync({
+            key: enabledUpdate[0],
+            value: true,
           })
         }
       },

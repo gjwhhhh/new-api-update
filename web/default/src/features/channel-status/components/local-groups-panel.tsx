@@ -23,16 +23,23 @@ import { EmptyState } from '@/components/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { getChannelHealth } from '../lib/health'
-import type { ChannelHealth, GroupStatusItem } from '../types'
+import type {
+  ChannelHealth,
+  GroupHours,
+  GroupStatusItem,
+} from '../types'
 import { GroupDetailDialog } from './group-detail-dialog'
 import { GroupStatusCard } from './group-status-card'
 import { StatusFilterBar } from './status-filter-bar'
 
 export function LocalGroupsPanel(props: {
   groups: GroupStatusItem[]
-  hours: number
+  hours: GroupHours
   isLoading: boolean
   isError: boolean
+  isAdmin: boolean
+  reorderMode: boolean
+  onMoveGroup: (groupName: string, direction: -1 | 1) => void
 }) {
   const { t } = useTranslation()
   const [selected, setSelected] = useState<ChannelHealth | 'all'>('all')
@@ -52,12 +59,13 @@ export function LocalGroupsPanel(props: {
   }, [props.groups])
 
   const filtered = useMemo(() => {
-    if (selected === 'all') return props.groups
+    // Keep absolute positions while reordering; health filter would confuse ↑↓.
+    if (props.reorderMode || selected === 'all') return props.groups
     return props.groups.filter(
       (group) =>
         getChannelHealth(group.request_count, group.success_rate) === selected
     )
-  }, [props.groups, selected])
+  }, [props.groups, props.reorderMode, selected])
 
   if (props.isLoading) {
     return (
@@ -93,7 +101,7 @@ export function LocalGroupsPanel(props: {
     <div className='space-y-4'>
       <StatusFilterBar
         counts={counts}
-        selected={selected}
+        selected={props.reorderMode ? 'all' : selected}
         onSelect={setSelected}
         total={props.groups.length}
       />
@@ -105,11 +113,20 @@ export function LocalGroupsPanel(props: {
         />
       ) : (
         <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
-          {filtered.map((group) => (
+          {filtered.map((group, index) => (
             <GroupStatusCard
               key={group.group}
               group={group}
-              onOpen={() => setOpenGroup(group)}
+              hours={props.hours}
+              isAdmin={props.isAdmin}
+              reorderMode={props.reorderMode}
+              canMoveUp={index > 0}
+              canMoveDown={index < filtered.length - 1}
+              onMoveUp={() => props.onMoveGroup(group.group, -1)}
+              onMoveDown={() => props.onMoveGroup(group.group, 1)}
+              onOpen={() => {
+                if (!props.reorderMode) setOpenGroup(group)
+              }}
             />
           ))}
         </div>

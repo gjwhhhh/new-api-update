@@ -42,6 +42,9 @@ func SetApiRouter(router *gin.Engine) {
 			perfMetricsRoute.GET("", controller.GetPerfMetrics)
 		}
 		apiRouter.GET("/perf-metrics/groups", middleware.UserAuth(), controller.GetPerfMetricsGroups)
+		apiRouter.POST("/perf-metrics/groups/clear", middleware.AdminAuth(), controller.ClearPerfMetricGroupSamples)
+		apiRouter.PUT("/perf-metrics/groups/visibility", middleware.AdminAuth(), controller.UpdatePerfMetricGroupVisibility)
+		apiRouter.PUT("/perf-metrics/groups/display-order", middleware.AdminAuth(), controller.UpdatePerfMetricGroupDisplayOrder)
 		apiRouter.GET("/openai/status", middleware.UserAuth(), controller.GetOpenAIStatus)
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)

@@ -536,6 +536,9 @@ func recordChannelTestSample(channel *model.Channel, info *relaycommon.RelayInfo
 	var groups []string
 	if channel != nil {
 		groups = channel.GetGroups()
+		if channel.GetOtherSettings().IsModelExcludedFromSampling(info.OriginModelName) {
+			return
+		}
 	}
 	// Snapshot end time on the request goroutine so gopool queue delay is not
 	// included in latency / generation metrics.

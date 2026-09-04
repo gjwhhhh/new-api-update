@@ -209,6 +209,7 @@ export const channelFormSchema = z
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
     upstream_model_update_ignored_models: z.string().optional(),
+    exclude_from_sampling_models: z.string().optional(),
     health_check_mode: z
       .enum(['inherit', 'scheduled', 'passive_recovery', 'excluded'])
       .optional(),
@@ -369,6 +370,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
+  exclude_from_sampling_models: '',
   health_check_mode: 'inherit',
   health_check_interval_minutes: undefined,
   advanced_custom: '',
@@ -427,6 +429,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
+  let excludeFromSamplingModels = ''
   let healthCheckMode: ChannelFormValues['health_check_mode'] = 'inherit'
   let healthCheckIntervalMinutes: number | undefined
   let advancedCustom = ''
@@ -454,6 +457,11 @@ export function transformChannelToFormDefaults(
         parsed.upstream_model_update_ignored_models
       )
         ? parsed.upstream_model_update_ignored_models.join(',')
+        : ''
+      excludeFromSamplingModels = Array.isArray(
+        parsed.exclude_from_sampling_models
+      )
+        ? parsed.exclude_from_sampling_models.join(',')
         : ''
       const healthCheck = parsed.health_check
       if (
@@ -530,6 +538,7 @@ export function transformChannelToFormDefaults(
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
+    exclude_from_sampling_models: excludeFromSamplingModels,
     health_check_mode: healthCheckMode,
     health_check_interval_minutes: healthCheckIntervalMinutes,
     advanced_custom: advancedCustom,
@@ -642,6 +651,15 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 
   settingsObj.disable_task_polling_sleep =
     formData.disable_task_polling_sleep === true
+
+  settingsObj.exclude_from_sampling_models = [
+    ...new Set(
+      String(formData.exclude_from_sampling_models || '')
+        .split(',')
+        .map((model) => model.trim())
+        .filter(Boolean)
+    ),
+  ]
 
   // Upstream model update settings (for model-fetchable channel types)
   if (MODEL_FETCHABLE_TYPES.has(formData.type)) {

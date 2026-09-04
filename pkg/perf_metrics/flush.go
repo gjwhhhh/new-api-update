@@ -32,6 +32,11 @@ func flushCompletedBuckets() {
 		}
 
 		bucket := value.(*atomicBucket)
+		if !isCurrentHotBucket(k.group, bucket) {
+			hotBuckets.Delete(key)
+			return true
+		}
+
 		drained := bucket.drain()
 		if drained.requestCount == 0 {
 			deleteOldEmptyBucket(k, key)

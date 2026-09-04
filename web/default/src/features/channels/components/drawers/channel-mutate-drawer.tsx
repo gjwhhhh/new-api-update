@@ -298,6 +298,7 @@ const SENSITIVE_FORM_FIELDS = [
   'upstream_model_update_check_enabled',
   'upstream_model_update_auto_sync_enabled',
   'upstream_model_update_ignored_models',
+  'exclude_from_sampling_models',
   'health_check_mode',
   'health_check_interval_minutes',
 ] satisfies (keyof ChannelFormValues)[]
@@ -345,6 +346,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
     values.upstream_model_update_ignored_models?.trim() ||
+    values.exclude_from_sampling_models?.trim() ||
     values.health_check_mode !== 'inherit'
   )
 }
@@ -3607,6 +3609,58 @@ export function ChannelMutateDrawer({
                                   <FormMessage />
                                 </FormItem>
                               )}
+                            />
+
+                            <Separator className='my-4' />
+
+                            <FormField
+                              control={form.control}
+                              name='exclude_from_sampling_models'
+                              render={({ field }) => {
+                                const selected = String(field.value || '')
+                                  .split(',')
+                                  .map((model) => model.trim())
+                                  .filter(Boolean)
+                                const options = currentModelsArray.map(
+                                  (model) => ({
+                                    label: model,
+                                    value: model,
+                                  })
+                                )
+                                return (
+                                  <FormItem className='space-y-3'>
+                                    <div className='space-y-1'>
+                                      <FormLabel>
+                                        {t(
+                                          'Models excluded from status sampling'
+                                        )}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Selected models will not be counted in channel status / performance sampling. Routing and billing are unaffected. Models are included by default.'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <MultiSelect
+                                        options={options}
+                                        selected={selected}
+                                        onChange={(next) => {
+                                          field.onChange(next.join(','))
+                                        }}
+                                        placeholder={t(
+                                          'Select models to exclude from sampling'
+                                        )}
+                                        disabled={
+                                          currentModelsArray.length === 0
+                                        }
+                                        maxVisibleChips={8}
+                                      />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )
+                              }}
                             />
                           </div>
                         </div>

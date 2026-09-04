@@ -44,6 +44,9 @@ func RecordRelaySampleToGroupsAt(info *relaycommon.RelayInfo, groups []string, s
 	if info == nil {
 		return
 	}
+	if info.ChannelMeta != nil && info.ChannelOtherSettings.IsModelExcludedFromSampling(info.OriginModelName) {
+		return
+	}
 	base := relaySampleFromInfo(info, success, outputTokens, endedAt)
 	for _, group := range normalizeSampleGroups(groups) {
 		sample := base
@@ -109,14 +112,30 @@ func Record(sample Sample) {
 		sample.LatencyMs = 0
 	}
 
+	gen := perf_metrics_setting.GetGroupSampleGeneration(sample.Group)
 	key := bucketKey{
 		model:    sample.Model,
 		group:    sample.Group,
 		bucketTs: bucketStart(time.Now().Unix()),
 	}
-	actual, _ := hotBuckets.LoadOrStore(key, &atomicBucket{})
-	actual.(*atomicBucket).add(sample)
+	actual, loaded := hotBuckets.LoadOrStore(key, newAtomicBucket(gen))
+	bucket := actual.(*atomicBucket)
+	if loaded && bucket.sampleGeneration() < gen {
+		replacement := newAtomicBucket(gen)
+		replacement.add(sample)
+		hotBuckets.Store(key, replacement)
+		recordRedis(key, sample)
+		return
+	}
+	bucket.add(sample)
 	recordRedis(key, sample)
+}
+
+func isCurrentHotBucket(group string, bucket *atomicBucket) bool {
+	if bucket == nil {
+		return false
+	}
+	return bucket.sampleGeneration() >= perf_metrics_setting.GetGroupSampleGeneration(group)
 }
 
 // HotCountersForTest returns in-memory hot-bucket counters for tests.
@@ -126,7 +145,11 @@ func HotCountersForTest(modelName, group string) (requestCount, successCount int
 		if k.model != modelName || k.group != group {
 			return true
 		}
-		snap := value.(*atomicBucket).snapshot()
+		bucket := value.(*atomicBucket)
+		if !isCurrentHotBucket(k.group, bucket) {
+			return true
+		}
+		snap := bucket.snapshot()
 		requestCount += snap.requestCount
 		successCount += snap.successCount
 		return true
@@ -173,7 +196,11 @@ func Query(params QueryParams) (QueryResult, error) {
 		if params.Group != "" && k.group != params.Group {
 			return true
 		}
-		mergeCounters(merged, k, value.(*atomicBucket).snapshot())
+		bucket := value.(*atomicBucket)
+		if !isCurrentHotBucket(k.group, bucket) {
+			return true
+		}
+		mergeCounters(merged, k, bucket.snapshot())
 		return true
 	})
 
@@ -220,7 +247,11 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 				return true
 			}
 		}
-		snap := value.(*atomicBucket).snapshot()
+		bucket := value.(*atomicBucket)
+		if !isCurrentHotBucket(k.group, bucket) {
+			return true
+		}
+		snap := bucket.snapshot()
 		if snap.requestCount == 0 {
 			return true
 		}

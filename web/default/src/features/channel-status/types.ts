@@ -48,12 +48,15 @@ export type GroupStatusItem = {
   avg_tps: number
   series: GroupBucketPoint[]
   models: GroupModelStat[]
+  visible_to_users?: boolean
 }
 
 export type GroupsStatusData = {
   bucket_seconds: number
   start_ts: number
   end_ts: number
+  sort?: GroupSortMode
+  display_order?: string[]
   groups: GroupStatusItem[]
 }
 
@@ -121,3 +124,4 @@ export type OpenAIStatusData = {
 export type ChannelHealth = 'running' | 'fluctuating' | 'abnormal' | 'no_data'
 export type ChannelStatusTab = 'local' | 'openai'
 export type GroupHours = 24 | 168
+export type GroupSortMode = 'custom' | 'traffic'

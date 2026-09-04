@@ -52,8 +52,23 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastDetectedModels []string                    `json:"upstream_model_update_last_detected_models,omitempty"` // 上次检测到的可加入模型
 	UpstreamModelUpdateLastRemovedModels  []string                    `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string                    `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
+	ExcludeFromSamplingModels             []string                    `json:"exclude_from_sampling_models,omitempty"`               // 不计入渠道状态/性能采样的模型（默认计入）
 	HealthCheck                           *ChannelHealthCheckSettings `json:"health_check,omitempty"`
 	AdvancedCustom                        *AdvancedCustomConfig       `json:"advanced_custom,omitempty"`
+}
+
+// IsModelExcludedFromSampling reports whether modelName should skip perf metrics sampling.
+func (s ChannelOtherSettings) IsModelExcludedFromSampling(modelName string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	for _, excluded := range s.ExcludeFromSamplingModels {
+		if strings.TrimSpace(excluded) == modelName {
+			return true
+		}
+	}
+	return false
 }
 
 type ChannelHealthCheckMode string

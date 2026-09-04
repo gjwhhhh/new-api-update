@@ -122,6 +122,7 @@ type counters struct {
 }
 
 type atomicBucket struct {
+	generation     atomic.Int64
 	requestCount   atomic.Int64
 	successCount   atomic.Int64
 	totalLatencyMs atomic.Int64
@@ -129,6 +130,16 @@ type atomicBucket struct {
 	ttftCount      atomic.Int64
 	outputTokens   atomic.Int64
 	generationMs   atomic.Int64
+}
+
+func newAtomicBucket(generation int64) *atomicBucket {
+	b := &atomicBucket{}
+	b.generation.Store(generation)
+	return b
+}
+
+func (b *atomicBucket) sampleGeneration() int64 {
+	return b.generation.Load()
 }
 
 func (b *atomicBucket) add(sample Sample) {

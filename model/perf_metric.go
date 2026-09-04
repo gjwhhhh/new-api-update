@@ -154,6 +154,15 @@ func DeletePerfMetricsBefore(cutoffTs int64) error {
 	return DB.Where("bucket_ts < ?", cutoffTs).Delete(&PerfMetric{}).Error
 }
 
+// DeletePerfMetricsInRange deletes rows for one group within [startTs, endTs].
+func DeletePerfMetricsInRange(group string, startTs int64, endTs int64) error {
+	if group == "" || startTs <= 0 || endTs < startTs {
+		return nil
+	}
+	return DB.Where(commonGroupCol+" = ? AND bucket_ts >= ? AND bucket_ts <= ?", group, startTs, endTs).
+		Delete(&PerfMetric{}).Error
+}
+
 func PerfMetricStartTime(hours int) int64 {
 	if hours <= 0 {
 		hours = 24

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -124,6 +125,35 @@ func TestRecordChannelTestSampleEmptyChannelGroupsDefaults(t *testing.T) {
 	assert.Equal(t, beforeVIPReq, afterVIPReq)
 }
 
+func TestRecordChannelTestSampleRespectsExcludedModels(t *testing.T) {
+	prev := perf_metrics_setting.GetSetting()
+	t.Cleanup(func() {
+		perf_metrics_setting.RestoreSettingForTest(prev)
+	})
+	perf_metrics_setting.RestoreSettingForTest(perf_metrics_setting.PerfMetricsSetting{
+		Enabled:            true,
+		IncludeChannelTest: true,
+		FlushInterval:      5,
+		BucketTime:         "hour",
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test-excluded",
+		UsingGroup:      "default",
+		StartTime:       time.Now().Add(-time.Second),
+	}
+	channel := &model.Channel{Group: "default"}
+	channel.SetOtherSettings(dto.ChannelOtherSettings{
+		ExcludeFromSamplingModels: []string{"gpt-test-excluded"},
+	})
+
+	beforeReq, beforeOK := perfmetrics.HotCountersForTest("gpt-test-excluded", "default")
+	recordChannelTestSampleSync(channel, info, true, 9)
+	afterReq, afterOK := perfmetrics.HotCountersForTest("gpt-test-excluded", "default")
+	assert.Equal(t, beforeReq, afterReq)
+	assert.Equal(t, beforeOK, afterOK)
+}
+
 func recordChannelTestSampleSync(channel *model.Channel, info *relaycommon.RelayInfo, success bool, outputTokens int64) {
 	if !perf_metrics_setting.IncludeChannelTestEnabled() || info == nil {
 		return
@@ -131,6 +161,9 @@ func recordChannelTestSampleSync(channel *model.Channel, info *relaycommon.Relay
 	var groups []string
 	if channel != nil {
 		groups = channel.GetGroups()
+		if channel.GetOtherSettings().IsModelExcludedFromSampling(info.OriginModelName) {
+			return
+		}
 	}
 	perfmetrics.RecordRelaySampleToGroups(info, groups, success, outputTokens)
 }

@@ -18,20 +18,79 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { GroupsStatusData, OpenAIStatusData } from './types'
+import type {
+  GroupsStatusData,
+  GroupSortMode,
+  OpenAIStatusData,
+} from './types'
 
-export async function getPerfMetricGroups(hours: number) {
+export async function getPerfMetricGroups(
+  hours: number,
+  sort: GroupSortMode = 'custom'
+) {
   const res = await api.get<{
     success: boolean
     data: GroupsStatusData
     message?: string
   }>('/api/perf-metrics/groups', {
-    params: { hours },
+    params: { hours, sort },
     skipErrorHandler: true,
     skipBusinessError: true,
   })
   if (!res.data.success || !res.data.data) {
     throw new Error(res.data.message || 'Failed to load group status')
+  }
+  return res.data.data
+}
+
+export async function clearPerfMetricGroupSamples(group: string, hours: number) {
+  const res = await api.post<{
+    success: boolean
+    message?: string
+    data?: {
+      group: string
+      hours: number
+      start_ts: number
+      end_ts: number
+    }
+  }>('/api/perf-metrics/groups/clear', { group, hours })
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Failed to clear recent samples')
+  }
+  return res.data.data
+}
+
+export async function updatePerfMetricGroupVisibility(
+  group: string,
+  visibleToUsers: boolean
+) {
+  const res = await api.put<{
+    success: boolean
+    message?: string
+    data?: {
+      group: string
+      visible_to_users: boolean
+    }
+  }>('/api/perf-metrics/groups/visibility', {
+    group,
+    visible_to_users: visibleToUsers,
+  })
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Failed to update group visibility')
+  }
+  return res.data.data
+}
+
+export async function updatePerfMetricGroupDisplayOrder(groups: string[]) {
+  const res = await api.put<{
+    success: boolean
+    message?: string
+    data?: {
+      groups: string[]
+    }
+  }>('/api/perf-metrics/groups/display-order', { groups })
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Failed to save display order')
   }
   return res.data.data
 }

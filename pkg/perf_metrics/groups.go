@@ -74,7 +74,11 @@ func QueryGroups(hours int, groups []string) (GroupsQueryResult, error) {
 				return true
 			}
 		}
-		snap := value.(*atomicBucket).snapshot()
+		bucket := value.(*atomicBucket)
+		if !isCurrentHotBucket(k.group, bucket) {
+			return true
+		}
+		snap := bucket.snapshot()
 		if snap.requestCount == 0 {
 			return true
 		}
@@ -174,12 +178,6 @@ func buildGroupMetrics(
 		})
 	}
 
-	sort.SliceStable(metrics, func(i, j int) bool {
-		if metrics[i].RequestCount == metrics[j].RequestCount {
-			return metrics[i].Group < metrics[j].Group
-		}
-		return metrics[i].RequestCount > metrics[j].RequestCount
-	})
 	return metrics
 }
 

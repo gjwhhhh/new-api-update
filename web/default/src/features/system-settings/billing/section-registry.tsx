@@ -25,6 +25,7 @@ import { PaymentSettingsSection } from '../integrations/payment-settings-section
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { RechargeCenterSettingsSection } from './recharge-center-settings-section'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -196,6 +197,20 @@ const BILLING_SECTIONS = [
           enabled: settings['checkin_setting.enabled'],
           minQuota: settings['checkin_setting.min_quota'],
           maxQuota: settings['checkin_setting.max_quota'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'recharge-center',
+    titleKey: 'Recharge Center',
+    build: (settings: BillingSettings) => (
+      <RechargeCenterSettingsSection
+        defaultValues={{
+          enabled: settings['recharge_center_setting.enabled'] ?? false,
+          url: settings['recharge_center_setting.url'] ?? '',
+          displayMode:
+            settings['recharge_center_setting.display_mode'] ?? 'redirect',
         }}
       />
     ),

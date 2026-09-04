@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
-import { User, Wallet, LogOut, Settings } from 'lucide-react'
-import { useMemo } from 'react'
+import { CreditCard, User, Wallet, LogOut, Settings } from 'lucide-react'
+import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SignOutDialog } from '@/components/sign-out-dialog'
@@ -31,6 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useRechargeCenterConfig } from '@/features/recharge-center/hooks/use-recharge-center-config'
 import useDialogState from '@/hooks/use-dialog'
 import { useIsSidebarModuleVisible } from '@/hooks/use-sidebar-config'
 import { useUserDisplay } from '@/hooks/use-user-display'
@@ -48,12 +49,21 @@ export function ProfileDropdown() {
   const { displayName, roleLabel } = useUserDisplay(user)
   const isSuperAdmin = user?.role === ROLE.SUPER_ADMIN
   const isWalletVisible = useIsSidebarModuleVisible('/wallet')
+  const rechargeCenter = useRechargeCenterConfig()
   const avatarName = user?.username || displayName
   const avatarFallback = getUserAvatarFallback(avatarName)
   const avatarFallbackStyle = useMemo(
     () => getUserAvatarStyle(avatarName),
     [avatarName]
   )
+  const handleRechargeCenterClick = useCallback(() => {
+    if (!rechargeCenter.data) return
+    if (rechargeCenter.data.displayMode === 'redirect') {
+      window.location.assign(rechargeCenter.data.url)
+      return
+    }
+    navigate({ to: '/recharge-center' })
+  }, [navigate, rechargeCenter.data])
 
   return (
     <>
@@ -111,6 +121,13 @@ export function ProfileDropdown() {
             <DropdownMenuItem onClick={() => navigate({ to: '/wallet' })}>
               <Wallet className='size-4' />
               {t('Wallet')}
+            </DropdownMenuItem>
+          )}
+
+          {rechargeCenter.data && (
+            <DropdownMenuItem onClick={handleRechargeCenterClick}>
+              <CreditCard className='size-4' />
+              {t('Recharge Center')}
             </DropdownMenuItem>
           )}
 

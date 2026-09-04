@@ -155,6 +155,22 @@ func UpdateOption(c *gin.Context) {
 		}
 	}
 	switch option.Key {
+	case "recharge_center_setting.url":
+		if err := operation_setting.ValidateRechargeCenterURL(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	case "recharge_center_setting.display_mode":
+		if err := operation_setting.ValidateRechargeCenterDisplayMode(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
 			c.JSON(http.StatusOK, gin.H{

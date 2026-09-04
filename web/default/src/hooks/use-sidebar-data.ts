@@ -38,6 +38,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
+import { useRechargeCenterConfig } from '@/features/recharge-center/hooks/use-recharge-center-config'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -48,6 +49,7 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const rechargeCenter = useRechargeCenterConfig()
 
   return {
     navGroups: [
@@ -114,6 +116,20 @@ export function useSidebarData(): SidebarData {
             url: '/wallet',
             icon: Wallet,
           },
+          ...(rechargeCenter.data
+            ? [
+                {
+                  title: t('Recharge Center'),
+                  url:
+                    rechargeCenter.data.displayMode === 'redirect'
+                      ? rechargeCenter.data.url
+                      : '/recharge-center',
+                  icon: CreditCard,
+                  hardNavigation:
+                    rechargeCenter.data.displayMode === 'redirect',
+                },
+              ]
+            : []),
           {
             title: t('Profile'),
             url: '/profile',

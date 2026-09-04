@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { X, User, Wallet, LogOut } from 'lucide-react'
+import { CreditCard, X, User, Wallet, LogOut } from 'lucide-react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -25,6 +25,7 @@ import { SignOutDialog } from '@/components/sign-out-dialog'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useRechargeCenterConfig } from '@/features/recharge-center/hooks/use-recharge-center-config'
 import useDialogState from '@/hooks/use-dialog'
 import { useUserDisplay } from '@/hooks/use-user-display'
 import type { AuthUser } from '@/stores/auth-store'
@@ -81,6 +82,7 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
   const { t } = useTranslation()
   const [signOutOpen, setSignOutOpen] = useDialogState()
   const { displayName, initials, roleLabel } = useUserDisplay(user)
+  const rechargeCenter = useRechargeCenterConfig()
 
   if (!user) return null
 
@@ -130,6 +132,27 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
           <Wallet className='size-4' />
           {t('Wallet')}
         </Link>
+
+        {rechargeCenter.data &&
+          (rechargeCenter.data.displayMode === 'redirect' ? (
+            <a
+              href={rechargeCenter.data.url}
+              onClick={onNavigate}
+              className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
+            >
+              <CreditCard className='size-4' />
+              {t('Recharge Center')}
+            </a>
+          ) : (
+            <Link
+              to='/recharge-center'
+              onClick={onNavigate}
+              className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
+            >
+              <CreditCard className='size-4' />
+              {t('Recharge Center')}
+            </Link>
+          ))}
 
         {/* Sign out - consistent style */}
         <Button

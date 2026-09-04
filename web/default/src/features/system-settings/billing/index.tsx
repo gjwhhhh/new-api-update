@@ -105,6 +105,9 @@ const defaultBillingSettings: BillingSettings = {
   'checkin_setting.enabled': false,
   'checkin_setting.min_quota': 1000,
   'checkin_setting.max_quota': 10000,
+  'recharge_center_setting.enabled': false,
+  'recharge_center_setting.url': '',
+  'recharge_center_setting.display_mode': 'redirect',
 }
 
 export function BillingSettings() {

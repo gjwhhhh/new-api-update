@@ -74,7 +74,13 @@ export function CommandMenu() {
                         key={`${navItem.url}-${i}`}
                         value={navItem.title}
                         onSelect={() => {
-                          runCommand(() => navigate({ to: navItem.url }))
+                          runCommand(() => {
+                            if (navItem.hardNavigation) {
+                              window.location.assign(String(navItem.url))
+                              return
+                            }
+                            navigate({ to: navItem.url })
+                          })
                         }}
                       >
                         <div className='flex size-4 items-center justify-center'>

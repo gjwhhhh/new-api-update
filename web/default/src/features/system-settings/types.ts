@@ -373,6 +373,9 @@ export type BillingSettings = {
   'checkin_setting.enabled': boolean
   'checkin_setting.min_quota': number
   'checkin_setting.max_quota': number
+  'recharge_center_setting.enabled': boolean
+  'recharge_center_setting.url': string
+  'recharge_center_setting.display_mode': 'redirect' | 'embed'
 }
 
 export type OperationsSettings = {

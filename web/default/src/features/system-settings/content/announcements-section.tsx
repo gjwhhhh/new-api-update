@@ -74,6 +74,7 @@ type Announcement = {
   type: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
   popup?: boolean
+  popupOrder?: number
 }
 
 type AnnouncementsSectionProps = {
@@ -82,7 +83,10 @@ type AnnouncementsSectionProps = {
 }
 
 const announcementSchema = z.object({
-  title: z.string().max(100, 'Title must be less than 100 characters').optional(),
+  title: z
+    .string()
+    .max(100, 'Title must be less than 100 characters')
+    .optional(),
   content: z
     .string()
     .min(1, 'Content is required')
@@ -94,6 +98,7 @@ const announcementSchema = z.object({
     .max(100, 'Extra must be less than 100 characters')
     .optional(),
   popup: z.boolean(),
+  popupOrder: z.number().int().min(1).max(100).optional(),
 })
 
 type AnnouncementFormValues = z.infer<typeof announcementSchema>
@@ -133,6 +138,17 @@ const typeOptions = [
   },
 ]
 
+function getNextPopupOrder(announcements: Announcement[]): number {
+  return (
+    Math.max(
+      0,
+      ...announcements
+        .filter((announcement) => announcement.popup)
+        .map((announcement) => announcement.popupOrder ?? 0)
+    ) + 1
+  )
+}
+
 export function AnnouncementsSection({
   enabled,
   data,
@@ -158,6 +174,7 @@ export function AnnouncementsSection({
       type: 'default',
       extra: '',
       popup: false,
+      popupOrder: undefined,
     },
   })
 
@@ -203,6 +220,7 @@ export function AnnouncementsSection({
       type: 'default',
       extra: '',
       popup: false,
+      popupOrder: getNextPopupOrder(announcements),
     })
     setShowDialog(true)
   }
@@ -216,6 +234,7 @@ export function AnnouncementsSection({
       type: announcement.type,
       extra: announcement.extra || '',
       popup: announcement.popup ?? false,
+      popupOrder: announcement.popupOrder,
     })
     setShowDialog(true)
   }
@@ -259,16 +278,24 @@ export function AnnouncementsSection({
   }
 
   const handleSubmitForm = (values: AnnouncementFormValues) => {
+    const announcementValues = values.popup
+      ? values
+      : { ...values, popupOrder: undefined }
     if (editingAnnouncement) {
       setAnnouncements((prev) =>
         prev.map((item) =>
-          item.id === editingAnnouncement.id ? { ...item, ...values } : item
+          item.id === editingAnnouncement.id
+            ? { ...item, ...announcementValues }
+            : item
         )
       )
       toast.success(t('Announcement updated. Click "Save Settings" to apply.'))
     } else {
       const newId = Math.max(...announcements.map((item) => item.id), 0) + 1
-      setAnnouncements((prev) => [...prev, { id: newId, ...values }])
+      setAnnouncements((prev) => [
+        ...prev,
+        { id: newId, ...announcementValues },
+      ])
       toast.success(t('Announcement added. Click "Save Settings" to apply.'))
     }
     setHasChanges(true)
@@ -438,8 +465,15 @@ export function AnnouncementsSection({
             {
               id: 'home-popup',
               header: t('Home Popup'),
+              cell: (announcement) => (announcement.popup ? t('Enabled') : '-'),
+            },
+            {
+              id: 'popup-order',
+              header: t('Popup Order'),
               cell: (announcement) =>
-                announcement.popup ? t('Enabled') : '-',
+                announcement.popup
+                  ? (announcement.popupOrder ?? t('Publish Date'))
+                  : '-',
             },
             {
               id: 'actions',
@@ -634,7 +668,16 @@ export function AnnouncementsSection({
                   <FormControl>
                     <Checkbox
                       checked={field.value}
-                      onCheckedChange={(checked) => field.onChange(Boolean(checked))}
+                      onCheckedChange={(checked) => {
+                        const popupEnabled = Boolean(checked)
+                        field.onChange(popupEnabled)
+                        if (popupEnabled && !form.getValues('popupOrder')) {
+                          form.setValue(
+                            'popupOrder',
+                            getNextPopupOrder(announcements)
+                          )
+                        }
+                      }}
                     />
                   </FormControl>
                   <div className='space-y-1 leading-none'>
@@ -648,6 +691,36 @@ export function AnnouncementsSection({
                 </FormItem>
               )}
             />
+            {form.watch('popup') && (
+              <FormField
+                control={form.control}
+                name='popupOrder'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Popup Order')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={1}
+                        max={100}
+                        step={1}
+                        value={field.value ?? ''}
+                        onChange={(event) => {
+                          const value = event.target.value
+                          field.onChange(
+                            value === '' ? undefined : Number(value)
+                          )
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Lower numbers are shown first.')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
           </form>
         </Form>
       </Dialog>

@@ -3,6 +3,7 @@ package console_setting
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"sort"
@@ -149,6 +150,7 @@ func validateAnnouncements(announcementsStr string) error {
 	validTypes := map[string]bool{
 		"default": true, "ongoing": true, "success": true, "warning": true, "error": true,
 	}
+	popupOrders := make(map[int]struct{})
 	for i, ann := range list {
 		content, ok := ann["content"].(string)
 		if !ok || content == "" {
@@ -178,6 +180,19 @@ func validateAnnouncements(announcementsStr string) error {
 		if extra, exists := ann["extra"]; exists {
 			if extraStr, ok := extra.(string); ok && len(extraStr) > 200 {
 				return fmt.Errorf("第%d个公告的说明长度不能超过200字符", i+1)
+			}
+		}
+		if popupOrder, exists := ann["popupOrder"]; exists {
+			popupOrderNumber, ok := popupOrder.(float64)
+			if !ok || math.Trunc(popupOrderNumber) != popupOrderNumber || popupOrderNumber < 1 || popupOrderNumber > 100 {
+				return fmt.Errorf("第%d个公告的弹窗顺序必须是 1 到 100 之间的整数", i+1)
+			}
+			if isPopup, _ := ann["popup"].(bool); isPopup {
+				order := int(popupOrderNumber)
+				if _, duplicated := popupOrders[order]; duplicated {
+					return fmt.Errorf("第%d个公告的弹窗顺序重复", i+1)
+				}
+				popupOrders[order] = struct{}{}
 			}
 		}
 	}

@@ -263,6 +263,7 @@ export interface AnnouncementItem {
   type?: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
   popup?: boolean
+  popupOrder?: number
 }
 
 // ============================================================================

@@ -75,7 +75,7 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream, isHealthCheck bool) testResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -176,7 +176,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	group, _ := model.GetUserGroup(testUserID, false)
 	c.Set("group", group)
 
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
+	var newAPIError *types.NewAPIError
+	if isHealthCheck {
+		newAPIError = middleware.SetupContextForChannelHealthCheck(c, channel, testModel)
+	} else {
+		newAPIError = middleware.SetupContextForChannelTest(c, channel, testModel)
+	}
 	if newAPIError != nil {
 		return testResult{
 			context:     c,
@@ -887,7 +892,7 @@ func TestChannel(c *gin.Context) {
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
-	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
+	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, false)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -956,12 +961,12 @@ func performChannelTests(ctx context.Context, targets []automaticChannelTestTarg
 		if report != nil {
 			report(index, total) // channels completed before this one
 		}
-		if channel.Status == common.ChannelStatusManuallyDisabled {
+		if channel.Status == common.ChannelStatusManuallyDisabled || channel.ChannelInfo.ManuallyDisabled {
 			continue
 		}
 		isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 		tik := time.Now()
-		result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+		result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), true)
 		tok := time.Now()
 		milliseconds := tok.Sub(tik).Milliseconds()
 		if ctx != nil && ctx.Err() != nil {
@@ -992,16 +997,44 @@ func performChannelTests(ctx context.Context, targets []automaticChannelTestTarg
 			summary.Failed++
 		}
 
-		// disable channel
-		if target.AllowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-			processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-			summary.Disabled++
-		}
+		if channel.ChannelInfo.IsMultiKey && result.context != nil {
+			_, selected := common.GetContextKey(result.context, constant.ContextKeyChannelMultiKeyStatus)
+			if selected {
+				selection := model.ChannelKeySelection{
+					Key:            common.GetContextKeyString(result.context, constant.ContextKeyChannelKey),
+					Index:          common.GetContextKeyInt(result.context, constant.ContextKeyChannelMultiKeyIndex),
+					OriginalStatus: common.GetContextKeyInt(result.context, constant.ContextKeyChannelMultiKeyStatus),
+				}
+				update, err := model.ApplyMultiKeyHealthCheckResult(
+					channel.Id,
+					selection,
+					newAPIError == nil,
+					target.AllowDisable && shouldBanChannel && channel.GetAutoBan(),
+					common.AutomaticEnableChannelEnabled,
+					newAPIError.ErrorWithStatusCode(),
+				)
+				if err != nil {
+					common.SysError(fmt.Sprintf("failed to apply multi-key health check result: channel_id=%d, key_index=%d, error=%v", channel.Id, selection.Index, err))
+				} else if !update.Stale {
+					if update.Disabled {
+						summary.Disabled++
+					}
+					if update.Enabled {
+						summary.Enabled++
+					}
+				}
+			}
+		} else {
+			// Single-key channels keep the existing channel-level transition.
+			if target.AllowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
+				processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, false, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+				summary.Disabled++
+			}
 
-		// enable channel
-		if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
-			service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
-			summary.Enabled++
+			if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
+				service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+				summary.Enabled++
+			}
 		}
 
 		if target.RecordAutomaticTestTime {
@@ -1066,7 +1099,7 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 func selectChannelsForManualTest(channels []*model.Channel) []automaticChannelTestTarget {
 	targets := make([]automaticChannelTestTarget, 0, len(channels))
 	for _, channel := range channels {
-		if channel.Status == common.ChannelStatusManuallyDisabled {
+		if channel.Status == common.ChannelStatusManuallyDisabled || channel.ChannelInfo.ManuallyDisabled {
 			continue
 		}
 		targets = append(targets, automaticChannelTestTarget{Channel: channel, AllowDisable: true})
@@ -1077,7 +1110,7 @@ func selectChannelsForManualTest(channels []*model.Channel) []automaticChannelTe
 func selectChannelsForAutomaticTest(channels []*model.Channel, globalMode string, defaultInterval time.Duration, now int64) []automaticChannelTestTarget {
 	targets := make([]automaticChannelTestTarget, 0, len(channels))
 	for _, channel := range channels {
-		if channel.Status == common.ChannelStatusManuallyDisabled {
+		if channel.Status == common.ChannelStatusManuallyDisabled || channel.ChannelInfo.ManuallyDisabled {
 			continue
 		}
 
@@ -1090,7 +1123,7 @@ func selectChannelsForAutomaticTest(channels []*model.Channel, globalMode string
 		if channel.LastAutoTestTime > 0 && now-channel.LastAutoTestTime < int64(interval.Seconds()) {
 			continue
 		}
-		if mode == dto.ChannelHealthCheckModePassiveRecovery && channel.Status != common.ChannelStatusAutoDisabled {
+		if mode == dto.ChannelHealthCheckModePassiveRecovery && channel.Status != common.ChannelStatusAutoDisabled && !channel.HasAutoDisabledKey() {
 			continue
 		}
 		targets = append(targets, automaticChannelTestTarget{

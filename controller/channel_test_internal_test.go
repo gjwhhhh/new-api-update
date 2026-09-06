@@ -85,17 +85,27 @@ func TestResolveChannelTestUserIDUsesRequestUser(t *testing.T) {
 	require.Equal(t, 2, userID)
 }
 
-func TestSelectChannelsForAutomaticTestPassiveRecoveryOnlyUsesAutoDisabled(t *testing.T) {
+func TestSelectChannelsForAutomaticTestPassiveRecoveryUsesPendingAutoDisabledKeys(t *testing.T) {
 	channels := []*model.Channel{
 		{Id: 1, Status: common.ChannelStatusEnabled},
 		{Id: 2, Status: common.ChannelStatusAutoDisabled},
 		{Id: 3, Status: common.ChannelStatusManuallyDisabled},
+		{
+			Id:     4,
+			Status: common.ChannelStatusEnabled,
+			Key:    "enabled\npending-recovery",
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey:         true,
+				MultiKeyStatusList: map[int]int{1: common.ChannelStatusAutoDisabled},
+			},
+		},
 	}
 
 	selected := selectChannelsForAutomaticTest(channels, operation_setting.ChannelTestModePassiveRecovery, 10*time.Minute, 1000)
 
-	require.Len(t, selected, 1)
+	require.Len(t, selected, 2)
 	require.Equal(t, 2, selected[0].Channel.Id)
+	require.Equal(t, 4, selected[1].Channel.Id)
 	require.False(t, selected[0].AllowDisable)
 	require.True(t, selected[0].RecordAutomaticTestTime)
 }

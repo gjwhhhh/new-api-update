@@ -1053,6 +1053,10 @@ func UpdateChannel(c *gin.Context) {
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
 		}
 	}
+	if channel.ChannelInfo.IsMultiKey && channel.Key != "" && channel.Key != originChannel.Key {
+		channel.ReconcileMultiKeyState(originChannel.GetKeys())
+		channel.ReconcileMultiKeyChannelStatus()
+	}
 	err = channel.Update()
 	if err != nil {
 		common.ApiError(c, err)
@@ -1636,6 +1640,7 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 
 		channel.ChannelInfo.MultiKeyStatusList[keyIndex] = 2 // disabled
+		channel.ReconcileMultiKeyChannelStatus()
 
 		err = channel.Update()
 		if err != nil {
@@ -1678,6 +1683,7 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
 			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
 		}
+		channel.ReconcileMultiKeyChannelStatus()
 
 		err = channel.Update()
 		if err != nil {
@@ -1702,6 +1708,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
 		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		channel.ReconcileMultiKeyChannelStatus()
 
 		err = channel.Update()
 		if err != nil {
@@ -1749,6 +1756,7 @@ func ManageMultiKeys(c *gin.Context) {
 			})
 			return
 		}
+		channel.ReconcileMultiKeyChannelStatus()
 
 		err = channel.Update()
 		if err != nil {
@@ -1829,6 +1837,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		channel.ReconcileMultiKeyChannelStatus()
 
 		err = channel.Update()
 		if err != nil {
@@ -1897,6 +1906,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		channel.ReconcileMultiKeyChannelStatus()
 
 		err = channel.Update()
 		if err != nil {

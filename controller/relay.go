@@ -233,9 +233,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan(), common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)), newAPIError)
+		retryableUpstreamStreamFailure := newAPIError.GetErrorCode() == types.ErrorCodeChannelUpstreamStreamTerminated && !types.IsSkipRetryError(newAPIError)
+		if retryableUpstreamStreamFailure {
+			retryParam.ExcludeChannel(channel.Id)
+		}
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
+		}
+		if retryableUpstreamStreamFailure {
+			logger.LogInfo(c, fmt.Sprintf("retrying retryable upstream stream failure with channel #%d excluded", channel.Id))
 		}
 	}
 

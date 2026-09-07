@@ -8,6 +8,28 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+const (
+	responsesStreamPreCommitMaxEvents = 8
+	responsesStreamPreCommitMaxBytes  = 64 * 1024
+)
+
+type pendingResponsesStreamEvent struct {
+	response dto.ResponsesStreamResponse
+	data     string
+}
+
+// isResponsesStreamPreCommitEvent reports events that have no model output or
+// tool side effect and may therefore remain private to an upstream attempt.
+// Unknown events intentionally return false so protocol extensions fail closed.
+func isResponsesStreamPreCommitEvent(eventType string) bool {
+	switch eventType {
+	case "codex.rate_limits", "codex.response.metadata", "response.created", "response.in_progress":
+		return true
+	default:
+		return false
+	}
+}
+
 func responsesStreamEventError(event *dto.ResponsesStreamResponse) *types.OpenAIError {
 	if event == nil {
 		return nil

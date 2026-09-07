@@ -86,9 +86,81 @@ func TestOaiResponsesStreamHandlerTreatsUnstructuredErrorEventAsChannelFailure(t
 	assert.Empty(t, recorder.Body.String())
 }
 
-func TestOaiResponsesStreamHandlerStopsWithoutRetryAfterForwardingEvent(t *testing.T) {
+func TestOaiResponsesStreamHandlerRetriesAfterOnlyPreCommitEvents(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"codex.rate_limits"}`,
+		`data: {"type":"codex.response.metadata"}`,
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test"}}`,
+		`data: {"type":"response.in_progress","response":{"id":"resp_1"}}`,
+		`data: {"type":"response.failed","response":{"error":{"message":"upstream stalled","type":"server_error","code":"upstream_stalled"}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesStreamTestContext(t, body)
+
+	usage, err := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Error(t, err)
+	assert.Nil(t, usage)
+	assert.False(t, types.IsSkipRetryError(err))
+	assert.False(t, c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)))
+	assert.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesStreamHandlerStopsWithoutRetryAfterCommittedEvent(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"codex.rate_limits"}`,
+		`data: {"type":"codex.response.metadata"}`,
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test"}}`,
+		`data: {"type":"response.in_progress","response":{"id":"resp_1"}}`,
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		`data: {"type":"response.failed","response":{"error":{"message":"upstream stalled","type":"server_error","code":"upstream_stalled"}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesStreamTestContext(t, body)
+
+	usage, err := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Error(t, err)
+	assert.Nil(t, usage)
+	assert.True(t, types.IsSkipRetryError(err))
+	assert.True(t, c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)))
+	responseBody := recorder.Body.String()
+	assert.Contains(t, responseBody, "event: codex.rate_limits")
+	assert.Contains(t, responseBody, "event: codex.response.metadata")
+	assert.Contains(t, responseBody, "event: response.created")
+	assert.Contains(t, responseBody, "event: response.in_progress")
+	assert.Contains(t, responseBody, "event: response.output_text.delta")
+	assert.Contains(t, responseBody, "event: response.failed")
+	assert.NotContains(t, responseBody, "upstream stalled")
+	assert.Less(t, strings.Index(responseBody, "event: codex.rate_limits"), strings.Index(responseBody, "event: codex.response.metadata"))
+	assert.Less(t, strings.Index(responseBody, "event: codex.response.metadata"), strings.Index(responseBody, "event: response.created"))
+	assert.Less(t, strings.Index(responseBody, "event: response.created"), strings.Index(responseBody, "event: response.in_progress"))
+	assert.Less(t, strings.Index(responseBody, "event: response.in_progress"), strings.Index(responseBody, "event: response.output_text.delta"))
+}
+
+func TestOaiResponsesStreamHandlerFlushesPreCommitEventsOnNormalCompletion(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test"}}`,
+		`data: {"type":"response.in_progress","response":{"id":"resp_1"}}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesStreamTestContext(t, body)
+
+	usage, err := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	responseBody := recorder.Body.String()
+	assert.Contains(t, responseBody, "event: response.created")
+	assert.Contains(t, responseBody, "event: response.in_progress")
+	assert.Less(t, strings.Index(responseBody, "event: response.created"), strings.Index(responseBody, "event: response.in_progress"))
+}
+
+func TestOaiResponsesStreamHandlerTreatsUnknownEventAsCommitted(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test"}}`,
+		`data: {"type":"response.future_extension"}`,
 		`data: {"type":"error","error":{"message":"upstream stalled","type":"server_error","code":"upstream_stalled"}}`,
 		``,
 	}, "\n")
@@ -100,9 +172,27 @@ func TestOaiResponsesStreamHandlerStopsWithoutRetryAfterForwardingEvent(t *testi
 	assert.Nil(t, usage)
 	assert.True(t, types.IsSkipRetryError(err))
 	assert.True(t, c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)))
-	assert.Contains(t, recorder.Body.String(), "event: response.created")
-	assert.Contains(t, recorder.Body.String(), "event: error")
-	assert.NotContains(t, recorder.Body.String(), "upstream stalled")
+	assert.Contains(t, recorder.Body.String(), "event: response.future_extension")
+}
+
+func TestOaiResponsesStreamHandlerCommitsWhenPreCommitBufferIsFull(t *testing.T) {
+	events := make([]string, 0, responsesStreamPreCommitMaxEvents+3)
+	for range responsesStreamPreCommitMaxEvents + 1 {
+		events = append(events, `data: {"type":"response.in_progress"}`)
+	}
+	events = append(events,
+		`data: {"type":"response.failed","response":{"error":{"message":"upstream stalled","type":"server_error","code":"upstream_stalled"}}}`,
+		``,
+	)
+	c, recorder, resp, info := newResponsesStreamTestContext(t, strings.Join(events, "\n"))
+
+	usage, err := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Error(t, err)
+	assert.Nil(t, usage)
+	assert.True(t, types.IsSkipRetryError(err))
+	assert.True(t, c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)))
+	assert.Contains(t, recorder.Body.String(), "event: response.in_progress")
 }
 
 func TestOaiResponsesStreamHandlerKeepsCompletedStreamBehavior(t *testing.T) {

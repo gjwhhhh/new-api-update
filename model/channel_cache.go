@@ -112,9 +112,15 @@ func SyncChannelCache(frequency int) {
 }
 
 func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+	return GetRandomSatisfiedChannelExcluding(group, model, retry, requestPath, nil)
+}
+
+// GetRandomSatisfiedChannelExcluding selects an eligible channel while keeping
+// channels already failed by the current request out of later attempts.
+func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, requestPath string, excludedChannelIDs map[int]struct{}) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannelExcluding(group, model, retry, requestPath, excludedChannelIDs)
 	}
 
 	channelSyncLock.RLock()
@@ -129,6 +135,10 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		channels = filterChannelsByRequestPathAndModel(group2model2channels[group][normalizedModel], requestPath, model)
 	}
 
+	if len(channels) == 0 {
+		return nil, nil
+	}
+	channels = filterExcludedChannelIDs(channels, excludedChannelIDs)
 	if len(channels) == 0 {
 		return nil, nil
 	}
@@ -206,6 +216,19 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+func filterExcludedChannelIDs(channels []int, excludedChannelIDs map[int]struct{}) []int {
+	if len(channels) == 0 || len(excludedChannelIDs) == 0 {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, channelID := range channels {
+		if _, excluded := excludedChannelIDs[channelID]; !excluded {
+			filtered = append(filtered, channelID)
+		}
+	}
+	return filtered
 }
 
 // filterChannelsByRequestPathAndModel restricts candidates by request path and

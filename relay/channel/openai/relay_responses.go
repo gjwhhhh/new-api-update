@@ -81,46 +81,15 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
 	var streamErr *types.NewAPIError
-	hasForwardedEvent := false
+	var pendingEvents []pendingResponsesStreamEvent
+	pendingBytes := 0
+	hasCommittedEvent := false
 
-	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-		if streamErr != nil {
-			sr.Stop(streamErr)
-			return
-		}
-
-		// 检查当前数据是否包含 completed 状态和 usage 信息
-		var streamResponse dto.ResponsesStreamResponse
-		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
-			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
-			sr.Error(err)
-			return
-		}
-		if upstreamError := responsesStreamEventError(&streamResponse); upstreamError != nil {
-			logger.LogError(c, fmt.Sprintf("responses stream terminal error: event=%s type=%s code=%v", streamResponse.Type, upstreamError.Type, upstreamError.Code))
-			streamErr = newResponsesStreamChannelError(streamResponse.Type, hasForwardedEvent)
-
-			if hasForwardedEvent {
-				c.Set(string(constant.ContextKeyStreamTerminalErrorSent), true)
-				terminalEvent := responsesStreamTerminalEvent(streamResponse.Type, streamErr)
-				terminalData, err := common.Marshal(terminalEvent)
-				if err != nil {
-					logger.LogError(c, "failed to marshal responses stream terminal error: "+err.Error())
-				} else if err := helper.ResponseChunkData(c, terminalEvent, string(terminalData)); err != nil {
-					logger.LogError(c, "failed to send responses stream terminal error: "+err.Error())
-				}
-			}
-
-			sr.Stop(streamErr)
-			return
-		}
-
+	forwardEvent := func(streamResponse dto.ResponsesStreamResponse, data string) error {
 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
-			logger.LogError(c, "failed to send responses stream data: "+err.Error())
-			sr.Stop(err)
-			return
+			return err
 		}
-		hasForwardedEvent = true
+		hasCommittedEvent = true
 		switch streamResponse.Type {
 		case "response.completed":
 			if streamResponse.Response != nil {
@@ -146,10 +115,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 		case "response.output_text.delta":
-			// 处理输出文本
 			responseTextBuilder.WriteString(streamResponse.Delta)
 		case dto.ResponsesOutputTypeItemDone:
-			// 函数调用处理
 			if streamResponse.Item != nil {
 				switch streamResponse.Item.Type {
 				case dto.BuildInCallWebSearchCall:
@@ -161,9 +128,84 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 		}
+		return nil
+	}
+
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		if streamErr != nil {
+			sr.Stop(streamErr)
+			return
+		}
+
+		// 检查当前数据是否包含 completed 状态和 usage 信息
+		var streamResponse dto.ResponsesStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
+			sr.Error(err)
+			return
+		}
+		if upstreamError := responsesStreamEventError(&streamResponse); upstreamError != nil {
+			logger.LogError(c, fmt.Sprintf("responses stream terminal error: event=%s type=%s code=%v committed=%t", streamResponse.Type, upstreamError.Type, upstreamError.Code, hasCommittedEvent))
+			streamErr = newResponsesStreamChannelError(streamResponse.Type, hasCommittedEvent)
+
+			if hasCommittedEvent {
+				c.Set(string(constant.ContextKeyStreamTerminalErrorSent), true)
+				terminalEvent := responsesStreamTerminalEvent(streamResponse.Type, streamErr)
+				terminalData, err := common.Marshal(terminalEvent)
+				if err != nil {
+					logger.LogError(c, "failed to marshal responses stream terminal error: "+err.Error())
+				} else if err := helper.ResponseChunkData(c, terminalEvent, string(terminalData)); err != nil {
+					logger.LogError(c, "failed to send responses stream terminal error: "+err.Error())
+				}
+			} else {
+				channelID := 0
+				if info != nil && info.ChannelMeta != nil {
+					channelID = info.ChannelMeta.ChannelId
+				}
+				logger.LogInfo(c, fmt.Sprintf("responses stream pre-commit failure: event=%s buffered_events=%d buffered_bytes=%d from_channel=%d", streamResponse.Type, len(pendingEvents), pendingBytes, channelID))
+			}
+
+			sr.Stop(streamErr)
+			return
+		}
+
+		if !hasCommittedEvent && isResponsesStreamPreCommitEvent(streamResponse.Type) && len(pendingEvents) < responsesStreamPreCommitMaxEvents && pendingBytes+len(data) <= responsesStreamPreCommitMaxBytes {
+			pendingEvents = append(pendingEvents, pendingResponsesStreamEvent{response: streamResponse, data: data})
+			pendingBytes += len(data)
+			return
+		}
+
+		if !hasCommittedEvent && len(pendingEvents) > 0 {
+			if len(pendingEvents) >= responsesStreamPreCommitMaxEvents || pendingBytes+len(data) > responsesStreamPreCommitMaxBytes {
+				logger.LogInfo(c, fmt.Sprintf("responses stream pre-commit buffer limit reached: events=%d bytes=%d", len(pendingEvents), pendingBytes))
+			}
+			for _, pendingEvent := range pendingEvents {
+				if err := forwardEvent(pendingEvent.response, pendingEvent.data); err != nil {
+					logger.LogError(c, "failed to send buffered responses stream data: "+err.Error())
+					sr.Stop(err)
+					return
+				}
+			}
+			pendingEvents = nil
+			pendingBytes = 0
+		}
+
+		if err := forwardEvent(streamResponse, data); err != nil {
+			logger.LogError(c, "failed to send responses stream data: "+err.Error())
+			sr.Stop(err)
+			return
+		}
 	})
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	if !hasCommittedEvent && len(pendingEvents) > 0 && info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
+		for _, pendingEvent := range pendingEvents {
+			if err := forwardEvent(pendingEvent.response, pendingEvent.data); err != nil {
+				logger.LogError(c, "failed to send completed responses stream pre-commit data: "+err.Error())
+				break
+			}
+		}
 	}
 
 	if usage.CompletionTokens == 0 {

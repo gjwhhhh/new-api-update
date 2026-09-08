@@ -49,3 +49,19 @@ func TestShouldRetryRetriesChannelErrorsWithoutSkipRetry(t *testing.T) {
 
 	assert.True(t, shouldRetry(c, channelErr, 0))
 }
+
+func TestShouldRetryDoesNotRetryPinnedChannelErrors(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	c.Set("specific_channel_id", "51")
+
+	channelErr := types.NewError(
+		errors.New("upstream stream terminated"),
+		types.ErrorCodeChannelUpstreamStreamTerminated,
+	)
+
+	assert.False(t, shouldRetry(c, channelErr, 1))
+}

@@ -90,7 +90,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
-			if c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)) {
+			if c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)) || c.GetBool(string(constant.ContextKeyStreamResponseStarted)) {
 				return
 			}
 			switch relayFormat {
@@ -342,13 +342,13 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
 	if retryTimes <= 0 {
-		return false
-	}
-	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
 	code := openaiErr.StatusCode

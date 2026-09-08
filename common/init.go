@@ -142,6 +142,13 @@ func initConstantEnv() {
 	// MaxRequestBodyMB 请求体最大大小（解压后），用于防止超大请求/zip bomb导致内存暴涨
 	constant.MaxRequestBodyMB = GetEnvOrDefault("MAX_REQUEST_BODY_MB", 128)
 	constant.AnonymousRequestBodyLimitKB = GetEnvOrDefault("ANONYMOUS_REQUEST_BODY_LIMIT_KB", 512)
+	// Responses 流在尚未写入客户端前可以暂存安全的生命周期事件，以便上游终止时切换渠道。
+	// 这些值仅限制服务端暂存资源，不影响客户端请求体或 SSE 单行大小。
+	constant.ResponsesStreamPreCommitMemoryKB = GetEnvOrDefault("RESPONSES_STREAM_PRECOMMIT_MEMORY_KB", 256)
+	constant.ResponsesStreamPreCommitMaxKB = GetEnvOrDefault("RESPONSES_STREAM_PRECOMMIT_MAX_KB", 4096)
+	constant.ResponsesStreamPreCommitDiskBudgetMB = GetEnvOrDefault("RESPONSES_STREAM_PRECOMMIT_DISK_BUDGET_MB", 512)
+	constant.ResponsesStreamPreCommitMaxEvents = GetEnvOrDefault("RESPONSES_STREAM_PRECOMMIT_MAX_EVENTS", 8)
+	constant.ResponsesStreamPreCommitFileTTLMinutes = GetEnvOrDefault("RESPONSES_STREAM_PRECOMMIT_FILE_TTL_MINUTES", 1440)
 	// ForceStreamOption 覆盖请求参数，强制返回usage信息
 	constant.ForceStreamOption = GetEnvOrDefaultBool("FORCE_STREAM_OPTION", true)
 	constant.CountToken = GetEnvOrDefaultBool("CountToken", true)

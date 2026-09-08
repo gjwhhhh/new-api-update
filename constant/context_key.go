@@ -71,6 +71,9 @@ const (
 	// appending a JSON response after a stream handler has already sent a
 	// protocol-native terminal error event.
 	ContextKeyStreamTerminalErrorSent ContextKey = "stream_terminal_error_sent"
+	// ContextKeyStreamResponseStarted prevents a later JSON error body from
+	// being appended after a stream handler began its first downstream event.
+	ContextKeyStreamResponseStarted ContextKey = "stream_response_started"
 
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit

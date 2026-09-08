@@ -307,6 +307,7 @@ func InitResources() error {
 	common.InitEnv()
 
 	logger.SetupLogger()
+	relay.CleanupStaleResponsesStreamPreCommitFiles()
 
 	// Initialize model settings
 	ratio_setting.InitRatioSettings()

@@ -99,6 +99,21 @@ func TestStreamScannerHandler_EmptyBody(t *testing.T) {
 	assert.False(t, called.Load(), "handler should not be called for empty body")
 }
 
+func TestStreamScannerHandlerWithOptionsDefersDownstreamStart(t *testing.T) {
+	c, resp, info := setupStreamTest(t, strings.NewReader("data: pending\ndata: [DONE]\n"))
+	info.DisablePing = true
+
+	var committer *StreamCommitter
+	StreamScannerHandlerWithOptions(c, resp, info, StreamScannerOptions{DeferDownstreamStart: true}, func(_ string, _ *StreamResult, currentCommitter *StreamCommitter) {
+		committer = currentCommitter
+	})
+
+	require.NotNil(t, committer)
+	assert.Empty(t, c.Writer.Header().Get("Content-Type"))
+	committer.Commit()
+	assert.Equal(t, "text/event-stream", c.Writer.Header().Get("Content-Type"))
+}
+
 func TestStreamScannerHandler_1000Chunks(t *testing.T) {
 	t.Parallel()
 

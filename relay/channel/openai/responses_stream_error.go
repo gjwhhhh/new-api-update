@@ -1,22 +1,14 @@
 package openai
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 )
-
-const (
-	responsesStreamPreCommitMaxEvents = 8
-	responsesStreamPreCommitMaxBytes  = 64 * 1024
-)
-
-type pendingResponsesStreamEvent struct {
-	response dto.ResponsesStreamResponse
-	data     string
-}
 
 // isResponsesStreamPreCommitEvent reports events that have no model output or
 // tool side effect and may therefore remain private to an upstream attempt.
@@ -69,6 +61,31 @@ func newResponsesStreamChannelError(eventType string, skipRetry bool) *types.New
 		http.StatusBadGateway,
 		options...,
 	)
+}
+
+func responsesStreamPreCommitFallbackReason(err error) string {
+	switch {
+	case errors.Is(err, errResponsesStreamPreCommitEventLimit):
+		return "event_limit"
+	case errors.Is(err, errResponsesStreamPreCommitByteLimit):
+		return "byte_limit"
+	case errors.Is(err, errResponsesStreamPreCommitDiskBudget):
+		return "disk_budget"
+	default:
+		return "storage_error"
+	}
+}
+
+func isResponsesStreamPreCommitRetryableEnd(status *relaycommon.StreamStatus) bool {
+	if status == nil || status.HasErrors() {
+		return false
+	}
+	switch status.EndReason {
+	case relaycommon.StreamEndReasonEOF, relaycommon.StreamEndReasonScannerErr:
+		return true
+	default:
+		return false
+	}
 }
 
 func responsesStreamTerminalEvent(eventType string, streamErr *types.NewAPIError) dto.ResponsesStreamResponse {

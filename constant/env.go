@@ -11,6 +11,15 @@ var GetMediaTokenNotStream bool
 var UpdateTask bool
 var MaxRequestBodyMB int
 var AnonymousRequestBodyLimitKB int
+
+// ResponsesStreamPreCommit* control the private buffer used before an OpenAI
+// Responses stream has emitted client-visible output. They are deliberately
+// separate from incoming request-body limits.
+var ResponsesStreamPreCommitMemoryKB int
+var ResponsesStreamPreCommitMaxKB int
+var ResponsesStreamPreCommitDiskBudgetMB int
+var ResponsesStreamPreCommitMaxEvents int
+var ResponsesStreamPreCommitFileTTLMinutes int
 var AzureDefaultAPIVersion string
 var NotifyLimitCount int
 var NotificationLimitDurationMinute int

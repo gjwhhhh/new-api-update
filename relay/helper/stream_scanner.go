@@ -74,7 +74,42 @@ func ExtendWriteDeadline(c *gin.Context) {
 	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(streamWriteTimeout))
 }
 
+// StreamScannerOptions controls how an SSE stream becomes visible to the
+// downstream client. Most relays should use StreamScannerHandler, which starts
+// the downstream stream immediately. A relay that needs to decide whether an
+// early upstream attempt is retryable may defer that start until it has an
+// event that is safe to expose.
+type StreamScannerOptions struct {
+	DeferDownstreamStart bool
+}
+
+// StreamCommitter starts the downstream SSE response exactly once. It is safe
+// to call from a stream data handler before its first write.
+type StreamCommitter struct {
+	commit func()
+}
+
+func (committer *StreamCommitter) Commit() {
+	if committer == nil || committer.commit == nil {
+		return
+	}
+	committer.commit()
+}
+
 func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
+	if dataHandler == nil {
+		return
+	}
+	StreamScannerHandlerWithOptions(c, resp, info, StreamScannerOptions{}, func(data string, sr *StreamResult, _ *StreamCommitter) {
+		dataHandler(data, sr)
+	})
+}
+
+// StreamScannerHandlerWithOptions reads an upstream SSE stream and serializes
+// handler and ping writes. When DeferDownstreamStart is set, neither SSE
+// headers nor ping frames are sent until the handler calls committer.Commit.
+// This keeps an otherwise empty response available for a retryable error.
+func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, options StreamScannerOptions, dataHandler func(data string, sr *StreamResult, committer *StreamCommitter)) {
 
 	if resp == nil || dataHandler == nil {
 		return
@@ -88,14 +123,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
 
 	var (
-		stopChan    = make(chan bool, 3) // 增加缓冲区避免阻塞
-		scanner     = NewStreamScanner(resp.Body)
-		ticker      = time.NewTicker(streamingTimeout)
-		pingTicker  *time.Ticker
-		writeMutex  sync.Mutex     // Mutex to protect concurrent writes
-		wg          sync.WaitGroup // 用于等待所有 goroutine 退出
-		cleanupOnce sync.Once
-		stopOnce    sync.Once
+		stopChan          = make(chan bool, 3) // 增加缓冲区避免阻塞
+		scanner           = NewStreamScanner(resp.Body)
+		ticker            = time.NewTicker(streamingTimeout)
+		writeMutex        sync.Mutex     // Mutex to protect concurrent writes
+		wg                sync.WaitGroup // 用于等待所有 goroutine 退出
+		cleanupOnce       sync.Once
+		stopOnce          sync.Once
+		downstreamStarted = make(chan struct{})
+		downstreamOnce    sync.Once
 	)
 
 	stop := func() {
@@ -109,10 +145,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	pingInterval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
 	if pingInterval <= 0 {
 		pingInterval = DefaultPingInterval
-	}
-
-	if pingEnabled {
-		pingTicker = time.NewTicker(pingInterval)
 	}
 
 	logger.LogDebug(c, "relay timeout seconds: %d", common.RelayTimeout)
@@ -130,9 +162,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			}
 
 			ticker.Stop()
-			if pingTicker != nil {
-				pingTicker.Stop()
-			}
 
 			wg.Wait()
 		})
@@ -141,13 +170,22 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	defer cleanup()
 
 	scanner.Split(bufio.ScanLines)
-	copyCodexSSEHeaders(c, resp)
-	SetEventStreamHeaders(c)
+	startDownstream := func() {
+		downstreamOnce.Do(func() {
+			copyCodexSSEHeaders(c, resp)
+			SetEventStreamHeaders(c)
+			close(downstreamStarted)
+		})
+	}
+	committer := &StreamCommitter{commit: startDownstream}
+	if !options.DeferDownstreamStart {
+		committer.Commit()
+	}
 
 	ctx = context.WithValue(ctx, "stop_chan", stopChan)
 
 	// Handle ping data sending with improved error handling
-	if pingEnabled && pingTicker != nil {
+	if pingEnabled {
 		wg.Add(1)
 		gopool.Go(func() {
 			defer func() {
@@ -159,6 +197,19 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				logger.LogDebug(c, "ping goroutine exited")
 				wg.Done()
 			}()
+
+			select {
+			case <-downstreamStarted:
+			case <-ctx.Done():
+				return
+			case <-stopChan:
+				return
+			case <-c.Request.Context().Done():
+				return
+			}
+
+			pingTicker := time.NewTicker(pingInterval)
+			defer pingTicker.Stop()
 
 			// 添加超时保护，防止 goroutine 无限运行
 			maxPingDuration := 30 * time.Minute // 最大 ping 持续时间
@@ -215,7 +266,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				writeMutex.Lock()
 				defer writeMutex.Unlock()
 				ExtendWriteDeadline(c)
-				dataHandler(data, sr)
+				dataHandler(data, sr, committer)
 			}()
 			if sr.IsStopped() {
 				return

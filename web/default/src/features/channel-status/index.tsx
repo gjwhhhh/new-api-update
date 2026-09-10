@@ -54,7 +54,7 @@ export function ChannelStatusPage() {
   const userRole = useAuthStore((s) => s.auth.user?.role)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const [tab, setTab] = useState<ChannelStatusTab>('local')
-  const [hours, setHours] = useState<GroupHours>(24)
+  const [hours, setHours] = useState<GroupHours>(48)
   const [sortMode, setSortMode] = useState<GroupSortMode>('custom')
   const [reorderMode, setReorderMode] = useState(false)
   const [draftGroups, setDraftGroups] = useState<GroupStatusItem[] | null>(null)
@@ -191,7 +191,7 @@ export function ChannelStatusPage() {
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  {option === 24 ? t('24h') : t('7d')}
+                  {option === 48 ? t('48h') : t('7d')}
                 </button>
               ))}
             </div>
@@ -262,34 +262,36 @@ export function ChannelStatusPage() {
         </p>
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
-        <Tabs
-          value={tab}
-          onValueChange={(value) => setTab(value as ChannelStatusTab)}
-          className='gap-4'
-        >
-          <TabsList>
-            <TabsTrigger value='local'>{t('This site status')}</TabsTrigger>
-            <TabsTrigger value='openai'>{t('Official OpenAI')}</TabsTrigger>
-          </TabsList>
-          <TabsContent value='local'>
-            <LocalGroupsPanel
-              groups={displayGroups}
-              hours={hours}
-              isLoading={groupsQuery.isLoading}
-              isError={groupsQuery.isError}
-              isAdmin={isAdmin}
-              reorderMode={reorderMode}
-              onMoveGroup={moveGroup}
-            />
-          </TabsContent>
-          <TabsContent value='openai'>
-            <OpenAIStatusPanel
-              data={openaiQuery.data}
-              isLoading={openaiQuery.isLoading}
-              isError={openaiQuery.isError}
-            />
-          </TabsContent>
-        </Tabs>
+        <div className='flex w-full flex-col gap-4'>
+          <Tabs
+            value={tab}
+            onValueChange={(value) => setTab(value as ChannelStatusTab)}
+            className='gap-4'
+          >
+            <TabsList>
+              <TabsTrigger value='local'>{t('This site status')}</TabsTrigger>
+              <TabsTrigger value='openai'>{t('Official OpenAI')}</TabsTrigger>
+            </TabsList>
+            <TabsContent value='local'>
+              <LocalGroupsPanel
+                groups={displayGroups}
+                hours={hours}
+                isLoading={groupsQuery.isLoading}
+                isError={groupsQuery.isError}
+                isAdmin={isAdmin}
+                reorderMode={reorderMode}
+                onMoveGroup={moveGroup}
+              />
+            </TabsContent>
+            <TabsContent value='openai'>
+              <OpenAIStatusPanel
+                data={openaiQuery.data}
+                isLoading={openaiQuery.isLoading}
+                isError={openaiQuery.isError}
+              />
+            </TabsContent>
+          </Tabs>
+        </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

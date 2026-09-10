@@ -1,6 +1,7 @@
 package perfmetrics
 
 import (
+	"errors"
 	"math"
 	"sort"
 	"time"
@@ -10,26 +11,35 @@ import (
 )
 
 const (
-	groupHours24      = 24
-	groupHours7d      = 168
-	maxGroupSeriesLen = 120
+	// GroupHours48 is the default channel-status group metric window.
+	GroupHours48 = 48
+	// GroupHours7Days is the seven-day channel-status group metric window.
+	GroupHours7Days = 168
+
+	maxGroupSeriesLen = 48
 )
 
-func NormalizeGroupHours(hours int) int {
-	if hours == groupHours7d {
-		return groupHours7d
+// ErrUnsupportedGroupHours indicates a request outside the supported group
+// metric windows.
+var ErrUnsupportedGroupHours = errors.New("hours must be 48 or 168")
+
+// ValidateGroupHours rejects group metric windows other than 48 hours or 7 days.
+func ValidateGroupHours(hours int) error {
+	if hours == GroupHours48 || hours == GroupHours7Days {
+		return nil
 	}
-	return groupHours24
+	return ErrUnsupportedGroupHours
 }
 
 func QueryGroups(hours int, groups []string) (GroupsQueryResult, error) {
-	hours = NormalizeGroupHours(hours)
-	endTs := time.Now().Unix()
-	startTs := endTs - int64(hours)*3600
+	if err := ValidateGroupHours(hours); err != nil {
+		return GroupsQueryResult{}, err
+	}
 	bucketSeconds := perf_metrics_setting.GetBucketSeconds()
 	if bucketSeconds <= 0 {
 		bucketSeconds = 3600
 	}
+	startTs, endTs := groupTimeWindow(hours, time.Now().Unix(), bucketSeconds)
 
 	result := GroupsQueryResult{
 		BucketSeconds: bucketSeconds,
@@ -101,6 +111,21 @@ func QueryGroups(hours int, groups []string) (GroupsQueryResult, error) {
 	}
 	result.Groups = buildGroupMetrics(bucketRows, groups, startTs, endTs, bucketSeconds)
 	return result, nil
+}
+
+// groupTimeWindow returns the most recent configured metric buckets, including
+// the bucket that is currently being written. Using bucket boundaries keeps
+// every displayed bar backed by a distinct stored sample.
+func groupTimeWindow(hours int, nowTs int64, bucketSeconds int64) (int64, int64) {
+	if bucketSeconds <= 0 {
+		bucketSeconds = 3600
+	}
+	endTs := nowTs - (nowTs % bucketSeconds)
+	bucketCount := int64(hours) * 3600 / bucketSeconds
+	if bucketCount < 1 {
+		bucketCount = 1
+	}
+	return endTs - (bucketCount-1)*bucketSeconds, endTs
 }
 
 func buildGroupMetrics(
@@ -197,12 +222,23 @@ func buildGroupSeries(
 		return []GroupBucketPoint{}
 	}
 
-	n := int((alignedEnd-alignedStart)/bucketSeconds) + 1
-	points := make([]GroupBucketPoint, 0, n)
-	for ts := alignedStart; ts <= alignedEnd; ts += bucketSeconds {
-		points = append(points, groupBucketPoint(ts, slots[ts]))
+	bucketCount := int((alignedEnd-alignedStart)/bucketSeconds) + 1
+	seriesCount := min(bucketCount, maxGroupSeriesLen)
+	points := make([]GroupBucketPoint, 0, seriesCount)
+	for index := 0; index < seriesCount; index++ {
+		startIndex := index * bucketCount / seriesCount
+		endIndex := (index + 1) * bucketCount / seriesCount
+		ts := alignedStart + int64(startIndex)*bucketSeconds
+		value := counters{}
+		for bucketIndex := startIndex; bucketIndex < endIndex; bucketIndex++ {
+			bucketTs := alignedStart + int64(bucketIndex)*bucketSeconds
+			value = addCounters(value, slots[bucketTs])
+		}
+		point := groupBucketPoint(ts, value)
+		point.SpanSeconds = int64(endIndex-startIndex) * bucketSeconds
+		points = append(points, point)
 	}
-	return downsampleGroupSeries(points, maxGroupSeriesLen)
+	return points
 }
 
 func buildGroupModelStats(models map[string]counters) []GroupModelStat {
@@ -228,58 +264,6 @@ func buildGroupModelStats(models map[string]counters) []GroupModelStat {
 		return stats[i].RequestCount > stats[j].RequestCount
 	})
 	return stats
-}
-
-func downsampleGroupSeries(points []GroupBucketPoint, maxPoints int) []GroupBucketPoint {
-	if maxPoints <= 0 || len(points) <= maxPoints {
-		return points
-	}
-	out := make([]GroupBucketPoint, 0, maxPoints)
-	for i := 0; i < maxPoints; i++ {
-		start := i * len(points) / maxPoints
-		end := (i + 1) * len(points) / maxPoints
-		if end <= start {
-			end = start + 1
-		}
-		out = append(out, mergeGroupBucketPoints(points[start:end]))
-	}
-	return out
-}
-
-func mergeGroupBucketPoints(points []GroupBucketPoint) GroupBucketPoint {
-	if len(points) == 1 {
-		return points[0]
-	}
-	total := counters{}
-	for _, point := range points {
-		total.requestCount += point.RequestCount
-		if point.SuccessRate != nil && point.RequestCount > 0 {
-			total.successCount += int64(math.Round(*point.SuccessRate / 100 * float64(point.RequestCount)))
-		}
-		total.totalLatencyMs += point.AvgLatencyMs * point.RequestCount
-		if point.AvgTtftMs > 0 {
-			total.ttftSumMs += point.AvgTtftMs * point.RequestCount
-			total.ttftCount += point.RequestCount
-		}
-		if point.AvgTps > 0 && point.RequestCount > 0 {
-			// Reconstruct a generation duration so avgTps stays consistent.
-			total.outputTokens += int64(math.Round(point.AvgTps))
-			total.generationMs += 1000
-		}
-	}
-	merged := groupBucketPoint(points[0].Ts, total)
-	if total.requestCount > 0 {
-		merged.AvgLatencyMs = avg(total.totalLatencyMs, total.requestCount)
-		merged.AvgTtftMs = avg(total.ttftSumMs, total.ttftCount)
-		merged.AvgTps = 0
-		for _, point := range points {
-			if point.RequestCount > 0 && point.AvgTps > 0 {
-				merged.AvgTps += point.AvgTps * float64(point.RequestCount)
-			}
-		}
-		merged.AvgTps = roundRate(merged.AvgTps / float64(total.requestCount))
-	}
-	return merged
 }
 
 func groupBucketPoint(ts int64, value counters) GroupBucketPoint {

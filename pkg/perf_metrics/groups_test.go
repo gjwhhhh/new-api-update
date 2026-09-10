@@ -7,13 +7,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeGroupHours(t *testing.T) {
-	assert.Equal(t, 24, NormalizeGroupHours(0))
-	assert.Equal(t, 24, NormalizeGroupHours(-1))
-	assert.Equal(t, 24, NormalizeGroupHours(12))
-	assert.Equal(t, 24, NormalizeGroupHours(24))
-	assert.Equal(t, 168, NormalizeGroupHours(168))
-	assert.Equal(t, 24, NormalizeGroupHours(720))
+func TestValidateGroupHours(t *testing.T) {
+	for _, hours := range []int{GroupHours48, GroupHours7Days} {
+		assert.NoError(t, ValidateGroupHours(hours))
+	}
+
+	for _, hours := range []int{-1, 0, 24, 720} {
+		assert.ErrorIs(t, ValidateGroupHours(hours), ErrUnsupportedGroupHours)
+	}
+}
+
+func TestGroupQueriesRejectUnsupportedHours(t *testing.T) {
+	_, err := QueryGroups(24, nil)
+	require.ErrorIs(t, err, ErrUnsupportedGroupHours)
+
+	_, err = ClearGroupRecent("default", 24)
+	require.ErrorIs(t, err, ErrUnsupportedGroupHours)
+}
+
+func TestQueryGroupsAllowsSupportedHours(t *testing.T) {
+	for _, hours := range []int{GroupHours48, GroupHours7Days} {
+		result, err := QueryGroups(hours, []string{})
+		require.NoError(t, err)
+		assert.Empty(t, result.Groups)
+	}
+}
+
+func TestGroupTimeWindowUsesConfiguredBucketBoundaries(t *testing.T) {
+	startTs, endTs := groupTimeWindow(48, 50*3600+123, 3600)
+	assert.Equal(t, int64(3*3600), startTs)
+	assert.Equal(t, int64(50*3600), endTs)
 }
 
 func TestBuildGroupMetricsMergesModelsInTheSameGroup(t *testing.T) {
@@ -89,23 +112,29 @@ func TestBuildGroupMetricsFillsEmptyBuckets(t *testing.T) {
 	assert.Nil(t, metrics[0].Series[2].SuccessRate)
 }
 
-func TestDownsampleGroupSeriesCapsLength(t *testing.T) {
-	points := make([]GroupBucketPoint, 0, 168)
-	for i := 0; i < 168; i++ {
-		rate := 90.0
-		if i%10 == 0 {
-			rate = 50.0
+func TestBuildGroupSeriesReturnsContinuousRealTimeRanges(t *testing.T) {
+	slots := make(map[int64]counters, 168)
+	for index := 0; index < 168; index++ {
+		slots[int64(index*3600)] = counters{
+			requestCount: 1,
+			successCount: 1,
 		}
-		copied := rate
-		points = append(points, GroupBucketPoint{
-			Ts:           int64(i * 3600),
-			RequestCount: 10,
-			SuccessRate:  &copied,
-		})
 	}
-	downsampled := downsampleGroupSeries(points, maxGroupSeriesLen)
-	assert.Len(t, downsampled, maxGroupSeriesLen)
-	assert.Equal(t, int64(0), downsampled[0].Ts)
+
+	series := buildGroupSeries(slots, 0, 167*3600, 3600)
+	require.Len(t, series, 48)
+
+	var requestCount int64
+	var spanSeconds int64
+	for index, point := range series {
+		requestCount += point.RequestCount
+		spanSeconds += point.SpanSeconds
+		if index > 0 {
+			assert.Equal(t, point.Ts, series[index-1].Ts+series[index-1].SpanSeconds)
+		}
+	}
+	assert.Equal(t, int64(168), requestCount)
+	assert.Equal(t, int64(168*3600), spanSeconds)
 }
 
 func TestBuildGroupMetricsSkipsBlankRequestedNames(t *testing.T) {

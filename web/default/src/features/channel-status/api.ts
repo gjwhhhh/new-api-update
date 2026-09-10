@@ -19,13 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import type {
+  GroupHours,
   GroupsStatusData,
   GroupSortMode,
   OpenAIStatusData,
 } from './types'
 
 export async function getPerfMetricGroups(
-  hours: number,
+  hours: GroupHours,
   sort: GroupSortMode = 'custom'
 ) {
   const res = await api.get<{
@@ -43,7 +44,10 @@ export async function getPerfMetricGroups(
   return res.data.data
 }
 
-export async function clearPerfMetricGroupSamples(group: string, hours: number) {
+export async function clearPerfMetricGroupSamples(
+  group: string,
+  hours: GroupHours
+) {
   const res = await api.post<{
     success: boolean
     message?: string

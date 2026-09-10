@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ChannelHealth, GroupHours, GroupSortMode } from './types'
 
-export const GROUP_HOURS_OPTIONS: GroupHours[] = [24, 168]
+export const GROUP_HOURS_OPTIONS: GroupHours[] = [48, 168]
 
 export const GROUP_SORT_OPTIONS: GroupSortMode[] = ['custom', 'traffic']
 
@@ -46,7 +46,7 @@ export const OPENAI_COMPONENT_STATUS_LABEL: Record<string, string> = {
 }
 
 export const CHANNEL_STATUS_QUERY_KEYS = {
-  groups: (hours: number, sort: GroupSortMode = 'custom') =>
+  groups: (hours: GroupHours, sort: GroupSortMode = 'custom') =>
     ['channel-status', 'groups', hours, sort] as const,
   openai: ['channel-status', 'openai'] as const,
 }

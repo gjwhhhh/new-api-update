@@ -108,6 +108,23 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
+.channel-status-bar-grow {
+  transform-origin: bottom;
+  animation: channel-status-bar-grow 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--channel-status-bar-delay, 0s);
+}
+
+@keyframes channel-status-bar-grow {
+  from {
+    opacity: 0.35;
+    transform: scaleY(0.25);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
 /* Override auto-skeleton-react inline styles with Vercel shimmer */
 .auto-skeleton-fade [class^='skeleton-'] {
   background: linear-gradient(
@@ -127,6 +144,11 @@ For commercial licensing, please contact support@quantumnous.com
   .auto-skeleton-fade [class^='skeleton-'] {
     animation: none !important;
     background: var(--skeleton-base) !important;
+  }
+
+  .channel-status-bar-grow {
+    animation: none !important;
+    transform: none !important;
   }
 }
 

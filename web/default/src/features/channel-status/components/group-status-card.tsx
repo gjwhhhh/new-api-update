@@ -29,7 +29,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { StatusBadge } from '@/components/status-badge'
+import { GroupBadge } from '@/components/group-badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,6 +40,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -55,22 +56,26 @@ import {
   updatePerfMetricGroupVisibility,
 } from '../api'
 import { CHANNEL_HEALTH_LABEL } from '../constants'
-import { formatGroupRatio, getChannelHealth } from '../lib/health'
-import type {
-  ChannelHealth,
-  GroupHours,
-  GroupStatusItem,
-} from '../types'
+import {
+  formatGroupRatio,
+  getChannelHealth,
+  shouldShowGroupRatio,
+} from '../lib/health'
+import type { ChannelHealth, GroupHours, GroupStatusItem } from '../types'
 import { AvailabilitySparkline } from './availability-sparkline'
 
-const HEALTH_VARIANT: Record<
-  ChannelHealth,
-  'success' | 'warning' | 'danger' | 'neutral'
-> = {
-  running: 'success',
-  fluctuating: 'warning',
-  abnormal: 'danger',
-  no_data: 'neutral',
+const HEALTH_DOT_CLASS: Record<ChannelHealth, string> = {
+  running: 'bg-emerald-500',
+  fluctuating: 'bg-amber-500',
+  abnormal: 'bg-red-500',
+  no_data: 'bg-muted-foreground/40',
+}
+
+const HEALTH_TEXT_CLASS: Record<ChannelHealth, string> = {
+  running: 'text-emerald-600 dark:text-emerald-400',
+  fluctuating: 'text-amber-600 dark:text-amber-400',
+  abnormal: 'text-red-600 dark:text-red-400',
+  no_data: 'text-muted-foreground',
 }
 
 const BORDER_CLASS: Record<ChannelHealth, string> = {
@@ -100,7 +105,7 @@ export function GroupStatusCard(props: {
   )
   const activeModels = props.group.models?.length ?? 0
   const visibleToUsers = props.group.visible_to_users !== false
-  const hoursLabel = props.hours === 168 ? t('7d') : t('24h')
+  const hoursLabel = props.hours === 168 ? t('7d') : t('48h')
 
   const clearMutation = useMutation({
     mutationFn: () =>
@@ -211,7 +216,7 @@ export function GroupStatusCard(props: {
     <>
       <div
         className={cn(
-          'bg-card flex w-full flex-col gap-3.5 rounded-xl border p-4 text-left transition-[border-color,box-shadow] duration-200 hover:shadow-sm',
+          'group bg-card flex w-full flex-col gap-3.5 rounded-xl border p-4 text-left transition-[border-color,box-shadow,transform] duration-200 hover:shadow-sm',
           BORDER_CLASS[health]
         )}
       >
@@ -221,35 +226,56 @@ export function GroupStatusCard(props: {
           disabled={props.reorderMode}
           className={cn(
             'flex w-full flex-col gap-3.5 text-left focus-visible:ring-ring rounded-lg focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
-            props.reorderMode
-              ? 'cursor-default'
-              : 'cursor-pointer'
+            props.reorderMode ? 'cursor-default' : 'cursor-pointer'
           )}
         >
-          <div className='flex items-start justify-between gap-3'>
-            <div className='min-w-0'>
-              <div className='flex min-w-0 items-baseline gap-2'>
-                <h3 className='truncate text-sm font-semibold'>
-                  {props.group.name}
-                </h3>
-                <span className='text-foreground shrink-0 text-xs'>
-                  {formatGroupRatio(props.group.ratio)}
-                </span>
+          <div className='flex items-start justify-between gap-2'>
+            <div className='flex min-w-0 flex-col gap-1'>
+              <div className='flex min-w-0 items-center gap-2'>
+                <GroupBadge
+                  group={props.group.group}
+                  label={props.group.name}
+                  size='sm'
+                  copyable={false}
+                />
+                {shouldShowGroupRatio(props.group.ratio) ? (
+                  <span
+                    className='text-muted-foreground/70 shrink-0 font-mono text-[11px] tabular-nums'
+                    title={t('Group ratio')}
+                  >
+                    {formatGroupRatio(props.group.ratio)}
+                  </span>
+                ) : null}
               </div>
-              {props.group.description ? (
-                <p className='text-foreground mt-1 line-clamp-2 text-xs'>
+              {props.group.description &&
+              props.group.description !== props.group.group &&
+              props.group.description !== props.group.name ? (
+                <p
+                  className='text-muted-foreground truncate text-xs'
+                  title={props.group.description}
+                >
                   {props.group.description}
                 </p>
               ) : null}
             </div>
-            <StatusBadge
-              label={t(CHANNEL_HEALTH_LABEL[health])}
-              variant={HEALTH_VARIANT[health]}
-              copyable={false}
-            />
+            <Badge
+              variant='outline'
+              className={cn('gap-1.5 px-2 py-0.5', HEALTH_TEXT_CLASS[health])}
+            >
+              <span
+                className={cn(
+                  'size-1.5 rounded-full',
+                  HEALTH_DOT_CLASS[health],
+                  health !== 'no_data' &&
+                    'animate-pulse motion-reduce:animate-none'
+                )}
+                aria-hidden='true'
+              />
+              {t(CHANNEL_HEALTH_LABEL[health])}
+            </Badge>
           </div>
 
-          <div className='grid grid-cols-3 gap-2 text-sm'>
+          <div className='grid grid-cols-3 gap-2'>
             <Metric
               label={t('Latency')}
               value={formatLatency(props.group.avg_latency_ms)}
@@ -264,41 +290,46 @@ export function GroupStatusCard(props: {
             />
           </div>
 
-          <div className='flex items-end justify-between gap-3'>
-            <div>
-              <p className='text-foreground text-xs'>{t('Availability')}</p>
-              <p className='text-foreground mt-0.5 text-xs'>
+          <div className='bg-muted/40 flex items-center justify-between gap-3 rounded-lg px-3 py-2.5'>
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <span className='text-muted-foreground text-[10px] font-medium tracking-wider uppercase'>
+                {t('Availability')}
+              </span>
+              <span className='text-muted-foreground truncate text-xs'>
                 {props.group.request_count > 0
                   ? t('{{success}}/{{total}} successful requests', {
                       success: props.group.success_count,
                       total: props.group.request_count,
                     })
                   : t('No requests in this window')}
-              </p>
+              </span>
             </div>
-            <p
+            <span
               className={cn(
-                'text-2xl font-semibold tabular-nums',
+                'shrink-0 font-mono text-2xl font-semibold tabular-nums',
                 props.group.request_count > 0
                   ? getSuccessRateTextClass(props.group.success_rate)
-                  : 'text-foreground'
+                  : 'text-muted-foreground/50'
               )}
             >
               {props.group.request_count > 0
                 ? formatUptimePct(props.group.success_rate)
                 : '—'}
-            </p>
+            </span>
           </div>
 
-          <AvailabilitySparkline series={props.group.series ?? []} />
+          <AvailabilitySparkline
+            series={props.group.series ?? []}
+            hours={props.hours}
+          />
 
-          <div className='text-foreground flex items-center justify-between text-sm'>
+          <div className='text-muted-foreground flex items-center justify-between text-xs'>
             <span>
               {t('{{count}} models with traffic', { count: activeModels })}
             </span>
-            <span className='inline-flex items-center'>
+            <span className='text-foreground/70 group-hover:text-foreground inline-flex items-center gap-0.5 font-medium transition-colors duration-200'>
               {t('View models')}
-              <ChevronRight className='size-3.5' />
+              <ChevronRight className='size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
             </span>
           </div>
         </button>
@@ -342,9 +373,13 @@ export function GroupStatusCard(props: {
 
 function Metric(props: { label: string; value: string }) {
   return (
-    <div>
-      <p className='text-foreground text-xs'>{props.label}</p>
-      <p className='font-medium tabular-nums'>{props.value}</p>
+    <div className='bg-muted/40 flex min-w-0 flex-col gap-0.5 rounded-lg px-2.5 py-2'>
+      <span className='text-muted-foreground truncate text-[10px] font-medium tracking-wider uppercase'>
+        {props.label}
+      </span>
+      <span className='text-foreground truncate font-mono text-sm font-semibold tabular-nums'>
+        {props.value}
+      </span>
     </div>
   )
 }

@@ -62,6 +62,7 @@ type SummaryAllResult struct {
 
 type GroupBucketPoint struct {
 	Ts           int64    `json:"ts"`
+	SpanSeconds  int64    `json:"span_seconds"`
 	AvgTtftMs    int64    `json:"avg_ttft_ms"`
 	AvgLatencyMs int64    `json:"avg_latency_ms"`
 	SuccessRate  *float64 `json:"success_rate"`

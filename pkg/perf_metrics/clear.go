@@ -25,9 +25,14 @@ func ClearGroupRecent(group string, hours int) (ClearGroupResult, error) {
 	if group == "" {
 		return ClearGroupResult{}, fmt.Errorf("group is required")
 	}
-	hours = NormalizeGroupHours(hours)
-	endTs := time.Now().Unix()
-	startTs := endTs - int64(hours)*3600
+	if err := ValidateGroupHours(hours); err != nil {
+		return ClearGroupResult{}, err
+	}
+	startTs, endTs := groupTimeWindow(
+		hours,
+		time.Now().Unix(),
+		perf_metrics_setting.GetBucketSeconds(),
+	)
 
 	generation, err := model.ClearPerfMetricGroupInRange(group, startTs, endTs)
 	if err != nil {

@@ -23,11 +23,7 @@ import { EmptyState } from '@/components/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { getChannelHealth } from '../lib/health'
-import type {
-  ChannelHealth,
-  GroupHours,
-  GroupStatusItem,
-} from '../types'
+import type { ChannelHealth, GroupHours, GroupStatusItem } from '../types'
 import { GroupDetailDialog } from './group-detail-dialog'
 import { GroupStatusCard } from './group-status-card'
 import { StatusFilterBar } from './status-filter-bar'
@@ -69,7 +65,7 @@ export function LocalGroupsPanel(props: {
 
   if (props.isLoading) {
     return (
-      <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
+      <div className='grid max-w-7xl gap-4 md:grid-cols-2 xl:grid-cols-3'>
         {Array.from({ length: 6 }, (_, index) => (
           <Skeleton key={index} className='h-64 rounded-xl' />
         ))}
@@ -112,7 +108,7 @@ export function LocalGroupsPanel(props: {
           description={t('No groups match the selected status.')}
         />
       ) : (
-        <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
+        <div className='grid max-w-7xl gap-4 md:grid-cols-2 xl:grid-cols-3'>
           {filtered.map((group, index) => (
             <GroupStatusCard
               key={group.group}

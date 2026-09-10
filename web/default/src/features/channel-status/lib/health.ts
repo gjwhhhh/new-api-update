@@ -37,6 +37,11 @@ export function formatGroupRatio(ratio: number | string): string {
   return `×${ratio}`
 }
 
+export function shouldShowGroupRatio(ratio: number | string): boolean {
+  if (typeof ratio === 'string') return ratio.trim().length > 0
+  return Number.isFinite(ratio) && ratio >= 0
+}
+
 const OPENAI_HEALTH_RANK: Record<ChannelHealth, number> = {
   no_data: 0,
   running: 1,

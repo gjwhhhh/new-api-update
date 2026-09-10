@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export type GroupBucketPoint = {
   ts: number
+  span_seconds: number
   avg_ttft_ms: number
   avg_latency_ms: number
   success_rate: number | null
@@ -123,5 +124,5 @@ export type OpenAIStatusData = {
 
 export type ChannelHealth = 'running' | 'fluctuating' | 'abnormal' | 'no_data'
 export type ChannelStatusTab = 'local' | 'openai'
-export type GroupHours = 24 | 168
+export type GroupHours = 48 | 168
 export type GroupSortMode = 'custom' | 'traffic'

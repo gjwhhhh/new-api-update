@@ -48,11 +48,17 @@ func GetPerfMetricsSummary(c *gin.Context) {
 }
 
 func GetPerfMetricsGroups(c *gin.Context) {
-	hours := 24
-	if rawHours := c.Query("hours"); rawHours != "" {
-		if parsed, err := strconv.Atoi(rawHours); err == nil {
-			hours = parsed
+	hours := perfmetrics.GroupHours48
+	if rawHours, exists := c.GetQuery("hours"); exists {
+		parsed, err := strconv.Atoi(rawHours)
+		if err != nil || perfmetrics.ValidateGroupHours(parsed) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": perfmetrics.ErrUnsupportedGroupHours.Error(),
+			})
+			return
 		}
+		hours = parsed
 	}
 	sortMode := normalizePerfGroupsSort(c.Query("sort"))
 

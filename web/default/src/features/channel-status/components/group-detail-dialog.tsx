@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils'
 
 import { CHANNEL_HEALTH_LABEL } from '../constants'
 import { formatGroupRatio, getChannelHealth } from '../lib/health'
-import type { ChannelHealth, GroupStatusItem } from '../types'
+import type { ChannelHealth, GroupHours, GroupStatusItem } from '../types'
 import { AvailabilitySparkline } from './availability-sparkline'
 
 const HEALTH_VARIANT: Record<
@@ -46,7 +46,7 @@ const HEALTH_VARIANT: Record<
 
 export function GroupDetailDialog(props: {
   group: GroupStatusItem | null
-  hours: number
+  hours: GroupHours
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -77,7 +77,7 @@ export function GroupDetailDialog(props: {
         )
       }
       description={group?.description || undefined}
-      contentClassName='sm:max-w-3xl max-h-[85dvh]'
+      contentClassName='sm:max-w-3xl sm:p-5 max-h-[85dvh]'
       bodyClassName='space-y-5'
     >
       {group ? (
@@ -132,7 +132,10 @@ export function GroupDetailDialog(props: {
             </div>
           </div>
 
-          <AvailabilitySparkline series={group.series ?? []} />
+          <AvailabilitySparkline
+            series={group.series ?? []}
+            hours={props.hours}
+          />
 
           <div>
             <div className='mb-2 flex items-center justify-between'>

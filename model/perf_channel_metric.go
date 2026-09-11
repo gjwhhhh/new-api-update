@@ -227,6 +227,7 @@ type ChannelStatusMetricPageParams struct {
 	StartTs       int64
 	EndTs         int64
 	Search        string
+	Group         string
 	ChannelStatus *int
 	ChannelType   *int
 	Health        string
@@ -359,6 +360,7 @@ func channelStatusMetricQuery(params ChannelStatusMetricPageParams) (*gorm.DB, s
 	)
 	query := DB.Table("channels AS channels").
 		Joins("LEFT JOIN (?) AS metric_summary ON metric_summary.channel_id = channels.id", metricSummary)
+	query = applyChannelGroupFilter(query, params.Group, channelStatusGroupColumn())
 	if params.ChannelStatus != nil {
 		query = query.Where("channels.status = ?", *params.ChannelStatus)
 	}

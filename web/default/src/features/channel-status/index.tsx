@@ -25,6 +25,7 @@ import { toast } from 'sonner'
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { getGroups } from '@/features/channels/api'
 import { useDebounce } from '@/hooks'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
@@ -73,6 +74,10 @@ export function ChannelStatusPage() {
   )
   const [channelConfiguredStatus, setChannelConfiguredStatus] =
     useState<ConfiguredStatusFilter>('')
+  const [channelGroup, setChannelGroup] = useState('')
+  const [channelProviderType, setChannelProviderType] = useState<number | null>(
+    null
+  )
   const [channelSort, setChannelSort] = useState<ChannelMetricsSort>('traffic')
   const [channelOrder, setChannelOrder] = useState<'asc' | 'desc'>('desc')
   const [channelPage, setChannelPage] = useState(1)
@@ -96,8 +101,10 @@ export function ChannelStatusPage() {
       page: channelPage,
       pageSize: 24,
       search: debouncedChannelSearch,
+      group: channelGroup,
       health: channelHealth === 'all' ? '' : channelHealth,
       channelStatus: channelConfiguredStatus,
+      providerType: channelProviderType,
       sort: channelSort,
       order: channelOrder,
     }),
@@ -107,8 +114,10 @@ export function ChannelStatusPage() {
         page: channelPage,
         pageSize: 24,
         search: debouncedChannelSearch,
+        group: channelGroup,
         health: channelHealth === 'all' ? '' : channelHealth,
         channelStatus: channelConfiguredStatus,
+        providerType: channelProviderType,
         sort: channelSort,
         order: channelOrder,
       }),
@@ -117,6 +126,13 @@ export function ChannelStatusPage() {
     refetchInterval: tab === 'local' && isChannelView ? 60_000 : false,
     refetchOnMount: 'always',
     refetchOnWindowFocus: 'always',
+  })
+
+  const channelGroupsQuery = useQuery({
+    queryKey: CHANNEL_STATUS_QUERY_KEYS.channelGroups,
+    queryFn: getGroups,
+    enabled: tab === 'local' && isChannelView,
+    staleTime: 5 * 60_000,
   })
 
   const openaiQuery = useQuery({
@@ -413,6 +429,10 @@ export function ChannelStatusPage() {
                       search={channelSearch}
                       selectedHealth={channelHealth}
                       configuredStatus={channelConfiguredStatus}
+                      groups={channelGroupsQuery.data?.data ?? []}
+                      selectedGroup={channelGroup}
+                      providerTypes={channelsQuery.data?.provider_types ?? []}
+                      providerType={channelProviderType}
                       sort={channelSort}
                       order={channelOrder}
                       onSearchChange={(value) => {
@@ -425,6 +445,14 @@ export function ChannelStatusPage() {
                       }}
                       onConfiguredStatusChange={(value) => {
                         setChannelConfiguredStatus(value)
+                        setChannelPage(1)
+                      }}
+                      onGroupChange={(value) => {
+                        setChannelGroup(value)
+                        setChannelPage(1)
+                      }}
+                      onProviderTypeChange={(value) => {
+                        setChannelProviderType(value)
                         setChannelPage(1)
                       }}
                       onSortChange={(value) => {

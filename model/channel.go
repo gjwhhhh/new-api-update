@@ -159,11 +159,21 @@ func NormalizeChannelGroupFilter(group string) string {
 	return group
 }
 
-func channelGroupFilterCondition() string {
-	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		return `CONCAT(',', ` + commonGroupCol + `, ',') LIKE ? ESCAPE '!'`
+func channelGroupFilterCondition(query *gorm.DB, groupColumn string) string {
+	if query != nil && query.Dialector.Name() == string(common.DatabaseTypeMySQL) {
+		return `CONCAT(',', ` + groupColumn + `, ',') LIKE ? ESCAPE '!'`
 	}
-	return `(',' || ` + commonGroupCol + ` || ',') LIKE ? ESCAPE '!'`
+	return `(',' || ` + groupColumn + ` || ',') LIKE ? ESCAPE '!'`
+}
+
+func channelGroupFilterColumn(query *gorm.DB) string {
+	if commonGroupCol != "" {
+		return commonGroupCol
+	}
+	if query != nil && query.Dialector.Name() == string(common.DatabaseTypePostgreSQL) {
+		return `"group"`
+	}
+	return "`group`"
 }
 
 func channelGroupFilterPattern(group string) string {
@@ -176,11 +186,15 @@ func channelGroupFilterPattern(group string) string {
 }
 
 func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
+	return applyChannelGroupFilter(query, group, channelGroupFilterColumn(query))
+}
+
+func applyChannelGroupFilter(query *gorm.DB, group string, groupColumn string) *gorm.DB {
 	group = NormalizeChannelGroupFilter(group)
 	if group == "" {
 		return query
 	}
-	return query.Where(channelGroupFilterCondition(), channelGroupFilterPattern(group))
+	return query.Where(channelGroupFilterCondition(query, groupColumn), channelGroupFilterPattern(group))
 }
 
 // Value implements driver.Valuer interface

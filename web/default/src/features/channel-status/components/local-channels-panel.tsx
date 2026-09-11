@@ -23,6 +23,8 @@ import { EmptyState } from '@/components/empty-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { CHANNEL_TYPE_OPTIONS } from '@/features/channels/constants'
+import { getChannelTypeLabel } from '@/features/channels/lib/channel-utils'
 
 import { CHANNEL_METRICS_SORT_OPTIONS } from '../constants'
 import type {
@@ -56,11 +58,17 @@ export function LocalChannelsPanel(props: {
   search: string
   selectedHealth: ChannelHealth | 'all'
   configuredStatus: ConfiguredStatusFilter
+  groups: string[]
+  selectedGroup: string
+  providerTypes: number[]
+  providerType: number | null
   sort: ChannelMetricsSort
   order: 'asc' | 'desc'
   onSearchChange: (value: string) => void
   onHealthChange: (value: ChannelHealth | 'all') => void
   onConfiguredStatusChange: (value: ConfiguredStatusFilter) => void
+  onGroupChange: (value: string) => void
+  onProviderTypeChange: (value: number | null) => void
   onSortChange: (value: ChannelMetricsSort) => void
   onOrderChange: (value: 'asc' | 'desc') => void
   onPageChange: (page: number) => void
@@ -72,8 +80,28 @@ export function LocalChannelsPanel(props: {
   const pageSize = data?.page_size ?? 24
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const providerOptions = [
+    ...CHANNEL_TYPE_OPTIONS.filter((provider) =>
+      props.providerTypes.includes(provider.value)
+    ),
+    ...props.providerTypes
+      .filter(
+        (providerType) =>
+          !CHANNEL_TYPE_OPTIONS.some(
+            (provider) => provider.value === providerType
+          )
+      )
+      .map((providerType) => ({
+        value: providerType,
+        label: getChannelTypeLabel(providerType),
+      })),
+  ]
   const hasActiveFilters = Boolean(
-    props.search || props.selectedHealth !== 'all' || props.configuredStatus
+    props.search ||
+    props.selectedHealth !== 'all' ||
+    props.configuredStatus ||
+    props.selectedGroup ||
+    props.providerType !== null
   )
 
   if (props.isLoading && !data) {
@@ -114,6 +142,36 @@ export function LocalChannelsPanel(props: {
           <option value='enabled'>{t('Enabled')}</option>
           <option value='manually_disabled'>{t('Manually disabled')}</option>
           <option value='auto_disabled'>{t('Auto disabled')}</option>
+        </select>
+        <select
+          value={props.selectedGroup}
+          onChange={(event) => props.onGroupChange(event.target.value)}
+          aria-label={t('Group')}
+          className='border-input bg-background h-8 rounded-lg border px-2.5 text-sm outline-none focus-visible:ring-2'
+        >
+          <option value=''>{t('All Groups')}</option>
+          {props.groups.map((group) => (
+            <option key={group} value={group}>
+              {group}
+            </option>
+          ))}
+        </select>
+        <select
+          value={props.providerType ?? ''}
+          onChange={(event) =>
+            props.onProviderTypeChange(
+              event.target.value === '' ? null : Number(event.target.value)
+            )
+          }
+          aria-label={t('Provider')}
+          className='border-input bg-background h-8 rounded-lg border px-2.5 text-sm outline-none focus-visible:ring-2'
+        >
+          <option value=''>{t('All Vendors')}</option>
+          {providerOptions.map((provider) => (
+            <option key={provider.value} value={provider.value}>
+              {t(provider.label)}
+            </option>
+          ))}
         </select>
         <select
           value={props.sort}
@@ -231,6 +289,8 @@ function ChannelStatusSkeleton() {
       <div className='flex flex-wrap gap-2'>
         <Skeleton className='h-8 w-64 rounded-lg' />
         <Skeleton className='h-8 w-36 rounded-lg' />
+        <Skeleton className='h-8 w-32 rounded-lg' />
+        <Skeleton className='h-8 w-32 rounded-lg' />
         <Skeleton className='h-8 w-32 rounded-lg' />
       </div>
       <div className='grid max-w-7xl gap-4 md:grid-cols-2 xl:grid-cols-3'>

@@ -47,10 +47,10 @@ func TestGetChannelStatusMetricPageFiltersSortsAndPaginates(t *testing.T) {
 	require.NoError(t, DB.AutoMigrate(&Channel{}, &PerfChannelMetric{}))
 	const modelName = "channel-status-page-metric"
 	channels := []Channel{
-		{Id: 930101, Key: "channel-status-page-key-1", Name: "channel-status-page-fixture-alpha", Status: 1},
-		{Id: 930102, Key: "channel-status-page-key-2", Name: "channel-status-page-fixture-beta", Status: 1},
-		{Id: 930103, Key: "channel-status-page-key-3", Name: "channel-status-page-fixture-gamma", Status: 1},
-		{Id: 930104, Key: "channel-status-page-key-4", Name: "channel-status-page-fixture-empty", Status: 1},
+		{Id: 930101, Key: "channel-status-page-key-1", Name: "channel-status-page-fixture-alpha", Type: 1, Status: 1, Group: "default,vip"},
+		{Id: 930102, Key: "channel-status-page-key-2", Name: "channel-status-page-fixture-beta", Type: 24, Status: 1, Group: "default"},
+		{Id: 930103, Key: "channel-status-page-key-3", Name: "channel-status-page-fixture-gamma", Type: 1, Status: 1, Group: "vip-plus"},
+		{Id: 930104, Key: "channel-status-page-key-4", Name: "channel-status-page-fixture-empty", Type: 24, Status: 1, Group: "vip"},
 	}
 	ids := []int{930101, 930102, 930103, 930104}
 	require.NoError(t, DB.Where("id IN ?", ids).Delete(&Channel{}).Error)
@@ -100,4 +100,19 @@ func TestGetChannelStatusMetricPageFiltersSortsAndPaginates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, abnormalPage.Items, 1)
 	assert.Equal(t, 930103, abnormalPage.Items[0].ChannelID)
+
+	openAIType := 1
+	groupAndProviderPage, err := GetChannelStatusMetricPage(ChannelStatusMetricPageParams{
+		StartTs:     bucketTs,
+		EndTs:       bucketTs,
+		Search:      "channel-status-page-fixture",
+		Group:       "vip",
+		ChannelType: &openAIType,
+		Sort:        "id",
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.Len(t, groupAndProviderPage.Items, 1)
+	assert.Equal(t, int64(1), groupAndProviderPage.Total)
+	assert.Equal(t, 930101, groupAndProviderPage.Items[0].ChannelID)
 }

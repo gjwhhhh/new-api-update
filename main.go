@@ -101,6 +101,7 @@ func main() {
 
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
+	service.StartChannelAffinityCacheVersionSync()
 
 	// Warm pricing after channel cache initialization so Advanced Custom
 	// endpoint inference can read cached route settings on first request.

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
@@ -22,13 +23,15 @@ func ClearChannelAffinityCache(c *gin.Context) {
 	ruleName := strings.TrimSpace(c.Query("rule_name"))
 
 	if all == "true" {
-		deleted := service.ClearChannelAffinityCacheAll()
+		result, err := service.ClearChannelAffinityCacheAll()
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
-			"data": gin.H{
-				"deleted": deleted,
-			},
+			"data":    result,
 		})
 		return
 	}
@@ -41,7 +44,7 @@ func ClearChannelAffinityCache(c *gin.Context) {
 		return
 	}
 
-	deleted, err := service.ClearChannelAffinityCacheByRuleName(ruleName)
+	result, err := service.ClearChannelAffinityCacheByRuleName(ruleName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -53,9 +56,7 @@ func ClearChannelAffinityCache(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data": gin.H{
-			"deleted": deleted,
-		},
+		"data":    result,
 	})
 }
 

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { CacheStats } from './types'
+import type { CacheClearResult, CacheStats } from './types'
 
 export async function getCacheStats(): Promise<{
   success: boolean
@@ -34,6 +34,7 @@ export async function getCacheStats(): Promise<{
 export async function clearAllCache(): Promise<{
   success: boolean
   message?: string
+  data?: CacheClearResult
 }> {
   const res = await api.delete('/api/option/channel_affinity_cache', {
     params: { all: true },
@@ -43,7 +44,7 @@ export async function clearAllCache(): Promise<{
 
 export async function clearRuleCache(
   ruleName: string
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; message?: string; data?: CacheClearResult }> {
   const res = await api.delete('/api/option/channel_affinity_cache', {
     params: { rule_name: ruleName },
   })

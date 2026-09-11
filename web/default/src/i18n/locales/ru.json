@@ -5354,6 +5354,7 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "This will immediately invalidate all channel affinity cache entries. Old entries are cleaned up in the background. Without Redis, only this instance is affected.": "Все записи кэша привязки каналов будут немедленно инвалидированы. Устаревшие записи будут очищены в фоновом режиме. Без Redis изменения затронут только этот экземпляр."
   }
 }

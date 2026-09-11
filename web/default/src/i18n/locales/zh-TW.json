@@ -767,7 +767,7 @@
     "Channel {{name}}": "渠道 {{name}}",
     "Channel {{name}} model {{model}}": "渠道 {{name}} 模型 {{model}}",
     "Channel Affinity": "渠道親和性",
-    "Channel affinity cache was cleared on this instance only. Configure Redis for multi-instance clearing.": "Channel affinity cache was cleared on this instance only. Configure Redis for multi-instance clearing.",
+    "Channel affinity cache was cleared on this instance only. Configure Redis for multi-instance clearing.": "渠道親和性緩存僅會在目前實例上清除。請設定 Redis 以支援多實例清除。",
     "Channel affinity reuses the last successful channel based on keys extracted from the request context or JSON body.": "渠道親和性會基於從請求上下文或 JSON Body 提取的 Key，優先複用上一次成功的渠道。",
     "Channel Affinity: Upstream Cache Hit": "渠道親和性：上游緩存命中",
     "Channel configuration status": "渠道設定狀態",
@@ -5354,6 +5354,7 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "This will immediately invalidate all channel affinity cache entries. Old entries are cleaned up in the background. Without Redis, only this instance is affected.": "這將立即使所有渠道親和性緩存條目失效。舊條目會在背景清理。未設定 Redis 時，僅影響目前實例。"
   }
 }

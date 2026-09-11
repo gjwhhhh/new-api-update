@@ -5354,6 +5354,7 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "This will immediately invalidate all channel affinity cache entries. Old entries are cleaned up in the background. Without Redis, only this instance is affected.": "这将立即使所有渠道亲和性缓存条目失效。旧条目会在后台清理。未配置 Redis 时，仅影响当前实例。"
   }
 }

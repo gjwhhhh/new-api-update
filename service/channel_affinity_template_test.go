@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,9 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,6 +23,39 @@ func buildChannelAffinityTemplateContextForTest(meta channelAffinityMeta) *gin.C
 	ctx, _ := gin.CreateTestContext(rec)
 	setChannelAffinityContext(ctx, meta)
 	return ctx
+}
+
+func useChannelAffinityRedisForTest(t *testing.T) *redis.Client {
+	t.Helper()
+	server, err := miniredis.Run()
+	require.NoError(t, err)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+
+	oldRedisEnabled := common.RedisEnabled
+	oldRedisClient := common.RDB
+	channelAffinityCacheVersionLock.Lock()
+	oldGlobalVersion := channelAffinityCacheVersionState.globalVersion
+	oldRuleVersions := make(map[string]string, len(channelAffinityCacheVersionState.ruleVersions))
+	for ruleName, cacheVersion := range channelAffinityCacheVersionState.ruleVersions {
+		oldRuleVersions[ruleName] = cacheVersion
+	}
+	channelAffinityCacheVersionState.globalVersion = ""
+	channelAffinityCacheVersionState.ruleVersions = make(map[string]string)
+	channelAffinityCacheVersionLock.Unlock()
+
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		common.RedisEnabled = oldRedisEnabled
+		common.RDB = oldRedisClient
+		channelAffinityCacheVersionLock.Lock()
+		channelAffinityCacheVersionState.globalVersion = oldGlobalVersion
+		channelAffinityCacheVersionState.ruleVersions = oldRuleVersions
+		channelAffinityCacheVersionLock.Unlock()
+		_ = client.Close()
+		server.Close()
+	})
+	return client
 }
 
 func TestApplyChannelAffinityOverrideTemplate_NoTemplate(t *testing.T) {
@@ -205,7 +242,9 @@ func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {
 	}
 
 	affinityValue := fmt.Sprintf("header-hit-%d", time.Now().UnixNano())
-	cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "gpt-5", "default", affinityValue)
+	cacheVersion, err := getChannelAffinityCacheVersion(rule.Name)
+	require.NoError(t, err)
+	cacheKeySuffix := buildChannelAffinityCacheKeySuffixWithVersion(rule, "gpt-5", "default", affinityValue, cacheVersion)
 
 	cache := getChannelAffinityCache()
 	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9528, time.Minute))
@@ -263,6 +302,180 @@ func TestClearCurrentChannelAffinityCache(t *testing.T) {
 	require.False(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
 }
 
+func TestChannelAffinityCacheVersionUsesLocalValueUntilInvalidationEvent(t *testing.T) {
+	client := useChannelAffinityRedisForTest(t)
+	ctx := context.Background()
+	ruleName := "local-version-event"
+
+	require.NoError(t, client.Set(ctx, channelAffinityCacheVersionStorageKey(""), "global-v1", 0).Err())
+	require.NoError(t, client.Set(ctx, channelAffinityCacheVersionStorageKey(ruleName), "rule-v1", 0).Err())
+
+	initial, err := getChannelAffinityCacheVersion(ruleName)
+	require.NoError(t, err)
+	require.Equal(t, "global-v1", initial.GlobalVersion)
+	require.Equal(t, "rule-v1", initial.RuleVersion)
+
+	require.NoError(t, client.Set(ctx, channelAffinityCacheVersionStorageKey(""), "global-v2", 0).Err())
+	require.NoError(t, client.Set(ctx, channelAffinityCacheVersionStorageKey(ruleName), "rule-v2", 0).Err())
+
+	cached, err := getChannelAffinityCacheVersion(ruleName)
+	require.NoError(t, err)
+	require.Equal(t, initial, cached)
+
+	eventPayload, err := common.Marshal(channelAffinityCacheVersionEvent{
+		Scope:        channelAffinityCacheVersionScopeRule,
+		RuleName:     ruleName,
+		CacheVersion: "rule-v2",
+	})
+	require.NoError(t, err)
+	handleChannelAffinityCacheVersionEvent(string(eventPayload))
+
+	updated, err := getChannelAffinityCacheVersion(ruleName)
+	require.NoError(t, err)
+	require.Equal(t, "global-v2", updated.GlobalVersion)
+	require.Equal(t, "rule-v2", updated.RuleVersion)
+}
+
+func TestRotateChannelAffinityCacheVersionPublishesUpdate(t *testing.T) {
+	client := useChannelAffinityRedisForTest(t)
+	ctx := context.Background()
+	require.NoError(t, client.Set(ctx, channelAffinityCacheVersionStorageKey(""), "global-v1", 0).Err())
+
+	pubsub := client.Subscribe(ctx, channelAffinityCacheVersionEventChannel)
+	t.Cleanup(func() { _ = pubsub.Close() })
+	_, err := pubsub.ReceiveTimeout(ctx, time.Second)
+	require.NoError(t, err)
+
+	previousVersion, err := rotateChannelAffinityCacheVersion("")
+	require.NoError(t, err)
+	require.Equal(t, "global-v1", previousVersion)
+
+	currentVersion, err := client.Get(ctx, channelAffinityCacheVersionStorageKey("")).Result()
+	require.NoError(t, err)
+	require.NotEqual(t, previousVersion, currentVersion)
+
+	message, err := pubsub.ReceiveMessage(ctx)
+	require.NoError(t, err)
+	event := channelAffinityCacheVersionEvent{}
+	require.NoError(t, common.UnmarshalJsonStr(message.Payload, &event))
+	require.Equal(t, channelAffinityCacheVersionScopeGlobal, event.Scope)
+	require.Empty(t, event.RuleName)
+	require.Equal(t, currentVersion, event.CacheVersion)
+
+	cached, complete := getCachedChannelAffinityCacheVersion("")
+	require.True(t, complete)
+	require.Equal(t, currentVersion, cached.GlobalVersion)
+}
+
+func TestClearChannelAffinityCacheAllPreventsLateRequestWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rule := operation_setting.ChannelAffinityRule{
+		Name:       "clear-all-late-write",
+		ModelRegex: []string{"^gpt-.*$"},
+		KeySources: []operation_setting.ChannelAffinityKeySource{
+			{Type: "request_header", Key: "X-Affinity-Key"},
+		},
+		IncludeRuleName: true,
+	}
+	setting := operation_setting.GetChannelAffinitySetting()
+	originalEnabled := setting.Enabled
+	originalRules := setting.Rules
+	setting.Enabled = true
+	setting.Rules = []operation_setting.ChannelAffinityRule{rule}
+	t.Cleanup(func() {
+		setting.Enabled = originalEnabled
+		setting.Rules = originalRules
+	})
+
+	affinityValue := fmt.Sprintf("clear-all-late-%d", time.Now().UnixNano())
+	beforeClear := newChannelAffinityHeaderTestContext("X-Affinity-Key", affinityValue)
+	_, found := GetPreferredChannelByAffinity(beforeClear, "gpt-5", "default")
+	require.False(t, found)
+
+	result, err := ClearChannelAffinityCacheAll()
+	require.NoError(t, err)
+	require.True(t, result.Invalidated)
+
+	RecordChannelAffinity(beforeClear, 8811)
+	afterClear := newChannelAffinityHeaderTestContext("X-Affinity-Key", affinityValue)
+	_, found = GetPreferredChannelByAffinity(afterClear, "gpt-5", "default")
+	require.False(t, found)
+
+	RecordChannelAffinity(afterClear, 8812)
+	current := newChannelAffinityHeaderTestContext("X-Affinity-Key", affinityValue)
+	channelID, found := GetPreferredChannelByAffinity(current, "gpt-5", "default")
+	require.True(t, found)
+	require.Equal(t, 8812, channelID)
+
+	ClearCurrentChannelAffinityCache(current)
+}
+
+func TestClearChannelAffinityCacheByRulePreventsLateRequestWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	targetRule := operation_setting.ChannelAffinityRule{
+		Name:       "clear-rule-late-write",
+		ModelRegex: []string{"^gpt-.*$"},
+		KeySources: []operation_setting.ChannelAffinityKeySource{
+			{Type: "request_header", Key: "X-Target-Affinity-Key"},
+		},
+		IncludeRuleName: true,
+	}
+	otherRule := operation_setting.ChannelAffinityRule{
+		Name:       "keep-other-rule",
+		ModelRegex: []string{"^gpt-.*$"},
+		KeySources: []operation_setting.ChannelAffinityKeySource{
+			{Type: "request_header", Key: "X-Other-Affinity-Key"},
+		},
+		IncludeRuleName: true,
+	}
+	setting := operation_setting.GetChannelAffinitySetting()
+	originalEnabled := setting.Enabled
+	originalRules := setting.Rules
+	setting.Enabled = true
+	setting.Rules = []operation_setting.ChannelAffinityRule{targetRule, otherRule}
+	t.Cleanup(func() {
+		setting.Enabled = originalEnabled
+		setting.Rules = originalRules
+	})
+
+	targetValue := fmt.Sprintf("clear-rule-target-%d", time.Now().UnixNano())
+	otherValue := fmt.Sprintf("clear-rule-other-%d", time.Now().UnixNano())
+	beforeClear := newChannelAffinityHeaderTestContext("X-Target-Affinity-Key", targetValue)
+	_, found := GetPreferredChannelByAffinity(beforeClear, "gpt-5", "default")
+	require.False(t, found)
+
+	other := newChannelAffinityHeaderTestContext("X-Other-Affinity-Key", otherValue)
+	_, found = GetPreferredChannelByAffinity(other, "gpt-5", "default")
+	require.False(t, found)
+	RecordChannelAffinity(other, 8821)
+
+	result, err := ClearChannelAffinityCacheByRuleName(targetRule.Name)
+	require.NoError(t, err)
+	require.True(t, result.Invalidated)
+
+	RecordChannelAffinity(beforeClear, 8822)
+	afterClear := newChannelAffinityHeaderTestContext("X-Target-Affinity-Key", targetValue)
+	_, found = GetPreferredChannelByAffinity(afterClear, "gpt-5", "default")
+	require.False(t, found)
+
+	otherAfterClear := newChannelAffinityHeaderTestContext("X-Other-Affinity-Key", otherValue)
+	channelID, found := GetPreferredChannelByAffinity(otherAfterClear, "gpt-5", "default")
+	require.True(t, found)
+	require.Equal(t, 8821, channelID)
+
+	ClearCurrentChannelAffinityCache(otherAfterClear)
+}
+
+func newChannelAffinityHeaderTestContext(headerName string, affinityValue string) *gin.Context {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set(headerName, affinityValue)
+	return ctx
+}
+
 func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -280,7 +493,9 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	require.NotNil(t, codexRule)
 
 	affinityValue := fmt.Sprintf("pc-hit-%d", time.Now().UnixNano())
-	cacheKeySuffix := buildChannelAffinityCacheKeySuffix(*codexRule, "gpt-5", "default", affinityValue)
+	cacheVersion, err := getChannelAffinityCacheVersion(codexRule.Name)
+	require.NoError(t, err)
+	cacheKeySuffix := buildChannelAffinityCacheKeySuffixWithVersion(*codexRule, "gpt-5", "default", affinityValue, cacheVersion)
 
 	cache := getChannelAffinityCache()
 	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9527, time.Minute))
@@ -318,7 +533,7 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 		},
 	}
 
-	_, err := relaycommon.ApplyParamOverrideWithRelayInfo([]byte(`{"model":"gpt-5"}`), info)
+	_, err = relaycommon.ApplyParamOverrideWithRelayInfo([]byte(`{"model":"gpt-5"}`), info)
 	require.NoError(t, err)
 	require.True(t, info.UseRuntimeHeadersOverride)
 

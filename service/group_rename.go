@@ -524,7 +524,9 @@ func RenameGroup(request dto.GroupRenameRequest, createdBy int) (dto.GroupRename
 	for _, planID := range invalidations.SubscriptionPlanIDs {
 		model.InvalidateSubscriptionPlanCache(planID)
 	}
-	ClearChannelAffinityCacheAll()
+	if _, err := ClearChannelAffinityCacheAll(); err != nil {
+		return dto.GroupRenamePreview{}, fmt.Errorf("迁移已提交，但清除渠道亲和性缓存失败：%w", err)
+	}
 	model.InitChannelCache()
 	return preview, nil
 }

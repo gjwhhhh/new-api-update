@@ -42,9 +42,17 @@ export interface CacheStats {
   enabled: boolean
   total: number
   unknown: number
+  stale: number
   by_rule_name: Record<string, number>
   cache_capacity: number
   cache_algo: string
+  scope: 'shared_redis' | 'local_memory'
+}
+
+export interface CacheClearResult {
+  invalidated: boolean
+  scope: 'shared_redis' | 'local_memory'
+  cleanup_scheduled: boolean
 }
 
 export interface ChannelAffinitySettings {

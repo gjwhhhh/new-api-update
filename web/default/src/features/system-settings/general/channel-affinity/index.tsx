@@ -44,7 +44,12 @@ import { useUpdateOption } from '../../hooks/use-update-option'
 import { getCacheStats, clearAllCache, clearRuleCache } from './api'
 import { RULE_TEMPLATES, cloneTemplate, makeUniqueName } from './constants'
 import { RuleEditorDialog } from './rule-editor-dialog'
-import type { AffinityRule, CacheStats, ChannelAffinitySettings } from './types'
+import type {
+  AffinityRule,
+  CacheClearResult,
+  CacheStats,
+  ChannelAffinitySettings,
+} from './types'
 
 function parseRules(jsonStr: string): AffinityRule[] {
   try {
@@ -234,6 +239,18 @@ export function ChannelAffinitySection(props: Props) {
     }
   }
 
+  const showCacheClearResult = (result?: CacheClearResult) => {
+    if (result?.scope === 'local_memory') {
+      toast.warning(
+        t(
+          'Channel affinity cache was cleared on this instance only. Configure Redis for multi-instance clearing.'
+        )
+      )
+      return
+    }
+    toast.success(t('Cleared'))
+  }
+
   const handleSave = async () => {
     let rulesJson: string
     if (editMode === 'json') {
@@ -353,20 +370,32 @@ export function ChannelAffinitySection(props: Props) {
   }
 
   const handleClearAll = async () => {
-    const res = await clearAllCache()
-    if (res.success) {
-      toast.success(t('Cleared'))
-      refreshCache()
+    try {
+      const res = await clearAllCache()
+      if (res.success) {
+        showCacheClearResult(res.data)
+        refreshCache()
+      } else {
+        toast.error(res.message || t('Failed to clear cache'))
+      }
+    } catch {
+      toast.error(t('Failed to clear cache'))
     }
     setClearAllDialogOpen(false)
   }
 
   const handleClearRule = async () => {
     if (!clearRuleName) return
-    const res = await clearRuleCache(clearRuleName)
-    if (res.success) {
-      toast.success(t('Cleared'))
-      refreshCache()
+    try {
+      const res = await clearRuleCache(clearRuleName)
+      if (res.success) {
+        showCacheClearResult(res.data)
+        refreshCache()
+      } else {
+        toast.error(res.message || t('Failed to clear cache'))
+      }
+    } catch {
+      toast.error(t('Failed to clear cache'))
     }
     setClearRuleName(null)
   }
@@ -684,7 +713,7 @@ export function ChannelAffinitySection(props: Props) {
         onOpenChange={setClearAllDialogOpen}
         title={t('Confirm clearing all channel affinity cache')}
         desc={t(
-          'This will delete all channel affinity cache entries still in memory.'
+          'This will immediately invalidate all channel affinity cache entries. Old entries are cleaned up in the background. Without Redis, only this instance is affected.'
         )}
         handleConfirm={handleClearAll}
         destructive

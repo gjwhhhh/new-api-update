@@ -96,6 +96,13 @@ type RelayInfo struct {
 	StartTime         time.Time
 	FirstResponseTime time.Time
 	isFirstResponse   bool
+	// ChannelAttempt* tracks one upstream channel attempt. StartTime and
+	// FirstResponseTime remain request-wide so logs and group metrics continue
+	// to represent the user's end-to-end experience across retries.
+	ChannelAttemptStartedAt       time.Time
+	ChannelAttemptFirstResponseAt time.Time
+	ChannelAttemptFinishedAt      time.Time
+	isFirstChannelAttemptResponse bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -662,10 +669,34 @@ func (info *RelayInfo) GetEstimatePromptTokens() int {
 }
 
 func (info *RelayInfo) SetFirstResponseTime() {
+	now := time.Now()
 	if info.isFirstResponse {
-		info.FirstResponseTime = time.Now()
+		info.FirstResponseTime = now
 		info.isFirstResponse = false
 	}
+	if info.isFirstChannelAttemptResponse {
+		info.ChannelAttemptFirstResponseAt = now
+		info.isFirstChannelAttemptResponse = false
+	}
+}
+
+// BeginChannelAttempt starts timing for one selected upstream channel without
+// resetting request-wide timing used by logs and group performance metrics.
+func (info *RelayInfo) BeginChannelAttempt(startedAt time.Time) {
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	info.ChannelAttemptStartedAt = startedAt
+	info.ChannelAttemptFirstResponseAt = time.Time{}
+	info.ChannelAttemptFinishedAt = time.Time{}
+	info.isFirstChannelAttemptResponse = true
+}
+
+func (info *RelayInfo) FinishChannelAttempt(finishedAt time.Time) {
+	if finishedAt.IsZero() {
+		finishedAt = time.Now()
+	}
+	info.ChannelAttemptFinishedAt = finishedAt
 }
 
 func (info *RelayInfo) HasSendResponse() bool {

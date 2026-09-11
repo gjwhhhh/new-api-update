@@ -19,8 +19,55 @@ func flushLoop() {
 			continue
 		}
 		flushCompletedBuckets()
+		flushCompletedChannelBuckets()
 		cleanupExpiredMetrics(setting.RetentionDays)
 	}
+}
+
+func flushCompletedChannelBuckets() {
+	currentBucket := bucketStart(time.Now().Unix())
+	channelHotBuckets.Range(func(key, value any) bool {
+		k := key.(channelBucketKey)
+		if k.bucketTs >= currentBucket {
+			return true
+		}
+
+		bucket := value.(*atomicBucket)
+		if !isCurrentHotChannelBucket(k.channelID, bucket) {
+			channelHotBuckets.Delete(key)
+			return true
+		}
+		drained := bucket.drain()
+		if drained.requestCount == 0 {
+			deleteOldEmptyChannelBucket(k, key)
+			return true
+		}
+
+		persisted, err := model.UpsertPerfChannelMetricIfCurrentGeneration(&model.PerfChannelMetric{
+			ChannelId:      k.channelID,
+			ModelName:      k.model,
+			BucketTs:       k.bucketTs,
+			RequestCount:   drained.requestCount,
+			SuccessCount:   drained.successCount,
+			TotalLatencyMs: drained.totalLatencyMs,
+			TtftSumMs:      drained.ttftSumMs,
+			TtftCount:      drained.ttftCount,
+			OutputTokens:   drained.outputTokens,
+			GenerationMs:   drained.generationMs,
+		}, bucket.sampleGeneration())
+		if err != nil {
+			bucket.addCounters(drained)
+			common.SysError(fmt.Sprintf("failed to flush perf channel metric bucket channel=%d model=%s bucket=%d: %s", k.channelID, k.model, k.bucketTs, err.Error()))
+			return true
+		}
+		if !persisted {
+			channelHotBuckets.Delete(key)
+			return true
+		}
+
+		deleteOldEmptyChannelBucket(k, key)
+		return true
+	})
 }
 
 func flushCompletedBuckets() {
@@ -76,6 +123,12 @@ func deleteOldEmptyBucket(k bucketKey, rawKey any) {
 	}
 }
 
+func deleteOldEmptyChannelBucket(k channelBucketKey, rawKey any) {
+	if k.bucketTs < bucketStart(time.Now().Add(-24*time.Hour).Unix()) {
+		channelHotBuckets.Delete(rawKey)
+	}
+}
+
 func cleanupExpiredMetrics(retentionDays int) {
 	if retentionDays <= 0 {
 		return
@@ -83,6 +136,9 @@ func cleanupExpiredMetrics(retentionDays int) {
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).Unix()
 	if err := model.DeletePerfMetricsBefore(cutoff); err != nil {
 		common.SysError("failed to cleanup expired perf metrics: " + err.Error())
+	}
+	if err := model.DeletePerfChannelMetricsBefore(cutoff); err != nil {
+		common.SysError("failed to cleanup expired perf channel metrics: " + err.Error())
 	}
 }
 

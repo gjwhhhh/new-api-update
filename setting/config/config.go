@@ -16,6 +16,18 @@ type ConfigManager struct {
 	mutex   sync.RWMutex
 }
 
+// ConfigMapExporter lets a configuration own its serialization when it needs
+// synchronization or normalization that reflection cannot provide safely.
+type ConfigMapExporter interface {
+	ConfigToMap() (map[string]string, error)
+}
+
+// ConfigMapUpdater lets a configuration apply option updates atomically when
+// its runtime readers need synchronization with configuration reloads.
+type ConfigMapUpdater interface {
+	UpdateConfigFromMap(map[string]string) error
+}
+
 var GlobalConfig = NewConfigManager()
 
 func NewConfigManager() *ConfigManager {
@@ -91,6 +103,10 @@ func (cm *ConfigManager) SaveToDB(updateFunc func(key, value string) error) erro
 
 // 辅助函数：将配置对象转换为map
 func configToMap(config interface{}) (map[string]string, error) {
+	if exporter, ok := config.(ConfigMapExporter); ok {
+		return exporter.ConfigToMap()
+	}
+
 	result := make(map[string]string)
 
 	val := reflect.ValueOf(config)
@@ -163,6 +179,10 @@ func configToMap(config interface{}) (map[string]string, error) {
 
 // 辅助函数：从map更新配置对象
 func updateConfigFromMap(config interface{}, configMap map[string]string) error {
+	if updater, ok := config.(ConfigMapUpdater); ok {
+		return updater.UpdateConfigFromMap(configMap)
+	}
+
 	val := reflect.ValueOf(config)
 	if val.Kind() != reflect.Ptr {
 		return nil

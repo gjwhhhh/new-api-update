@@ -8,6 +8,7 @@ type Store interface {
 }
 
 type Sample struct {
+	ChannelID    int
 	Model        string
 	Group        string
 	LatencyMs    int64
@@ -99,6 +100,27 @@ type GroupsQueryResult struct {
 	Groups        []GroupMetric `json:"groups"`
 }
 
+// ChannelMetric is the channel-level counterpart to GroupMetric. Models are
+// included for the detail endpoint and omitted from the list response.
+type ChannelMetric struct {
+	ChannelID    int                `json:"channel_id"`
+	RequestCount int64              `json:"request_count"`
+	SuccessCount int64              `json:"success_count"`
+	SuccessRate  float64            `json:"success_rate"`
+	AvgTtftMs    int64              `json:"avg_ttft_ms"`
+	AvgLatencyMs int64              `json:"avg_latency_ms"`
+	AvgTps       float64            `json:"avg_tps"`
+	Series       []GroupBucketPoint `json:"series"`
+	Models       []GroupModelStat   `json:"models"`
+}
+
+type ChannelsQueryResult struct {
+	BucketSeconds int64           `json:"bucket_seconds"`
+	StartTs       int64           `json:"start_ts"`
+	EndTs         int64           `json:"end_ts"`
+	Channels      []ChannelMetric `json:"channels"`
+}
+
 type groupBucketRow struct {
 	Group    string
 	Model    string
@@ -110,6 +132,19 @@ type bucketKey struct {
 	model    string
 	group    string
 	bucketTs int64
+}
+
+type channelBucketKey struct {
+	channelID int
+	model     string
+	bucketTs  int64
+}
+
+type channelBucketRow struct {
+	ChannelID int
+	Model     string
+	BucketTs  int64
+	Value     counters
 }
 
 type counters struct {

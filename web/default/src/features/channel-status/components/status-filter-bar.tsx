@@ -35,6 +35,7 @@ export function StatusFilterBar(props: {
   selected: ChannelHealth | 'all'
   onSelect: (value: ChannelHealth | 'all') => void
   total: number
+  totalLabel?: 'groups' | 'channels'
 }) {
   const { t } = useTranslation()
   return (
@@ -59,7 +60,9 @@ export function StatusFilterBar(props: {
         )
       })}
       <span className='text-foreground ml-auto text-sm'>
-        {t('{{count}} groups', { count: props.total })}
+        {props.totalLabel === 'channels'
+          ? t('{{count}} channels', { count: props.total })
+          : t('{{count}} groups', { count: props.total })}
       </span>
     </div>
   )

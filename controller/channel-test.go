@@ -539,8 +539,10 @@ func recordChannelTestSample(channel *model.Channel, info *relaycommon.RelayInfo
 		return
 	}
 	var groups []string
+	channelID := 0
 	if channel != nil {
 		groups = channel.GetGroups()
+		channelID = channel.Id
 		if channel.GetOtherSettings().IsModelExcludedFromSampling(info.OriginModelName) {
 			return
 		}
@@ -550,6 +552,9 @@ func recordChannelTestSample(channel *model.Channel, info *relaycommon.RelayInfo
 	endedAt := time.Now()
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySampleToGroupsAt(info, groups, success, outputTokens, endedAt)
+		if channelID > 0 {
+			perfmetrics.RecordChannelSampleAt(info, channelID, success, outputTokens, endedAt)
+		}
 	})
 }
 

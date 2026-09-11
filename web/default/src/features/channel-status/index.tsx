@@ -25,15 +25,21 @@ import { toast } from 'sonner'
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useDebounce } from '@/hooks'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
+  getPerfMetricChannels,
   getOpenAIStatus,
   getPerfMetricGroups,
   updatePerfMetricGroupDisplayOrder,
 } from './api'
+import {
+  LocalChannelsPanel,
+  type ConfiguredStatusFilter,
+} from './components/local-channels-panel'
 import { LocalGroupsPanel } from './components/local-groups-panel'
 import { OpenAIStatusPanel } from './components/openai-status-panel'
 import {
@@ -43,6 +49,8 @@ import {
 } from './constants'
 import type {
   ChannelStatusTab,
+  ChannelHealth,
+  ChannelMetricsSort,
   GroupHours,
   GroupSortMode,
   GroupStatusItem,
@@ -54,23 +62,69 @@ export function ChannelStatusPage() {
   const userRole = useAuthStore((s) => s.auth.user?.role)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const [tab, setTab] = useState<ChannelStatusTab>('local')
+  const [localView, setLocalView] = useState<'groups' | 'channels'>('groups')
   const [hours, setHours] = useState<GroupHours>(48)
   const [sortMode, setSortMode] = useState<GroupSortMode>('custom')
   const [reorderMode, setReorderMode] = useState(false)
   const [draftGroups, setDraftGroups] = useState<GroupStatusItem[] | null>(null)
+  const [channelSearch, setChannelSearch] = useState('')
+  const [channelHealth, setChannelHealth] = useState<ChannelHealth | 'all'>(
+    'all'
+  )
+  const [channelConfiguredStatus, setChannelConfiguredStatus] =
+    useState<ConfiguredStatusFilter>('')
+  const [channelSort, setChannelSort] = useState<ChannelMetricsSort>('traffic')
+  const [channelOrder, setChannelOrder] = useState<'asc' | 'desc'>('desc')
+  const [channelPage, setChannelPage] = useState(1)
+  const debouncedChannelSearch = useDebounce(channelSearch, 300)
+  const isChannelView = isAdmin && localView === 'channels'
 
   const groupsQuery = useQuery({
     queryKey: CHANNEL_STATUS_QUERY_KEYS.groups(hours, sortMode),
     queryFn: () => getPerfMetricGroups(hours, sortMode),
     staleTime: 60_000,
-    refetchInterval: reorderMode ? false : 60_000,
+    enabled: tab === 'local' && !isChannelView,
+    refetchInterval:
+      tab === 'local' && !isChannelView && !reorderMode ? 60_000 : false,
+    refetchOnMount: reorderMode ? false : 'always',
+    refetchOnWindowFocus: reorderMode ? false : 'always',
+  })
+
+  const channelsQuery = useQuery({
+    queryKey: CHANNEL_STATUS_QUERY_KEYS.channels({
+      hours,
+      page: channelPage,
+      pageSize: 24,
+      search: debouncedChannelSearch,
+      health: channelHealth === 'all' ? '' : channelHealth,
+      channelStatus: channelConfiguredStatus,
+      sort: channelSort,
+      order: channelOrder,
+    }),
+    queryFn: () =>
+      getPerfMetricChannels({
+        hours,
+        page: channelPage,
+        pageSize: 24,
+        search: debouncedChannelSearch,
+        health: channelHealth === 'all' ? '' : channelHealth,
+        channelStatus: channelConfiguredStatus,
+        sort: channelSort,
+        order: channelOrder,
+      }),
+    enabled: tab === 'local' && isChannelView,
+    staleTime: 60_000,
+    refetchInterval: tab === 'local' && isChannelView ? 60_000 : false,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
   })
 
   const openaiQuery = useQuery({
     queryKey: CHANNEL_STATUS_QUERY_KEYS.openai,
     queryFn: getOpenAIStatus,
     staleTime: 60_000,
-    refetchInterval: 60_000,
+    enabled: tab === 'openai',
+    refetchInterval: tab === 'openai' ? 60_000 : false,
   })
 
   useEffect(() => {
@@ -83,9 +137,15 @@ export function ChannelStatusPage() {
     }
   }, [reorderMode, groupsQuery.data?.groups])
 
-  const activeQuery = tab === 'local' ? groupsQuery : openaiQuery
-  const updatedAt = activeQuery.dataUpdatedAt
-  const isRefreshing = activeQuery.isFetching
+  let updatedAt = groupsQuery.dataUpdatedAt
+  let isRefreshing = groupsQuery.isFetching
+  if (tab === 'openai') {
+    updatedAt = openaiQuery.dataUpdatedAt
+    isRefreshing = openaiQuery.isFetching
+  } else if (isChannelView) {
+    updatedAt = channelsQuery.dataUpdatedAt
+    isRefreshing = channelsQuery.isFetching
+  }
   const displayGroups =
     reorderMode && draftGroups ? draftGroups : (groupsQuery.data?.groups ?? [])
 
@@ -112,6 +172,51 @@ export function ChannelStatusPage() {
       return
     }
     saveOrderMutation.mutate(groups)
+  }
+
+  const refreshGroupStatus = () => {
+    if (!reorderMode) {
+      void groupsQuery.refetch()
+    }
+  }
+
+  const refreshActiveStatus = () => {
+    if (tab === 'openai') {
+      void openaiQuery.refetch()
+      return
+    }
+    if (isChannelView) {
+      void channelsQuery.refetch()
+      return
+    }
+    refreshGroupStatus()
+  }
+
+  const refreshChannelStatus = () => {
+    void channelsQuery.refetch()
+  }
+
+  const handleStatusTabChange = (value: string) => {
+    const nextTab = value as ChannelStatusTab
+    setTab(nextTab)
+    if (nextTab === 'local') {
+      if (isChannelView) {
+        refreshChannelStatus()
+      } else {
+        refreshGroupStatus()
+      }
+    }
+  }
+
+  const handleLocalViewChange = (value: string) => {
+    if (value === 'channels' && isAdmin) {
+      setLocalView('channels')
+      setReorderMode(false)
+      refreshChannelStatus()
+      return
+    }
+    setLocalView('groups')
+    refreshGroupStatus()
   }
 
   const moveGroup = (groupName: string, direction: -1 | 1) => {
@@ -183,7 +288,10 @@ export function ChannelStatusPage() {
                 <button
                   key={option}
                   type='button'
-                  onClick={() => setHours(option)}
+                  onClick={() => {
+                    setHours(option)
+                    setChannelPage(1)
+                  }}
                   className={cn(
                     'h-7 rounded-md px-2.5 text-sm font-medium transition-colors',
                     hours === option
@@ -195,32 +303,34 @@ export function ChannelStatusPage() {
                 </button>
               ))}
             </div>
-            <div className='bg-muted inline-flex rounded-lg p-[3px]'>
-              {GROUP_SORT_OPTIONS.map((option) => (
-                <button
-                  key={option}
-                  type='button'
-                  disabled={reorderMode}
-                  onClick={() => {
-                    setSortMode(option)
-                    setReorderMode(false)
-                  }}
-                  className={cn(
-                    'h-7 rounded-md px-2.5 text-sm font-medium transition-colors',
-                    sortMode === option
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                    reorderMode && 'opacity-60'
-                  )}
-                >
-                  {option === 'custom'
-                    ? t('Custom order')
-                    : t('Sort by traffic')}
-                </button>
-              ))}
-            </div>
-            {renderAdminOrderActions()}
-            {isAdmin && sortMode === 'traffic' ? (
+            {!isChannelView ? (
+              <div className='bg-muted inline-flex rounded-lg p-[3px]'>
+                {GROUP_SORT_OPTIONS.map((option) => (
+                  <button
+                    key={option}
+                    type='button'
+                    disabled={reorderMode}
+                    onClick={() => {
+                      setSortMode(option)
+                      setReorderMode(false)
+                    }}
+                    className={cn(
+                      'h-7 rounded-md px-2.5 text-sm font-medium transition-colors',
+                      sortMode === option
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                      reorderMode && 'opacity-60'
+                    )}
+                  >
+                    {option === 'custom'
+                      ? t('Custom order')
+                      : t('Sort by traffic')}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {!isChannelView ? renderAdminOrderActions() : null}
+            {!isChannelView && isAdmin && sortMode === 'traffic' ? (
               <Button
                 type='button'
                 variant='outline'
@@ -238,10 +348,8 @@ export function ChannelStatusPage() {
           type='button'
           variant='outline'
           size='sm'
-          onClick={() => {
-            void activeQuery.refetch()
-          }}
-          disabled={isRefreshing || reorderMode}
+          onClick={refreshActiveStatus}
+          disabled={isRefreshing || (!isChannelView && reorderMode)}
         >
           <RefreshCw
             className={cn('size-3.5', isRefreshing && 'animate-spin')}
@@ -265,7 +373,7 @@ export function ChannelStatusPage() {
         <div className='flex w-full flex-col gap-4'>
           <Tabs
             value={tab}
-            onValueChange={(value) => setTab(value as ChannelStatusTab)}
+            onValueChange={handleStatusTabChange}
             className='gap-4'
           >
             <TabsList>
@@ -273,15 +381,65 @@ export function ChannelStatusPage() {
               <TabsTrigger value='openai'>{t('Official OpenAI')}</TabsTrigger>
             </TabsList>
             <TabsContent value='local'>
-              <LocalGroupsPanel
-                groups={displayGroups}
-                hours={hours}
-                isLoading={groupsQuery.isLoading}
-                isError={groupsQuery.isError}
-                isAdmin={isAdmin}
-                reorderMode={reorderMode}
-                onMoveGroup={moveGroup}
-              />
+              <Tabs
+                value={isChannelView ? 'channels' : 'groups'}
+                onValueChange={handleLocalViewChange}
+                className='gap-4'
+              >
+                <TabsList>
+                  <TabsTrigger value='groups'>{t('Groups')}</TabsTrigger>
+                  {isAdmin ? (
+                    <TabsTrigger value='channels'>{t('Channels')}</TabsTrigger>
+                  ) : null}
+                </TabsList>
+                <TabsContent value='groups'>
+                  <LocalGroupsPanel
+                    groups={displayGroups}
+                    hours={hours}
+                    isLoading={groupsQuery.isLoading}
+                    isError={groupsQuery.isError}
+                    isAdmin={isAdmin}
+                    reorderMode={reorderMode}
+                    onMoveGroup={moveGroup}
+                  />
+                </TabsContent>
+                {isAdmin ? (
+                  <TabsContent value='channels'>
+                    <LocalChannelsPanel
+                      data={channelsQuery.data}
+                      hours={hours}
+                      isLoading={channelsQuery.isLoading}
+                      isError={channelsQuery.isError}
+                      search={channelSearch}
+                      selectedHealth={channelHealth}
+                      configuredStatus={channelConfiguredStatus}
+                      sort={channelSort}
+                      order={channelOrder}
+                      onSearchChange={(value) => {
+                        setChannelSearch(value)
+                        setChannelPage(1)
+                      }}
+                      onHealthChange={(value) => {
+                        setChannelHealth(value)
+                        setChannelPage(1)
+                      }}
+                      onConfiguredStatusChange={(value) => {
+                        setChannelConfiguredStatus(value)
+                        setChannelPage(1)
+                      }}
+                      onSortChange={(value) => {
+                        setChannelSort(value)
+                        setChannelPage(1)
+                      }}
+                      onOrderChange={(value) => {
+                        setChannelOrder(value)
+                        setChannelPage(1)
+                      }}
+                      onPageChange={setChannelPage}
+                    />
+                  </TabsContent>
+                ) : null}
+              </Tabs>
             </TabsContent>
             <TabsContent value='openai'>
               <OpenAIStatusPanel

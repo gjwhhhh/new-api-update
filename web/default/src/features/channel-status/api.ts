@@ -19,6 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import type {
+  ChannelMetricsSort,
+  ChannelStatusData,
+  ChannelStatusDetailData,
   GroupHours,
   GroupsStatusData,
   GroupSortMode,
@@ -40,6 +43,79 @@ export async function getPerfMetricGroups(
   })
   if (!res.data.success || !res.data.data) {
     throw new Error(res.data.message || 'Failed to load group status')
+  }
+  return res.data.data
+}
+
+export async function getPerfMetricChannels(params: {
+  hours: GroupHours
+  page: number
+  pageSize: number
+  search: string
+  health: string
+  channelStatus: '' | 'enabled' | 'auto_disabled' | 'manually_disabled'
+  sort: ChannelMetricsSort
+  order: 'asc' | 'desc'
+}) {
+  const res = await api.get<{
+    success: boolean
+    data: ChannelStatusData
+    message?: string
+  }>('/api/channel/status-metrics', {
+    params: {
+      hours: params.hours,
+      p: params.page,
+      page_size: params.pageSize,
+      search: params.search || undefined,
+      health: params.health || undefined,
+      channel_status: params.channelStatus || undefined,
+      sort: params.sort,
+      order: params.order,
+    },
+    skipErrorHandler: true,
+    skipBusinessError: true,
+  })
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to load channel status')
+  }
+  return res.data.data
+}
+
+export async function getPerfMetricChannelDetail(
+  channelId: number,
+  hours: GroupHours
+) {
+  const res = await api.get<{
+    success: boolean
+    data: ChannelStatusDetailData
+    message?: string
+  }>(`/api/channel/${channelId}/status-metrics`, {
+    params: { hours },
+    skipErrorHandler: true,
+    skipBusinessError: true,
+  })
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to load channel status')
+  }
+  return res.data.data
+}
+
+export async function clearPerfMetricChannelSamples(
+  channelId: number,
+  hours: GroupHours
+) {
+  const res = await api.post<{
+    success: boolean
+    message?: string
+    data?: {
+      channel_id: number
+      hours: number
+      start_ts: number
+      end_ts: number
+    }
+  }>(`/api/channel/${channelId}/status-metrics/clear`, { hours })
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Failed to clear recent samples')
   }
   return res.data.data
 }

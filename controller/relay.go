@@ -212,6 +212,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		relayInfo.BeginChannelAttempt(time.Now())
 
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
@@ -223,6 +224,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
+		relayInfo.FinishChannelAttempt(time.Now())
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
@@ -231,6 +233,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		// Channel status measures each real upstream attempt. Keep the existing
+		// group metric until the request has a final outcome, otherwise retry
+		// failures would make user-facing group availability look worse than the
+		// request actually experienced.
+		perfmetrics.RecordChannelRelaySample(relayInfo, false, 0)
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan(), common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)), newAPIError)
 		retryableUpstreamStreamFailure := newAPIError.GetErrorCode() == types.ErrorCodeChannelUpstreamStreamTerminated && !types.IsSkipRetryError(newAPIError)
@@ -252,8 +259,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		logger.LogInfo(c, retryLogStr)
 	}
 	if newAPIError != nil {
+		endedAt := time.Now()
 		gopool.Go(func() {
-			perfmetrics.RecordRelaySample(relayInfo, false, 0)
+			perfmetrics.RecordGroupRelaySampleAt(relayInfo, false, 0, endedAt)
 		})
 	}
 }

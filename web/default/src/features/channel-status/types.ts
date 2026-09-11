@@ -126,3 +126,41 @@ export type ChannelHealth = 'running' | 'fluctuating' | 'abnormal' | 'no_data'
 export type ChannelStatusTab = 'local' | 'openai'
 export type GroupHours = 48 | 168
 export type GroupSortMode = 'custom' | 'traffic'
+
+export type ChannelConfiguredStatus = 1 | 2 | 3
+export type ChannelMetricsSort = 'id' | 'traffic' | 'success_rate'
+
+export type ChannelStatusItem = {
+  channel_id: number
+  channel_name: string
+  channel_type: number
+  channel_status: ChannelConfiguredStatus
+  groups: string[]
+  health: ChannelHealth
+  request_count: number
+  success_count: number
+  success_rate: number
+  avg_ttft_ms: number
+  avg_latency_ms: number
+  avg_tps: number
+  series: GroupBucketPoint[]
+}
+
+export type ChannelStatusData = {
+  items: ChannelStatusItem[]
+  total: number
+  page: number
+  page_size: number
+  health_counts: Record<ChannelHealth, number>
+  bucket_seconds: number
+  start_ts: number
+  end_ts: number
+}
+
+export type ChannelStatusDetailData = {
+  channel: ChannelStatusItem
+  models: GroupModelStat[]
+  bucket_seconds: number
+  start_ts: number
+  end_ts: number
+}

@@ -89,6 +89,43 @@ func TestRecordRelaySampleNilChannelMetaStillRecords(t *testing.T) {
 	assert.Equal(t, beforeOK+1, afterOK)
 }
 
+func TestRecordRelaySampleAlsoRecordsSelectedChannel(t *testing.T) {
+	prev := perf_metrics_setting.GetSetting()
+	t.Cleanup(func() {
+		perf_metrics_setting.RestoreSettingForTest(prev)
+	})
+	perf_metrics_setting.RestoreSettingForTest(perf_metrics_setting.PerfMetricsSetting{
+		Enabled:               true,
+		IncludeChannelTest:    true,
+		FlushInterval:         5,
+		BucketTime:            "hour",
+		HiddenGroups:          []string{},
+		GroupSampleGeneration: map[string]int64{},
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-channel-metric",
+		UsingGroup:      "default",
+		StartTime:       time.Now().Add(-time.Second),
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId: 920001,
+		},
+	}
+	beforeRequestCount, beforeSuccessCount := HotChannelCountersForTest(
+		info.ChannelId,
+		info.OriginModelName,
+	)
+
+	RecordRelaySample(info, true, 3)
+
+	afterRequestCount, afterSuccessCount := HotChannelCountersForTest(
+		info.ChannelId,
+		info.OriginModelName,
+	)
+	assert.Equal(t, beforeRequestCount+1, afterRequestCount)
+	assert.Equal(t, beforeSuccessCount+1, afterSuccessCount)
+}
+
 func TestStaleHotBucketGenerationIsIgnored(t *testing.T) {
 	prev := perf_metrics_setting.GetSetting()
 	t.Cleanup(func() {

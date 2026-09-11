@@ -16,6 +16,7 @@ import (
 )
 
 var hotBuckets sync.Map
+var channelHotBuckets sync.Map
 
 // seriesSchema is a stable client cache/schema marker. Do not change it when
 // hiding fields or making response-only privacy hardening changes.
@@ -26,10 +27,32 @@ func Init() {
 }
 
 func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
+	RecordRelaySampleAt(info, success, outputTokens, time.Now())
+}
+
+// RecordRelaySampleAt records a final request with an end time captured on the
+// request goroutine. Channel samples still use the completed upstream attempt
+// time when available, so background metric work cannot inflate its latency.
+func RecordRelaySampleAt(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) {
 	if info == nil {
 		return
 	}
-	RecordRelaySampleToGroups(info, []string{info.UsingGroup}, success, outputTokens)
+	RecordGroupRelaySampleAt(info, success, outputTokens, endedAt)
+	RecordChannelRelaySample(info, success, outputTokens)
+}
+
+// RecordGroupRelaySample retains the existing final-request group metric
+// semantics. It is separate so the relay retry loop can record each failed
+// channel attempt without inflating a user's group-level failure count.
+func RecordGroupRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
+	RecordGroupRelaySampleAt(info, success, outputTokens, time.Now())
+}
+
+func RecordGroupRelaySampleAt(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) {
+	if info == nil {
+		return
+	}
+	RecordRelaySampleToGroupsAt(info, []string{info.UsingGroup}, success, outputTokens, endedAt)
 }
 
 // RecordRelaySampleToGroups records the same relay timing sample once per model group.
@@ -55,16 +78,94 @@ func RecordRelaySampleToGroupsAt(info *relaycommon.RelayInfo, groups []string, s
 	}
 }
 
+// RecordChannelRelaySample records one sample for the channel selected by a
+// normal relay request. Group samples intentionally retain their existing
+// final-request semantics; channel-test callers use RecordChannelSampleAt so
+// their multi-group fan-out still produces exactly one channel sample.
+func RecordChannelRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
+	endedAt := time.Now()
+	if info != nil && !info.ChannelAttemptFinishedAt.IsZero() {
+		endedAt = info.ChannelAttemptFinishedAt
+	}
+	RecordChannelRelaySampleAt(info, success, outputTokens, endedAt)
+}
+
+// RecordChannelRelaySampleAt records one normal relay attempt using its own
+// timing fields. It must not reuse the overall request start when a fallback
+// channel was selected after an earlier failure.
+func RecordChannelRelaySampleAt(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) {
+	channelID := channelIDFromInfo(info)
+	if info == nil || channelID <= 0 {
+		return
+	}
+	if info.ChannelMeta != nil && info.ChannelOtherSettings.IsModelExcludedFromSampling(info.OriginModelName) {
+		return
+	}
+	sample := channelRelaySampleFromInfo(info, success, outputTokens, endedAt)
+	sample.ChannelID = channelID
+	RecordChannel(sample)
+}
+
+func RecordChannelSampleAt(info *relaycommon.RelayInfo, channelID int, success bool, outputTokens int64, endedAt time.Time) {
+	if info == nil || channelID <= 0 {
+		return
+	}
+	if info.ChannelMeta != nil && info.ChannelOtherSettings.IsModelExcludedFromSampling(info.OriginModelName) {
+		return
+	}
+	sample := relaySampleFromInfo(info, success, outputTokens, endedAt)
+	sample.ChannelID = channelID
+	RecordChannel(sample)
+}
+
+func channelIDFromInfo(info *relaycommon.RelayInfo) int {
+	if info == nil || info.ChannelMeta == nil {
+		return 0
+	}
+	return info.ChannelId
+}
+
 func relaySampleFromInfo(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) Sample {
-	hasTtft := info.IsStream && info.HasSendResponse()
+	return relaySampleFromTiming(info, success, outputTokens, endedAt, info.StartTime, info.FirstResponseTime)
+}
+
+func channelRelaySampleFromInfo(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) Sample {
+	if info.ChannelAttemptStartedAt.IsZero() {
+		return relaySampleFromInfo(info, success, outputTokens, endedAt)
+	}
+	return relaySampleFromTiming(
+		info,
+		success,
+		outputTokens,
+		endedAt,
+		info.ChannelAttemptStartedAt,
+		info.ChannelAttemptFirstResponseAt,
+	)
+}
+
+func relaySampleFromTiming(
+	info *relaycommon.RelayInfo,
+	success bool,
+	outputTokens int64,
+	endedAt time.Time,
+	startedAt time.Time,
+	firstResponseAt time.Time,
+) Sample {
+	if startedAt.IsZero() {
+		startedAt = endedAt
+	}
+	hasTtft := info.IsStream && firstResponseAt.After(startedAt)
 	ttftMs := int64(0)
 	if hasTtft {
-		ttftMs = info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
+		ttftMs = firstResponseAt.Sub(startedAt).Milliseconds()
 	}
-	latencyMs := endedAt.Sub(info.StartTime).Milliseconds()
+	latencyMs := endedAt.Sub(startedAt).Milliseconds()
+	if latencyMs < 0 {
+		latencyMs = 0
+	}
 	generationMs := latencyMs
 	if hasTtft {
-		generationMs = endedAt.Sub(info.FirstResponseTime).Milliseconds()
+		generationMs = endedAt.Sub(firstResponseAt).Milliseconds()
 	}
 	if generationMs <= 0 {
 		generationMs = latencyMs
@@ -101,8 +202,7 @@ func normalizeSampleGroups(groups []string) []string {
 }
 
 func Record(sample Sample) {
-	setting := perf_metrics_setting.GetSetting()
-	if !setting.Enabled || sample.Model == "" {
+	if !perf_metrics_setting.IsEnabled() || sample.Model == "" {
 		return
 	}
 	if sample.Group == "" {
@@ -131,6 +231,33 @@ func Record(sample Sample) {
 	recordRedis(key, sample)
 }
 
+// RecordChannel accumulates one channel-model time bucket. It deliberately
+// does not fan out by group, because a channel can belong to multiple groups.
+func RecordChannel(sample Sample) {
+	if !perf_metrics_setting.IsEnabled() || sample.ChannelID <= 0 || sample.Model == "" {
+		return
+	}
+	if sample.LatencyMs < 0 {
+		sample.LatencyMs = 0
+	}
+
+	key := channelBucketKey{
+		channelID: sample.ChannelID,
+		model:     sample.Model,
+		bucketTs:  bucketStart(time.Now().Unix()),
+	}
+	generation := perf_metrics_setting.GetChannelSampleGeneration(sample.ChannelID)
+	actual, loaded := channelHotBuckets.LoadOrStore(key, newAtomicBucket(generation))
+	bucket := actual.(*atomicBucket)
+	if loaded && bucket.sampleGeneration() < generation {
+		replacement := newAtomicBucket(generation)
+		replacement.add(sample)
+		channelHotBuckets.Store(key, replacement)
+		return
+	}
+	bucket.add(sample)
+}
+
 func isCurrentHotBucket(group string, bucket *atomicBucket) bool {
 	if bucket == nil {
 		return false
@@ -138,11 +265,25 @@ func isCurrentHotBucket(group string, bucket *atomicBucket) bool {
 	return bucket.sampleGeneration() >= perf_metrics_setting.GetGroupSampleGeneration(group)
 }
 
+func isCurrentHotChannelBucket(channelID int, bucket *atomicBucket) bool {
+	if bucket == nil {
+		return false
+	}
+	return bucket.sampleGeneration() >= perf_metrics_setting.GetChannelSampleGeneration(channelID)
+}
+
 func matchesAuthoritativeGeneration(group string, bucket *atomicBucket, generations map[string]int64) bool {
 	if bucket == nil {
 		return false
 	}
 	return bucket.sampleGeneration() == generations[group]
+}
+
+func matchesAuthoritativeChannelGeneration(channelID int, bucket *atomicBucket, generations map[int]int64) bool {
+	if bucket == nil {
+		return false
+	}
+	return bucket.sampleGeneration() == generations[channelID]
 }
 
 // HotCountersForTest returns in-memory hot-bucket counters for tests.
@@ -154,6 +295,26 @@ func HotCountersForTest(modelName, group string) (requestCount, successCount int
 		}
 		bucket := value.(*atomicBucket)
 		if !isCurrentHotBucket(k.group, bucket) {
+			return true
+		}
+		snap := bucket.snapshot()
+		requestCount += snap.requestCount
+		successCount += snap.successCount
+		return true
+	})
+	return requestCount, successCount
+}
+
+// HotChannelCountersForTest returns local channel counters for deterministic
+// sampling tests.
+func HotChannelCountersForTest(channelID int, modelName string) (requestCount, successCount int64) {
+	channelHotBuckets.Range(func(key, value any) bool {
+		k := key.(channelBucketKey)
+		if k.channelID != channelID || k.model != modelName {
+			return true
+		}
+		bucket := value.(*atomicBucket)
+		if !isCurrentHotChannelBucket(k.channelID, bucket) {
 			return true
 		}
 		snap := bucket.snapshot()

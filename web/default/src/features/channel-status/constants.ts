@@ -16,11 +16,32 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ChannelHealth, GroupHours, GroupSortMode } from './types'
+import type {
+  ChannelConfiguredStatus,
+  ChannelHealth,
+  ChannelMetricsSort,
+  GroupHours,
+  GroupSortMode,
+} from './types'
 
 export const GROUP_HOURS_OPTIONS: GroupHours[] = [48, 168]
 
 export const GROUP_SORT_OPTIONS: GroupSortMode[] = ['custom', 'traffic']
+
+export const CHANNEL_METRICS_SORT_OPTIONS: ChannelMetricsSort[] = [
+  'traffic',
+  'success_rate',
+  'id',
+]
+
+export const CHANNEL_CONFIGURED_STATUS_LABEL: Record<
+  ChannelConfiguredStatus,
+  string
+> = {
+  1: 'Enabled',
+  2: 'Manually disabled',
+  3: 'Auto disabled',
+}
 
 export const CHANNEL_HEALTH_FILTERS: ChannelHealth[] = [
   'running',
@@ -48,5 +69,17 @@ export const OPENAI_COMPONENT_STATUS_LABEL: Record<string, string> = {
 export const CHANNEL_STATUS_QUERY_KEYS = {
   groups: (hours: GroupHours, sort: GroupSortMode = 'custom') =>
     ['channel-status', 'groups', hours, sort] as const,
+  channels: (params: {
+    hours: GroupHours
+    page: number
+    pageSize: number
+    search: string
+    health: string
+    channelStatus: string
+    sort: ChannelMetricsSort
+    order: 'asc' | 'desc'
+  }) => ['channel-status', 'channels', params] as const,
+  channelDetail: (channelId: number, hours: GroupHours) =>
+    ['channel-status', 'channel-detail', channelId, hours] as const,
   openai: ['channel-status', 'openai'] as const,
 }

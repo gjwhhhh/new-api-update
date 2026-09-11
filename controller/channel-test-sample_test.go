@@ -93,6 +93,38 @@ func TestRecordChannelTestSampleFansOutToChannelGroups(t *testing.T) {
 	assert.Equal(t, beforeIgnoredReq, afterIgnoredReq)
 }
 
+func TestRecordChannelTestSampleRecordsOneChannelMetric(t *testing.T) {
+	prev := perf_metrics_setting.GetSetting()
+	t.Cleanup(func() {
+		perf_metrics_setting.RestoreSettingForTest(prev)
+	})
+	perf_metrics_setting.RestoreSettingForTest(perf_metrics_setting.PerfMetricsSetting{
+		Enabled:            true,
+		IncludeChannelTest: true,
+		FlushInterval:      5,
+		BucketTime:         "hour",
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test-channel-once",
+		StartTime:       time.Now().Add(-time.Second),
+	}
+	channel := &model.Channel{Id: 910001, Group: "vip,default,vip"}
+	beforeRequestCount, beforeSuccessCount := perfmetrics.HotChannelCountersForTest(
+		channel.Id,
+		info.OriginModelName,
+	)
+
+	recordChannelTestSampleSync(channel, info, true, 7)
+
+	afterRequestCount, afterSuccessCount := perfmetrics.HotChannelCountersForTest(
+		channel.Id,
+		info.OriginModelName,
+	)
+	assert.Equal(t, beforeRequestCount+1, afterRequestCount)
+	assert.Equal(t, beforeSuccessCount+1, afterSuccessCount)
+}
+
 func TestRecordChannelTestSampleEmptyChannelGroupsDefaults(t *testing.T) {
 	prev := perf_metrics_setting.GetSetting()
 	t.Cleanup(func() {
@@ -166,4 +198,7 @@ func recordChannelTestSampleSync(channel *model.Channel, info *relaycommon.Relay
 		}
 	}
 	perfmetrics.RecordRelaySampleToGroups(info, groups, success, outputTokens)
+	if channel != nil {
+		perfmetrics.RecordChannelSampleAt(info, channel.Id, success, outputTokens, time.Now())
+	}
 }

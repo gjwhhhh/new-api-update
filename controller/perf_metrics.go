@@ -19,8 +19,11 @@ import (
 )
 
 const (
-	perfGroupsSortCustom  = "custom"
-	perfGroupsSortTraffic = "traffic"
+	perfGroupsSortCustom          = "custom"
+	perfGroupsSortTraffic         = "traffic"
+	channelMetricsSortID          = "id"
+	channelMetricsSortTraffic     = "traffic"
+	channelMetricsSortSuccessRate = "success_rate"
 )
 
 func GetPerfMetricsSummary(c *gin.Context) {
@@ -134,6 +137,273 @@ func GetPerfMetricsGroups(c *gin.Context) {
 	})
 }
 
+type channelStatusMetricItem struct {
+	ChannelID     int                            `json:"channel_id"`
+	ChannelName   string                         `json:"channel_name"`
+	ChannelType   int                            `json:"channel_type"`
+	ChannelStatus int                            `json:"channel_status"`
+	Groups        []string                       `json:"groups"`
+	Health        string                         `json:"health"`
+	RequestCount  int64                          `json:"request_count"`
+	SuccessCount  int64                          `json:"success_count"`
+	SuccessRate   float64                        `json:"success_rate"`
+	AvgTtftMs     int64                          `json:"avg_ttft_ms"`
+	AvgLatencyMs  int64                          `json:"avg_latency_ms"`
+	AvgTps        float64                        `json:"avg_tps"`
+	Series        []perfmetrics.GroupBucketPoint `json:"series"`
+}
+
+func GetPerfMetricsChannels(c *gin.Context) {
+	hours, ok := getPerfMetricGroupHours(c)
+	if !ok {
+		return
+	}
+
+	search := strings.ToLower(strings.TrimSpace(c.Query("search")))
+	channelStatus := strings.ToLower(strings.TrimSpace(c.Query("channel_status")))
+	if !isValidChannelStatusFilter(channelStatus) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid channel_status",
+		})
+		return
+	}
+	var configuredStatus *int
+	switch channelStatus {
+	case "enabled":
+		value := common.ChannelStatusEnabled
+		configuredStatus = &value
+	case "auto_disabled":
+		value := common.ChannelStatusAutoDisabled
+		configuredStatus = &value
+	case "manually_disabled":
+		value := common.ChannelStatusManuallyDisabled
+		configuredStatus = &value
+	}
+
+	var channelType *int
+	if rawType := strings.TrimSpace(c.Query("type")); rawType != "" {
+		parsed, parseErr := strconv.Atoi(rawType)
+		if parseErr != nil || parsed < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "invalid type",
+			})
+			return
+		}
+		channelType = &parsed
+	}
+
+	healthFilter := strings.ToLower(strings.TrimSpace(c.Query("health")))
+	if !isValidChannelHealthFilter(healthFilter) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid health",
+		})
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	if pageInfo.PageSize < 1 {
+		pageInfo.PageSize = 24
+	}
+	sortBy := normalizeChannelMetricsSort(c.Query("sort"))
+	window, err := perfmetrics.GetChannelMetricWindow(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	page, err := model.GetChannelStatusMetricPage(model.ChannelStatusMetricPageParams{
+		StartTs:       window.StartTs,
+		EndTs:         window.EndTs,
+		Search:        search,
+		ChannelStatus: configuredStatus,
+		ChannelType:   channelType,
+		Health:        healthFilter,
+		Sort:          sortBy,
+		Desc:          !channelMetricsAscending(sortBy, c.Query("order")),
+		Offset:        pageInfo.GetStartIdx(),
+		Limit:         pageInfo.GetPageSize(),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	channelIDs := make([]int, 0, len(page.Items))
+	for _, item := range page.Items {
+		channelIDs = append(channelIDs, item.ChannelID)
+	}
+	metrics := perfmetrics.ChannelsQueryResult{
+		BucketSeconds: window.BucketSeconds,
+		StartTs:       window.StartTs,
+		EndTs:         window.EndTs,
+		Channels:      []perfmetrics.ChannelMetric{},
+	}
+	if len(channelIDs) > 0 {
+		metrics, err = perfmetrics.QueryChannelsInWindow(window, channelIDs)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	}
+	metricsByChannel := make(map[int]perfmetrics.ChannelMetric, len(metrics.Channels))
+	for _, metric := range metrics.Channels {
+		metricsByChannel[metric.ChannelID] = metric
+	}
+
+	healthCounts := map[string]int{
+		perfmetrics.ChannelHealthRunning:     0,
+		perfmetrics.ChannelHealthFluctuating: 0,
+		perfmetrics.ChannelHealthAbnormal:    0,
+		perfmetrics.ChannelHealthNoData:      0,
+	}
+	for health, count := range page.HealthCounts {
+		healthCounts[health] = int(count)
+	}
+	items := make([]channelStatusMetricItem, 0, len(page.Items))
+	for _, summary := range page.Items {
+		metric := metricsByChannel[summary.ChannelID]
+		health := perfmetrics.ChannelHealth(metric.RequestCount, metric.SuccessRate)
+		items = append(items, newChannelStatusMetricItem(&model.Channel{
+			Id:     summary.ChannelID,
+			Name:   summary.ChannelName,
+			Type:   summary.ChannelType,
+			Status: summary.ChannelStatus,
+			Group:  summary.ChannelGroup,
+		}, metric, health))
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"items":          items,
+		"total":          page.Total,
+		"page":           pageInfo.GetPage(),
+		"page_size":      pageInfo.GetPageSize(),
+		"health_counts":  healthCounts,
+		"bucket_seconds": metrics.BucketSeconds,
+		"start_ts":       metrics.StartTs,
+		"end_ts":         metrics.EndTs,
+	})
+}
+
+func GetPerfMetricsChannelDetail(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid channel id",
+		})
+		return
+	}
+	hours, ok := getPerfMetricGroupHours(c)
+	if !ok {
+		return
+	}
+	channel, err := model.GetChannelStatusByID(channelID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "channel not found",
+		})
+		return
+	}
+	metrics, err := perfmetrics.QueryChannels(hours, []int{channelID})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	metric := perfmetrics.ChannelMetric{ChannelID: channelID, Series: []perfmetrics.GroupBucketPoint{}, Models: []perfmetrics.GroupModelStat{}}
+	if len(metrics.Channels) > 0 {
+		metric = metrics.Channels[0]
+	}
+	health := perfmetrics.ChannelHealth(metric.RequestCount, metric.SuccessRate)
+	item := newChannelStatusMetricItem(channel, metric, health)
+	common.ApiSuccess(c, gin.H{
+		"channel":        item,
+		"models":         metric.Models,
+		"bucket_seconds": metrics.BucketSeconds,
+		"start_ts":       metrics.StartTs,
+		"end_ts":         metrics.EndTs,
+	})
+}
+
+func getPerfMetricGroupHours(c *gin.Context) (int, bool) {
+	hours := perfmetrics.GroupHours48
+	if rawHours, exists := c.GetQuery("hours"); exists {
+		parsed, err := strconv.Atoi(rawHours)
+		if err != nil || perfmetrics.ValidateGroupHours(parsed) != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": perfmetrics.ErrUnsupportedGroupHours.Error(),
+			})
+			return 0, false
+		}
+		hours = parsed
+	}
+	return hours, true
+}
+
+func isValidChannelStatusFilter(status string) bool {
+	return status == "" || status == "enabled" || status == "auto_disabled" || status == "manually_disabled"
+}
+
+func isValidChannelHealthFilter(health string) bool {
+	switch health {
+	case "", perfmetrics.ChannelHealthRunning, perfmetrics.ChannelHealthFluctuating, perfmetrics.ChannelHealthAbnormal, perfmetrics.ChannelHealthNoData:
+		return true
+	default:
+		return false
+	}
+}
+
+func newChannelStatusMetricItem(channel *model.Channel, metric perfmetrics.ChannelMetric, health string) channelStatusMetricItem {
+	return channelStatusMetricItem{
+		ChannelID:     channel.Id,
+		ChannelName:   channel.Name,
+		ChannelType:   channel.Type,
+		ChannelStatus: channel.Status,
+		Groups:        channel.GetGroups(),
+		Health:        health,
+		RequestCount:  metric.RequestCount,
+		SuccessCount:  metric.SuccessCount,
+		SuccessRate:   metric.SuccessRate,
+		AvgTtftMs:     metric.AvgTtftMs,
+		AvgLatencyMs:  metric.AvgLatencyMs,
+		AvgTps:        metric.AvgTps,
+		Series:        metric.Series,
+	}
+}
+
+func normalizeChannelMetricsSort(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case channelMetricsSortTraffic, channelMetricsSortSuccessRate:
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return channelMetricsSortID
+	}
+}
+
+func channelMetricsAscending(sortBy string, rawOrder string) bool {
+	ascending := sortBy == channelMetricsSortID
+	if strings.EqualFold(strings.TrimSpace(rawOrder), "asc") {
+		return true
+	} else if strings.EqualFold(strings.TrimSpace(rawOrder), "desc") {
+		return false
+	}
+	return ascending
+}
+
 func normalizePerfGroupsSort(raw string) string {
 	if strings.EqualFold(strings.TrimSpace(raw), perfGroupsSortTraffic) {
 		return perfGroupsSortTraffic
@@ -205,10 +475,17 @@ func ClearPerfMetricGroupSamples(c *gin.Context) {
 		})
 		return
 	}
+	if err := perfmetrics.ValidateGroupHours(req.Hours); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	result, err := perfmetrics.ClearGroupRecent(req.Group, req.Hours)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"message": err.Error(),
 		})
@@ -220,6 +497,55 @@ func ClearPerfMetricGroupSamples(c *gin.Context) {
 		"message": "ok",
 		"data":    result,
 	})
+}
+
+type clearPerfMetricChannelRequest struct {
+	Hours int `json:"hours"`
+}
+
+func ClearPerfMetricChannelSamples(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid channel id",
+		})
+		return
+	}
+
+	var req clearPerfMetricChannelRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if err := perfmetrics.ValidateGroupHours(req.Hours); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if _, err := model.GetChannelStatusByID(channelID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "channel not found",
+		})
+		return
+	}
+
+	result, err := perfmetrics.ClearChannelRecent(channelID, req.Hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	common.ApiSuccess(c, result)
 }
 
 type updatePerfMetricGroupVisibilityRequest struct {

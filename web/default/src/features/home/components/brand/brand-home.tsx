@@ -16,12 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { StarIcon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
 import { Footer } from '@/components/layout/components/footer'
 import { PublicLayout } from '@/components/layout/components/public-layout'
 import { Button } from '@/components/ui/button'
@@ -53,11 +52,7 @@ export function BrandHome(props: { isAuthenticated: boolean }) {
         headerProps={{
           className: 'brand-home-header',
           brandMark: (
-            <HugeiconsIcon
-              icon={StarIcon}
-              className='brand-name-mark'
-              aria-hidden='true'
-            />
+            <TokenflyBrandMark className='brand-name-mark' aria-hidden='true' />
           ),
         }}
       >

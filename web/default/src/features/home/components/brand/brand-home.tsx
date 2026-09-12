@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { StarIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -50,6 +52,13 @@ export function BrandHome(props: { isAuthenticated: boolean }) {
         showMainContainer={false}
         headerProps={{
           className: 'brand-home-header',
+          brandMark: (
+            <HugeiconsIcon
+              icon={StarIcon}
+              className='brand-name-mark'
+              aria-hidden='true'
+            />
+          ),
         }}
       >
         <HomeAnnouncementPopup />

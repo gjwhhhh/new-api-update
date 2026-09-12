@@ -16,12 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { StarIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
-import { ArrowDown, ArrowUpRight } from 'lucide-react'
+import { ArrowUpRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 
+import { GatewayShowcase } from './gateway-showcase'
 import { Reveal } from './reveal'
 
 /** Brand artwork is decorative; content and controls remain real, accessible HTML. */
@@ -34,27 +37,21 @@ export function SignalHero(props: {
 
   return (
     <section className='signal-hero' aria-labelledby='brand-title'>
-      <div className='signal-art' aria-hidden='true'>
-        <img
-          className='signal-art-image'
-          src='/brand/signal-ribbon-cascade-v2.jpg'
-          alt=''
-          width={1961}
-          height={802}
-          fetchPriority='high'
-          decoding='async'
-          draggable={false}
-        />
-      </div>
       <div className='brand-container signal-hero-layout'>
-        <Reveal className='signal-headline' delay={0.08}>
+        <Reveal className='signal-rating' delay={0.08}>
+          <span aria-hidden='true'>
+            <HugeiconsIcon icon={StarIcon} />
+          </span>
+          <p>{t('One gateway. An open model ecosystem.')}</p>
+        </Reveal>
+        <Reveal className='signal-headline' delay={0.16}>
           <h1 id='brand-title'>
             {t('Connect models.')}
             <br />
-            {t('Bring ideas to life.')}
+            <span>{t('Bring ideas to life.')}</span>
           </h1>
         </Reveal>
-        <Reveal className='signal-hero-aside' delay={0.16}>
+        <Reveal className='signal-hero-aside' delay={0.24}>
           <p>
             {t(
               'One API for your AI applications. Connect models, manage keys, and keep usage in view.'
@@ -65,7 +62,7 @@ export function SignalHero(props: {
               {props.isAuthenticated
                 ? t('Go to Dashboard')
                 : t('Start building')}
-              <ArrowUpRight aria-hidden='true' />
+              <ArrowUpRight data-icon='inline-end' aria-hidden='true' />
             </Button>
             {props.showPricing && (
               <Link className='brand-text-link' to='/pricing'>
@@ -75,10 +72,9 @@ export function SignalHero(props: {
             )}
           </div>
         </Reveal>
-        <a href='#ecosystem' className='brand-text-link signal-explore'>
-          {t('Explore below')}
-          <ArrowDown size={18} aria-hidden='true' />
-        </a>
+        <Reveal className='signal-showcase-reveal' delay={0.32}>
+          <GatewayShowcase />
+        </Reveal>
       </div>
     </section>
   )

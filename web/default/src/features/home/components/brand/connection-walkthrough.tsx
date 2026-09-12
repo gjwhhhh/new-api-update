@@ -85,6 +85,8 @@ export function ConnectionWalkthrough() {
                 active === index && 'is-active'
               )}
               aria-pressed={active === index}
+              onMouseEnter={() => setActive(index)}
+              onFocus={() => setActive(index)}
               onClick={() => setActive(index)}
             >
               <span className='brand-step-topline'>

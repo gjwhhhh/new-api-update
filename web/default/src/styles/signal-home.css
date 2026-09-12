@@ -559,30 +559,168 @@ For commercial licensing, please contact support@quantumnous.com
   border-radius: 2rem;
   background: var(--muted);
 }
+.signal-home .brand-setup-band .brand-section {
+  width: 100%;
+  padding: 5rem clamp(2rem, 5vw, 4.5rem);
+}
 .signal-home .brand-walkthrough {
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 3rem;
+}
+.signal-home .brand-walkthrough-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 .signal-home .brand-walkthrough-steps li {
-  min-height: 17rem;
+  min-height: 0;
+  padding: 0;
+  border: 0;
 }
-.signal-home .brand-walkthrough-steps li.is-active {
-  border-left-color: var(--foreground);
+.signal-home .brand-step-select {
+  display: flex;
+  width: 100%;
+  min-height: 11rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--card) 72%, transparent);
+  text-align: left;
+  transition:
+    transform 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
 }
-.signal-home .brand-walkthrough-steps li.is-active .brand-step-index,
-.signal-home .brand-walkthrough-steps li.is-active svg {
+.signal-home .brand-step-select:hover {
   color: var(--foreground);
+  border-color: color-mix(in srgb, var(--foreground) 24%, var(--border));
+  transform: translateY(-2px);
+}
+.signal-home .brand-step-select.is-active {
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--foreground) 34%, var(--border));
+  background: var(--card);
+  box-shadow: 0 18px 34px -30px rgb(0 0 0 / 0.55);
+}
+.signal-home .brand-step-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.4rem;
+}
+.signal-home .brand-step-index {
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+}
+.signal-home .brand-step-icon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--foreground);
+  background: var(--muted);
+}
+.signal-home .brand-step-icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+.signal-home .brand-step-select strong {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.signal-home .brand-step-description {
+  margin-top: 0.65rem;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  line-height: 1.65;
 }
 .signal-home .brand-walkthrough-preview {
-  top: 6.5rem;
-  border-radius: 1rem;
-  box-shadow: 0 28px 70px -50px rgb(0 0 0 / 0.6);
+  position: static;
+  width: 100%;
+  border-color: #29292d;
+  border-radius: 1.25rem;
+  color: #f4f4f5;
+  background: #0d0d0f;
+  box-shadow: 0 30px 70px -48px rgb(0 0 0 / 0.82);
+}
+.signal-home .brand-walkthrough-toolbar {
+  padding: 0.8rem 0.9rem 0.8rem 1.15rem;
+  border-color: #29292d;
+  color: #a1a1aa;
+}
+.signal-home .brand-walkthrough-toolbar > span {
+  gap: 0.75rem;
+}
+.signal-home .brand-walkthrough-toolbar [data-slot='button'] {
+  color: #d4d4d8;
+}
+.signal-home .brand-walkthrough-toolbar [data-slot='button']:hover {
+  color: #ffffff;
+  background: #27272a;
+}
+.signal-home .brand-terminal-dots {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+.signal-home .brand-terminal-dots i {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: #52525b;
 }
 .signal-home .brand-walkthrough-stage {
-  background: var(--accent);
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid #29292d;
+  background: #151518;
+}
+.signal-home .brand-walkthrough-stage span {
+  color: #a1a1aa;
+}
+.signal-home .brand-walkthrough-stage strong {
+  color: #fafafa;
+}
+.signal-home .brand-walkthrough-code {
+  min-height: 18rem;
+  padding: 1rem;
+  color: #d4d4d8;
+  font-size: 0.76rem;
+  line-height: 1.72;
+}
+.signal-home .brand-code-block {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-radius: 0.65rem;
+  color: #71717a;
+  opacity: 0.7;
+}
+.signal-home .brand-code-index {
+  color: #52525b;
+  user-select: none;
 }
 .signal-home .brand-code-block.is-active {
-  border-color: var(--foreground);
+  color: #fafafa;
+  background: #1b1b1f;
+  box-shadow: inset 2px 0 #f4f4f5;
+  opacity: 1;
+}
+.signal-home .brand-walkthrough-note {
+  padding: 0.9rem 1.25rem 1.05rem;
+  border-color: #29292d;
+  color: #71717a;
 }
 .signal-playground-disclosure {
   margin-top: 2.5rem;
@@ -667,14 +805,13 @@ For commercial licensing, please contact support@quantumnous.com
     padding-block: 4.5rem;
   }
   .signal-home .brand-walkthrough {
-    display: block;
+    display: flex;
   }
-  .signal-home .brand-walkthrough-steps li {
-    min-height: 0;
+  .signal-home .brand-walkthrough-steps {
+    gap: 0.65rem;
   }
-  .signal-home .brand-mobile-copy {
-    display: inline-flex;
-    margin-top: 1.5rem;
+  .signal-home .brand-step-select {
+    min-height: 10.5rem;
   }
   .signal-home .brand-faq {
     grid-template-columns: 1fr;
@@ -758,6 +895,27 @@ For commercial licensing, please contact support@quantumnous.com
   .signal-home .brand-setup-band {
     width: calc(100% - 1rem);
     border-radius: 1.5rem;
+  }
+  .signal-home .brand-setup-band .brand-section {
+    padding: 3.5rem 1.25rem;
+  }
+  .signal-home .brand-walkthrough-steps {
+    grid-template-columns: 1fr;
+  }
+  .signal-home .brand-step-select {
+    min-height: 0;
+  }
+  .signal-home .brand-step-topline {
+    margin-bottom: 1rem;
+  }
+  .signal-home .brand-walkthrough-code {
+    min-height: 0;
+    padding: 0.75rem;
+    font-size: 0.68rem;
+  }
+  .signal-home .brand-code-block {
+    grid-template-columns: 1.6rem minmax(0, 1fr);
+    padding-inline: 0.65rem;
   }
   .signal-home .brand-closing {
     align-items: flex-start;

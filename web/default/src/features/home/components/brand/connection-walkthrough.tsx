@@ -17,14 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  Check,
-  Copy,
-  KeyRound,
-  SlidersHorizontal,
-  Terminal,
-} from 'lucide-react'
-import { useReducedMotion } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
+  CommandLineIcon,
+  Copy01Icon,
+  Key01Icon,
+  Settings02Icon,
+  Tick02Icon,
+} from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -34,125 +34,80 @@ import { cn } from '@/lib/utils'
 const SETUP_CODE = [
   'export NEW_API_KEY="YOUR_API_KEY"',
   'export NEW_API_BASE_URL="https://api.example.com/v1"',
-  `curl "$NEW_API_BASE_URL/chat/completions" \\\n  -H "Authorization: Bearer $NEW_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "model": "YOUR_MODEL_ID",\n    "messages": [\n      {"role": "user", "content": "Hello!"}\n    ]\n  }'`,
+  `curl "$NEW_API_BASE_URL/chat/completions" \\
+  -H "Authorization: Bearer $NEW_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "YOUR_MODEL_ID",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'`,
 ]
+
+const stepIcons = [Key01Icon, Settings02Icon, CommandLineIcon]
 
 export function ConnectionWalkthrough() {
   const { t } = useTranslation()
   const [active, setActive] = useState(0)
-  const stepsRef = useRef<HTMLOListElement>(null)
-  const reduceMotion = useReducedMotion()
   const { copiedText, copyToClipboard } = useCopyToClipboard()
+  const fullCode = SETUP_CODE.join('\n\n')
   const steps = [
     {
-      icon: KeyRound,
       title: t('Create an API key'),
       description: t(
         'Sign in to your console and create a key for your application.'
       ),
     },
     {
-      icon: SlidersHorizontal,
       title: t('Configure your client'),
       description: t(
         'Set your API key and base URL in an OpenAI-compatible SDK or application.'
       ),
     },
     {
-      icon: Terminal,
       title: t('Send your first request'),
       description: t(
         'Choose an available model, send a request, and inspect usage in your console.'
       ),
     },
   ]
-  const fullCode = SETUP_CODE.join('\n\n')
-
-  useEffect(() => {
-    const desktop = window.matchMedia('(min-width: 901px)')
-    let observer: IntersectionObserver | undefined
-    const observeSteps = () => {
-      observer?.disconnect()
-      if (!desktop.matches || !stepsRef.current) return
-      observer = new IntersectionObserver(
-        (entries) => {
-          for (const entry of entries) {
-            if (entry.isIntersecting) {
-              setActive(Number((entry.target as HTMLElement).dataset.step))
-            }
-          }
-        },
-        {
-          // IntersectionObserver percentage margins use width, even vertically.
-          // Pixel margins keep the reading band valid on wide desktop screens.
-          rootMargin: `-${Math.round(window.innerHeight * 0.25)}px 0px -${Math.round(window.innerHeight * 0.45)}px 0px`,
-          threshold: 0,
-        }
-      )
-      for (const step of stepsRef.current.children) observer.observe(step)
-    }
-    observeSteps()
-    desktop.addEventListener('change', observeSteps)
-    window.addEventListener('resize', observeSteps, { passive: true })
-    return () => {
-      observer?.disconnect()
-      desktop.removeEventListener('change', observeSteps)
-      window.removeEventListener('resize', observeSteps)
-    }
-  }, [])
 
   return (
     <div className='brand-walkthrough'>
-      <ol className='brand-walkthrough-steps' ref={stepsRef}>
+      <ol className='brand-walkthrough-steps'>
         {steps.map((step, index) => (
-          <li
-            key={SETUP_CODE[index]}
-            data-step={index}
-            className={cn(active === index && 'is-active')}
-          >
+          <li key={SETUP_CODE[index]}>
             <button
               type='button'
-              className='brand-step-select'
-              aria-current={active === index ? 'step' : undefined}
-              onClick={() => {
-                setActive(index)
-                if (window.matchMedia('(min-width: 901px)').matches) {
-                  stepsRef.current?.children[index].scrollIntoView({
-                    behavior: reduceMotion ? 'instant' : 'smooth',
-                    block: 'center',
-                  })
-                }
-              }}
+              className={cn(
+                'brand-step-select',
+                active === index && 'is-active'
+              )}
+              aria-pressed={active === index}
+              onClick={() => setActive(index)}
             >
-              <span className='brand-step-index'>0{index + 1}</span>
-              <span>
-                <step.icon size={20} aria-hidden='true' />
-                <strong>{step.title}</strong>
+              <span className='brand-step-topline'>
+                <span className='brand-step-index'>0{index + 1}</span>
+                <span className='brand-step-icon' aria-hidden='true'>
+                  <HugeiconsIcon icon={stepIcons[index]} />
+                </span>
               </span>
+              <strong>{step.title}</strong>
+              <span className='brand-step-description'>{step.description}</span>
             </button>
-            <p>{step.description}</p>
-            <pre className='brand-mobile-snippet' tabIndex={0}>
-              <code>{SETUP_CODE[index]}</code>
-            </pre>
           </li>
         ))}
       </ol>
-      <Button
-        className='brand-mobile-copy'
-        variant='outline'
-        onClick={() => void copyToClipboard(fullCode)}
-      >
-        {copiedText === fullCode ? (
-          <Check aria-hidden='true' />
-        ) : (
-          <Copy aria-hidden='true' />
-        )}
-        {copiedText === fullCode ? t('Copied') : t('Copy')}
-      </Button>
+
       <div className='brand-walkthrough-preview'>
         <div className='brand-walkthrough-toolbar'>
           <span>
-            <Terminal size={17} aria-hidden='true' />
+            <span className='brand-terminal-dots' aria-hidden='true'>
+              <i />
+              <i />
+              <i />
+            </span>
             {t('API request example')}
           </span>
           <Button
@@ -160,11 +115,11 @@ export function ConnectionWalkthrough() {
             variant='ghost'
             onClick={() => void copyToClipboard(fullCode)}
           >
-            {copiedText === fullCode ? (
-              <Check aria-hidden='true' />
-            ) : (
-              <Copy aria-hidden='true' />
-            )}
+            <HugeiconsIcon
+              icon={copiedText === fullCode ? Tick02Icon : Copy01Icon}
+              data-icon='inline-start'
+              aria-hidden='true'
+            />
             {copiedText === fullCode ? t('Copied') : t('Copy')}
           </Button>
         </div>
@@ -186,8 +141,8 @@ export function ConnectionWalkthrough() {
                   active === index && 'is-active'
                 )}
               >
-                {code}
-                {'\n\n'}
+                <span className='brand-code-index'>0{index + 1}</span>
+                <span>{code}</span>
               </span>
             ))}
           </code>

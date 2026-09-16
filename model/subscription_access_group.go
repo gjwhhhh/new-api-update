@@ -222,11 +222,15 @@ func ReplaceSubscriptionPlanAccessGroupsTx(tx *gorm.DB, planId int, ids []int) e
 }
 
 func CanUserAccessSubscriptionPlan(userId int, planId int) (bool, error) {
+	return canUserAccessSubscriptionPlan(DB, userId, planId)
+}
+
+func canUserAccessSubscriptionPlan(db *gorm.DB, userId int, planId int) (bool, error) {
 	if userId <= 0 || planId <= 0 {
 		return false, errors.New("invalid subscription plan access arguments")
 	}
 	var bindings []SubscriptionPlanAccessGroup
-	if err := DB.Where("plan_id = ?", planId).Find(&bindings).Error; err != nil {
+	if err := db.Where("plan_id = ?", planId).Find(&bindings).Error; err != nil {
 		return false, err
 	}
 	if len(bindings) == 0 {
@@ -237,7 +241,7 @@ func CanUserAccessSubscriptionPlan(userId int, planId int) (bool, error) {
 		groupIds = append(groupIds, binding.SubscriptionAccessGroupId)
 	}
 	var count int64
-	if err := DB.Model(&SubscriptionAccessGroupUser{}).
+	if err := db.Model(&SubscriptionAccessGroupUser{}).
 		Joins("JOIN subscription_access_groups ON subscription_access_groups.id = subscription_access_group_users.subscription_access_group_id").
 		Where("subscription_access_group_users.user_id = ? AND subscription_access_group_users.subscription_access_group_id IN ? AND subscription_access_groups.enabled = ?", userId, groupIds, true).
 		Count(&count).Error; err != nil {

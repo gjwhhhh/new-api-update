@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from '@tanstack/react-router'
 import {
   Plus,
   MoreHorizontal,
@@ -29,6 +30,7 @@ import {
   SortAsc,
   RefreshCw,
   ArrowUpFromLine,
+  History,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -80,6 +82,7 @@ export function ChannelsPrimaryButtons() {
     upstream,
   } = useChannels()
   const queryClient = useQueryClient()
+  const navigate = useNavigate({ from: '/channels/' })
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showConsistencyDialog, setShowConsistencyDialog] = useState(false)
   const [isRepairingConsistency, setIsRepairingConsistency] = useState(false)
@@ -171,6 +174,16 @@ export function ChannelsPrimaryButtons() {
           )}
         </Tooltip>
 
+        <Button
+          variant='outline'
+          size='sm'
+          className='max-sm:hidden'
+          render={<Link to='/channels/test-history' />}
+        >
+          <History className='h-4 w-4' />
+          {t('Test history')}
+        </Button>
+
         {/* More Actions */}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant='outline' size='sm' />}>
@@ -209,12 +222,28 @@ export function ChannelsPrimaryButtons() {
 
             <DropdownMenuItem
               onClick={() => {
-                handleTestAllChannels(queryClient)
+                void handleTestAllChannels(queryClient, {
+                  onViewRun: (taskId) =>
+                    void navigate({
+                      to: '/channels/test-history',
+                      search: { task_id: taskId, time_range: 'all' },
+                    }),
+                })
               }}
             >
               {t('Test All Channels')}
               <DropdownMenuShortcut>
                 <TestTube className='h-4 w-4' />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+
+            <DropdownMenuItem
+              className='sm:hidden'
+              render={<Link to='/channels/test-history' />}
+            >
+              {t('Test history')}
+              <DropdownMenuShortcut>
+                <History className='h-4 w-4' />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
 

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from '@tanstack/react-router'
 import type {
   ColumnDef,
   RowSelectionState,
@@ -121,6 +122,7 @@ type TestResult = {
   completedAt?: number
   error?: string
   errorCode?: string
+  testResultId?: number
 }
 
 type BatchProgress = {
@@ -327,6 +329,7 @@ function ChannelTestDialogContent({
 }: ChannelTestDialogContentProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const navigate = useNavigate({ from: '/channels/' })
   const currentChannelId = currentRow.id
   const batchStopRequestedRef = useRef(false)
   const batchProgressToastIdRef = useRef<ReturnType<
@@ -564,17 +567,27 @@ function ChannelTestDialogContent({
             stream: effectiveStreamTest || undefined,
             silent,
           },
-          (success, responseTime, error, errorCode) => {
+          (completion) => {
             const completedAt = Date.now()
             finalResult = {
-              status: success ? 'success' : 'error',
-              responseTime,
+              status: completion.success ? 'success' : 'error',
+              responseTime: completion.responseTime,
               completedAt,
-              error,
-              errorCode,
+              error: completion.error,
+              errorCode: completion.errorCode,
+              testResultId: completion.testResultId,
             }
             updateTestResult(model, finalResult)
-          }
+          },
+          (resultId) =>
+            void navigate({
+              to: '/channels/test-history',
+              search: {
+                channel_id: currentRow.id,
+                result_id: resultId,
+                time_range: '7d',
+              },
+            })
         )
       } catch (error: unknown) {
         finalResult = {
@@ -601,6 +614,7 @@ function ChannelTestDialogContent({
       endpointType,
       effectiveStreamTest,
       markModelTesting,
+      navigate,
       refreshChannelLists,
       t,
       updateTestResult,
@@ -908,6 +922,7 @@ function ChannelTestDialogContent({
             <TestResultCell
               result={result}
               model={model}
+              channelId={currentChannelId}
               onOpenDetails={setFailureDetails}
             />
           )
@@ -949,6 +964,7 @@ function ChannelTestDialogContent({
       },
     ],
     [
+      currentChannelId,
       defaultTestModel,
       isBatchTesting,
       t,
@@ -1218,10 +1234,12 @@ function TestStatusCell({ result }: { result?: TestResult }) {
 function TestResultCell({
   result,
   model,
+  channelId,
   onOpenDetails,
 }: {
   result?: TestResult
   model: string
+  channelId: number
   onOpenDetails: (details: FailureDetailsState) => void
 }) {
   const { t } = useTranslation()
@@ -1240,12 +1258,33 @@ function TestResultCell({
   }
 
   if (result.status === 'success') {
-    return typeof result.responseTime === 'number' ? (
-      <span className='text-muted-foreground text-sm'>
-        {formatResponseTime(result.responseTime, t)}
-      </span>
-    ) : (
-      <span className='text-muted-foreground text-sm'>-</span>
+    return (
+      <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+        <span className='text-muted-foreground text-sm'>
+          {typeof result.responseTime === 'number'
+            ? formatResponseTime(result.responseTime, t)
+            : '-'}
+        </span>
+        {result.testResultId && (
+          <Button
+            variant='link'
+            size='sm'
+            className='h-auto px-0 text-xs'
+            render={
+              <Link
+                to='/channels/test-history'
+                search={{
+                  channel_id: channelId,
+                  result_id: result.testResultId,
+                  time_range: '7d',
+                }}
+              />
+            }
+          >
+            {t('View test record')}
+          </Button>
+        )}
+      </div>
     )
   }
 
@@ -1253,6 +1292,7 @@ function TestResultCell({
     <FailureResultContent
       result={result}
       model={model}
+      channelId={channelId}
       onOpenDetails={onOpenDetails}
     />
   )
@@ -1261,10 +1301,12 @@ function TestResultCell({
 function FailureResultContent({
   result,
   model,
+  channelId,
   onOpenDetails,
 }: {
   result: TestResult
   model: string
+  channelId: number
   onOpenDetails: (details: FailureDetailsState) => void
 }) {
   const { t } = useTranslation()
@@ -1286,6 +1328,25 @@ function FailureResultContent({
         {summary}
       </p>
       <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
+        {result.testResultId && (
+          <Button
+            variant='link'
+            size='sm'
+            className='h-7 w-fit px-0 text-xs'
+            render={
+              <Link
+                to='/channels/test-history'
+                search={{
+                  channel_id: channelId,
+                  result_id: result.testResultId,
+                  time_range: '7d',
+                }}
+              />
+            }
+          >
+            {t('View test record')}
+          </Button>
+        )}
         {isModelPriceError && (
           <Button
             variant='outline'

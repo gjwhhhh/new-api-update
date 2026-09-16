@@ -20,9 +20,44 @@ import (
 // service.StartSystemTaskRunner.
 func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
+	service.RegisterSystemTaskHandler(channelTestHistoryCleanupHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+}
+
+type channelTestHistoryCleanupHandler struct{}
+
+func (channelTestHistoryCleanupHandler) Type() string {
+	return model.SystemTaskTypeChannelTestHistoryCleanup
+}
+
+func (channelTestHistoryCleanupHandler) Enabled() bool { return true }
+
+func (channelTestHistoryCleanupHandler) Interval() time.Duration { return 24 * time.Hour }
+
+func (channelTestHistoryCleanupHandler) NewPayload() any { return nil }
+
+func (channelTestHistoryCleanupHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	const batchSize = 500
+	setting := operation_setting.GetChannelTestHistorySetting()
+	cutoff := common.GetTimestamp() - int64(setting.RetentionDays*24*60*60)
+	deleted := int64(0)
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		count, err := model.DeleteChannelTestResultsBefore(cutoff, batchSize)
+		if err != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+			return
+		}
+		deleted += count
+		if count < batchSize {
+			break
+		}
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, map[string]int64{"deleted_count": deleted}, nil)
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and
@@ -77,7 +112,7 @@ func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runne
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return
 	}
-	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, task.TaskID, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return

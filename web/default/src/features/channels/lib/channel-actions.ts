@@ -110,6 +110,19 @@ function getChannelTestLabel(options?: {
   return i18next.t('Channel')
 }
 
+type ChannelTestCompletion = {
+  success: boolean
+  responseTime?: number
+  error?: string
+  errorCode?: string
+  testResultId?: number
+}
+
+type TestAllChannelsOptions = {
+  onSuccess?: () => void
+  onViewRun?: (taskId: string) => void
+}
+
 // ============================================================================
 // Single Channel Actions
 // ============================================================================
@@ -277,13 +290,9 @@ export async function handleTestChannel(
     stream?: boolean
     silent?: boolean
   },
-  onTestComplete?: (
-    success: boolean,
-    responseTime?: number,
-    error?: string,
-    errorCode?: string
-  ) => void
-): Promise<void> {
+  onTestComplete?: (completion: ChannelTestCompletion) => void,
+  onViewRecord?: (resultId: number) => void
+): Promise<ChannelTestResponse | undefined> {
   const payload =
     options && (options.testModel || options.endpointType || options.stream)
       ? {
@@ -300,20 +309,31 @@ export async function handleTestChannel(
     const responseTime = getChannelTestResponseTime(response)
     const duration = formatChannelTestDuration(responseTime)
     const target = getChannelTestLabel(options)
+    const resultId = response.test_result_id
+    const recordAction =
+      resultId && onViewRecord
+        ? {
+            label: i18next.t('View test record'),
+            onClick: () => onViewRecord(resultId),
+          }
+        : undefined
     if (response.success) {
       if (!options?.silent) {
         toast.success(
           i18next.t('{{target}} test succeeded', { target }),
-          duration
-            ? {
-                description: i18next.t('Response time: {{duration}}', {
-                  duration,
-                }),
-              }
-            : undefined
+          {
+            ...(duration
+              ? {
+                  description: i18next.t('Response time: {{duration}}', {
+                    duration,
+                  }),
+                }
+              : {}),
+            ...(recordAction ? { action: recordAction } : {}),
+          }
         )
       }
-      onTestComplete?.(true, responseTime)
+      onTestComplete?.({ success: true, responseTime, testResultId: resultId })
     } else {
       const errorMsg = response.message || i18next.t(ERROR_MESSAGES.TEST_FAILED)
       if (!options?.silent) {
@@ -321,10 +341,19 @@ export async function handleTestChannel(
           description: response.error_code
             ? `${errorMsg} (${response.error_code})`
             : errorMsg,
+          ...(recordAction ? { action: recordAction } : {}),
         })
       }
-      onTestComplete?.(false, responseTime, errorMsg, response.error_code)
+      onTestComplete?.({
+        success: false,
+        responseTime,
+        error: errorMsg,
+        errorCode: response.error_code,
+        testResultId: resultId,
+      })
     }
+
+    return response
   } catch (_error: unknown) {
     const err = _error as { response?: { data?: { message?: string } } }
     const errorMsg =
@@ -335,7 +364,7 @@ export async function handleTestChannel(
         description: errorMsg,
       })
     }
-    onTestComplete?.(false, undefined, errorMsg)
+    onTestComplete?.({ success: false, error: errorMsg })
   }
 }
 
@@ -664,18 +693,25 @@ export async function handleFixAbilities(
  */
 export async function handleTestAllChannels(
   queryClient?: QueryClient,
-  onSuccess?: () => void
+  options?: TestAllChannelsOptions
 ): Promise<void> {
   try {
     const response = await testAllChannels()
     if (response.success) {
+      const taskId = response.data?.task_id
       toast.success(
-        i18next.t(
-          'Testing all enabled channels started. Please refresh to see results.'
-        )
+        i18next.t('Testing all enabled channels started. Please refresh to see results.'),
+        taskId && options?.onViewRun
+          ? {
+              action: {
+                label: i18next.t('View test run'),
+                onClick: () => options.onViewRun?.(taskId),
+              },
+            }
+          : undefined
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
-      onSuccess?.()
+      options?.onSuccess?.()
     } else {
       toast.error(
         response.message || i18next.t('Failed to start testing all channels')

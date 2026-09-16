@@ -44,6 +44,8 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/ops", permission: authz.ChannelRead, handler: controller.GetChannelOps},
 	{method: http.MethodGet, path: "/status-metrics", permission: authz.ChannelRead, handler: controller.GetPerfMetricsChannels},
 	{method: http.MethodGet, path: "/:id/status-metrics", permission: authz.ChannelRead, handler: controller.GetPerfMetricsChannelDetail},
+	{method: http.MethodGet, path: "/test-history", permission: authz.ChannelRead, handler: controller.ListChannelTestHistory},
+	{method: http.MethodGet, path: "/test-history/:id", permission: authz.ChannelRead, handler: controller.GetChannelTestHistory},
 	{method: http.MethodPost, path: "/:id/status-metrics/clear", permission: authz.ChannelOperate, handler: controller.ClearPerfMetricChannelSamples},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodGet, path: "/test", permission: authz.ChannelOperate, handler: controller.TestAllChannels},

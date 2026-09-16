@@ -57,6 +57,10 @@ const OPERATIONS_SECTIONS = [
             settings['perf_metrics_setting.bucket_time'] ?? 'hour',
           'perf_metrics_setting.retention_days':
             settings['perf_metrics_setting.retention_days'] ?? 0,
+          'channel_test_history_setting.enabled':
+            settings['channel_test_history_setting.enabled'] ?? false,
+          'channel_test_history_setting.retention_days':
+            settings['channel_test_history_setting.retention_days'] ?? 7,
         }}
       />
     ),

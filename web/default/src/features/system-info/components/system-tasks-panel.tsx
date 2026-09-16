@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { ListChecks, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -84,6 +85,7 @@ const TYPE_LABEL: Record<string, string> = {
   model_update: 'Batch upstream model update',
   midjourney_poll: 'Drawing task polling',
   async_task_poll: 'Async task polling',
+  channel_test_history_cleanup: 'Channel test history cleanup',
 }
 
 const TYPE_DISPLAY_ID: Record<string, string> = {
@@ -193,7 +195,23 @@ function SystemTasksTable(props: SystemTasksTableProps) {
                   className='text-destructive max-w-[220px] truncate py-3 pr-4 align-middle text-xs'
                   title={task.error || undefined}
                 >
-                  {task.error || '-'}
+                  {task.type === 'channel_test' ? (
+                    <Button
+                      variant='link'
+                      size='sm'
+                      className='h-auto p-0'
+                      render={
+                        <Link
+                          to='/channels/test-history'
+                          search={{ task_id: task.task_id, time_range: 'all' }}
+                        />
+                      }
+                    >
+                      {t('View test run')}
+                    </Button>
+                  ) : (
+                    task.error || '-'
+                  )}
                 </TableCell>
               </TableRow>
             )
@@ -285,13 +303,14 @@ export function SystemTasksPanel() {
       </div>
 
       <div aria-busy={tasksQuery.isFetching}>
-        {loading ? (
+        {loading && (
           <div className='space-y-2 p-4 sm:p-5'>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className='h-9 w-full rounded-md' />
+            {['one', 'two', 'three', 'four'].map((key) => (
+              <Skeleton key={key} className='h-9 w-full rounded-md' />
             ))}
           </div>
-        ) : tasksQuery.isError ? (
+        )}
+        {!loading && tasksQuery.isError && (
           <ErrorState
             title={t('We could not load system tasks.')}
             description={
@@ -304,7 +323,8 @@ export function SystemTasksPanel() {
             }}
             className='min-h-[260px]'
           />
-        ) : tasks.length === 0 ? (
+        )}
+        {!loading && !tasksQuery.isError && tasks.length === 0 && (
           <div className='px-4 py-10 text-center sm:px-5'>
             <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
               <ListChecks
@@ -316,7 +336,8 @@ export function SystemTasksPanel() {
               {t('No system tasks yet.')}
             </p>
           </div>
-        ) : (
+        )}
+        {!loading && !tasksQuery.isError && tasks.length > 0 && (
           <div className='space-y-4 p-4 sm:p-5'>
             <div>
               <div className='mb-2 flex items-center justify-between gap-3'>

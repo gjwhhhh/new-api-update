@@ -39,9 +39,16 @@ import (
 )
 
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NewAPIError
+	context            *gin.Context
+	localErr           error
+	newAPIError        *types.NewAPIError
+	modelName          string
+	endpointType       string
+	requestPath        string
+	isStream           bool
+	upstreamHTTPStatus int
+	resultStatusCode   int
+	failureKind        string
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -75,10 +82,26 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream, isHealthCheck bool) testResult {
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream, isHealthCheck bool) (result testResult) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	requestPath := "/v1/chat/completions"
+	upstreamHTTPStatus := 0
+	defer func() {
+		result.modelName = testModel
+		result.endpointType = endpointType
+		result.requestPath = requestPath
+		result.isStream = isStream
+		if result.upstreamHTTPStatus == 0 {
+			result.upstreamHTTPStatus = upstreamHTTPStatus
+		}
+		if result.newAPIError != nil {
+			result.resultStatusCode = result.newAPIError.StatusCode
+		} else if result.localErr == nil {
+			result.resultStatusCode = http.StatusOK
+		}
+	}()
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
 		constant.ChannelTypeMidjourney,
@@ -92,7 +115,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)
 		return testResult{
-			localErr: fmt.Errorf("%s channel test is not supported", channelTypeName),
+			localErr:    fmt.Errorf("%s channel test is not supported", channelTypeName),
+			failureKind: service.ChannelTestFailureKindUnsupported,
 		}
 	}
 	w := httptest.NewRecorder()
@@ -114,8 +138,6 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
-
-	requestPath := "/v1/chat/completions"
 
 	// 如果指定了端点类型，使用指定的端点类型
 	if endpointType != "" {
@@ -158,6 +180,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, nil)
+	if requestID, ok := ctx.Value(common.RequestIdKey).(string); ok && requestID != "" {
+		c.Set(common.RequestIdKey, requestID)
+	}
 
 	cache, err := model.GetUserCache(testUserID)
 	if err != nil {
@@ -453,6 +478,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	var httpResp *http.Response
 	if resp != nil {
 		httpResp = resp.(*http.Response)
+		upstreamHTTPStatus = httpResp.StatusCode
 		if httpResp.StatusCode != http.StatusOK {
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 			common.SysError(fmt.Sprintf(
@@ -466,9 +492,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				err,
 			))
 			return testResult{
-				context:     c,
-				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				context:            c,
+				localErr:           err,
+				newAPIError:        types.NewOpenAIError(err, types.ErrorCodeBadResponse, httpResp.StatusCode),
+				upstreamHTTPStatus: httpResp.StatusCode,
 			}
 		}
 	}
@@ -488,8 +515,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
 		}
 	}
-	result := w.Result()
-	respBody, err := readTestResponseBody(result.Body, isStream)
+	recordedResponse := w.Result()
+	respBody, err := readTestResponseBody(recordedResponse.Body, isStream)
 	if err != nil {
 		return testResult{
 			context:     c,
@@ -897,12 +924,31 @@ func TestChannel(c *gin.Context) {
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
+	requestID := c.GetString(common.RequestIdKey)
+	if requestID == "" {
+		requestID = common.NewRequestId()
+		requestCtx = context.WithValue(requestCtx, common.RequestIdKey, requestID)
+	}
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, false)
+	milliseconds := time.Since(tik).Milliseconds()
+	history := buildChannelTestHistoryResult(channel, result, channelTestHistoryContext{
+		RunID:     requestID,
+		RequestID: requestID,
+		Source:    "manual_single",
+	}, milliseconds, service.ChannelTestActionNone)
+	persisted, persistErr := service.RecordChannelTestResult(history)
+	if persistErr != nil {
+		common.SysError(fmt.Sprintf("failed to record channel test result: request_id=%s channel_id=%d error=%v", requestID, channel.Id, persistErr))
+	}
+	consumedTime := float64(milliseconds) / 1000.0
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
 			"message": result.localErr.Error(),
-			"time":    0.0,
+			"time":    consumedTime,
+		}
+		if persisted {
+			resp["test_result_id"] = history.ID
 		}
 		if result.newAPIError != nil {
 			resp["error_code"] = result.newAPIError.GetErrorCode()
@@ -910,24 +956,83 @@ func TestChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, resp)
 		return
 	}
-	tok := time.Now()
-	milliseconds := tok.Sub(tik).Milliseconds()
 	go channel.UpdateResponseTime(milliseconds)
-	consumedTime := float64(milliseconds) / 1000.0
 	if result.newAPIError != nil {
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"success":    false,
 			"message":    result.newAPIError.Error(),
 			"time":       consumedTime,
 			"error_code": result.newAPIError.GetErrorCode(),
-		})
+		}
+		if persisted {
+			resp["test_result_id"] = history.ID
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"success": true,
 		"message": "",
 		"time":    consumedTime,
-	})
+	}
+	if persisted {
+		resp["test_result_id"] = history.ID
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+type channelTestHistoryContext struct {
+	RunID           string
+	RequestID       string
+	TaskID          string
+	Source          string
+	HealthCheckMode string
+}
+
+func buildChannelTestHistoryResult(channel *model.Channel, result testResult, historyContext channelTestHistoryContext, durationMs int64, stateAction string) *model.ChannelTestResult {
+	status := service.ChannelTestStatusSucceeded
+	if result.localErr != nil || result.newAPIError != nil {
+		status = service.ChannelTestStatusFailed
+	}
+	failureKind := result.failureKind
+	if failureKind == "" {
+		failureKind = service.ChannelTestFailureKind(result.localErr, result.newAPIError, result.upstreamHTTPStatus)
+	}
+	if failureKind == service.ChannelTestFailureKindCancelled {
+		status = service.ChannelTestStatusCancelled
+	}
+	requestID := historyContext.RequestID
+	if requestID == "" && result.context != nil {
+		requestID = result.context.GetString(common.RequestIdKey)
+	}
+	var keyIndex *int
+	if channel.ChannelInfo.IsMultiKey && result.context != nil {
+		if _, selected := common.GetContextKey(result.context, constant.ContextKeyChannelMultiKeyStatus); selected {
+			selectedIndex := common.GetContextKeyInt(result.context, constant.ContextKeyChannelMultiKeyIndex)
+			keyIndex = &selectedIndex
+		}
+	}
+	return &model.ChannelTestResult{
+		RunID:              historyContext.RunID,
+		RequestID:          requestID,
+		TaskID:             historyContext.TaskID,
+		ChannelID:          channel.Id,
+		ChannelName:        channel.Name,
+		ChannelType:        channel.Type,
+		Source:             historyContext.Source,
+		HealthCheckMode:    historyContext.HealthCheckMode,
+		ModelName:          result.modelName,
+		EndpointType:       result.endpointType,
+		RequestPath:        result.requestPath,
+		IsStream:           result.isStream,
+		Status:             status,
+		UpstreamHTTPStatus: result.upstreamHTTPStatus,
+		ResultStatusCode:   result.resultStatusCode,
+		FailureKind:        failureKind,
+		KeyIndex:           keyIndex,
+		StateAction:        stateAction,
+		DurationMs:         durationMs,
+	}
 }
 
 // channelTestSummary records the outcome of one channel test cycle so the
@@ -944,13 +1049,17 @@ type automaticChannelTestTarget struct {
 	Channel                 *model.Channel
 	AllowDisable            bool
 	RecordAutomaticTestTime bool
+	HealthCheckMode         string
 }
 
 // performChannelTests runs the channel test loop synchronously, honoring ctx
 // cancellation so a system-task runner that loses its lease stops promptly. When
 // report is non-nil it is called after each channel with (processed, total) so
 // the system task can surface progress.
-func performChannelTests(ctx context.Context, targets []automaticChannelTestTarget, testUserID int, report func(processed, total int)) channelTestSummary {
+func performChannelTests(ctx context.Context, targets []automaticChannelTestTarget, testUserID int, historyContext channelTestHistoryContext, report func(processed, total int)) channelTestSummary {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	summary := channelTestSummary{}
 	var disableThreshold = int64(common.ChannelDisableThreshold * 1000)
 	if disableThreshold == 0 {
@@ -969,14 +1078,12 @@ func performChannelTests(ctx context.Context, targets []automaticChannelTestTarg
 		if channel.Status == common.ChannelStatusManuallyDisabled || channel.ChannelInfo.ManuallyDisabled {
 			continue
 		}
-		isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 		tik := time.Now()
-		result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), true)
+		requestID := common.NewRequestId()
+		testCtx := context.WithValue(ctx, common.RequestIdKey, requestID)
+		result := testChannel(testCtx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), true)
 		tok := time.Now()
 		milliseconds := tok.Sub(tik).Milliseconds()
-		if ctx != nil && ctx.Err() != nil {
-			break
-		}
 
 		summary.Tested++
 
@@ -995,51 +1102,58 @@ func performChannelTests(ctx context.Context, targets []automaticChannelTestTarg
 				shouldBanChannel = true
 			}
 		}
+		result.newAPIError = newAPIError
+		if newAPIError != nil {
+			result.resultStatusCode = newAPIError.StatusCode
+		}
 
-		if newAPIError == nil {
+		testSucceeded := result.localErr == nil && newAPIError == nil
+		if testSucceeded {
 			summary.Succeeded++
 		} else {
 			summary.Failed++
 		}
 
+		var selection *model.ChannelKeySelection
 		if channel.ChannelInfo.IsMultiKey && result.context != nil {
 			_, selected := common.GetContextKey(result.context, constant.ContextKeyChannelMultiKeyStatus)
 			if selected {
-				selection := model.ChannelKeySelection{
+				selectedKey := model.ChannelKeySelection{
 					Key:            common.GetContextKeyString(result.context, constant.ContextKeyChannelKey),
 					Index:          common.GetContextKeyInt(result.context, constant.ContextKeyChannelMultiKeyIndex),
 					OriginalStatus: common.GetContextKeyInt(result.context, constant.ContextKeyChannelMultiKeyStatus),
 				}
-				update, err := model.ApplyMultiKeyHealthCheckResult(
-					channel.Id,
-					selection,
-					newAPIError == nil,
-					target.AllowDisable && shouldBanChannel && channel.GetAutoBan(),
-					common.AutomaticEnableChannelEnabled,
-					newAPIError.ErrorWithStatusCode(),
-				)
-				if err != nil {
-					common.SysError(fmt.Sprintf("failed to apply multi-key health check result: channel_id=%d, key_index=%d, error=%v", channel.Id, selection.Index, err))
-				} else if !update.Stale {
-					if update.Disabled {
-						summary.Disabled++
-					}
-					if update.Enabled {
-						summary.Enabled++
-					}
-				}
+				selection = &selectedKey
 			}
-		} else {
-			// Single-key channels keep the existing channel-level transition.
-			if target.AllowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-				processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, false, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-				summary.Disabled++
-			}
-
-			if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
-				service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
-				summary.Enabled++
-			}
+		}
+		reason := ""
+		if newAPIError != nil {
+			reason = newAPIError.ErrorWithStatusCode()
+		}
+		stateAction := service.ApplyChannelHealthTransition(service.ChannelHealthTransitionInput{
+			Channel:       channel,
+			KeySelection:  selection,
+			Success:       testSucceeded,
+			ShouldDisable: shouldBanChannel,
+			AllowDisable:  target.AllowDisable,
+			Reason:        reason,
+			ContextErr:    ctx.Err(),
+		})
+		switch stateAction {
+		case service.ChannelTestActionChannelDisabled, service.ChannelTestActionKeyDisabled:
+			summary.Disabled++
+		case service.ChannelTestActionChannelEnabled, service.ChannelTestActionKeyEnabled:
+			summary.Enabled++
+		}
+		attemptContext := historyContext
+		attemptContext.RequestID = requestID
+		attemptContext.HealthCheckMode = target.HealthCheckMode
+		history := buildChannelTestHistoryResult(channel, result, attemptContext, milliseconds, stateAction)
+		if _, err := service.RecordChannelTestResult(history); err != nil {
+			common.SysError(fmt.Sprintf("failed to record channel test result: request_id=%s channel_id=%d error=%v", requestID, channel.Id, err))
+		}
+		if ctx.Err() != nil {
+			break
 		}
 
 		if target.RecordAutomaticTestTime {
@@ -1073,7 +1187,7 @@ func performChannelTests(ctx context.Context, targets []automaticChannelTestTarg
 // trigger passes ChannelTestModeScheduledAll to test every channel. When notify
 // is set the root user is notified on completion. Cross-instance execution is
 // guarded by the system task per-type lock, so no process-local guard is needed.
-func runChannelTestTask(ctx context.Context, mode string, notify bool, report func(processed, total int)) (channelTestSummary, error) {
+func runChannelTestTask(ctx context.Context, mode string, notify bool, taskID string, report func(processed, total int)) (channelTestSummary, error) {
 	testUserID, err := resolveChannelTestUserID(nil)
 	if err != nil {
 		return channelTestSummary{}, err
@@ -1083,8 +1197,10 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 		return channelTestSummary{}, err
 	}
 	var targets []automaticChannelTestTarget
+	source := "scheduled"
 	if strings.TrimSpace(mode) != "" {
 		targets = selectChannelsForManualTest(channels)
+		source = "manual_batch"
 	} else {
 		monitorSetting := operation_setting.GetMonitorSetting()
 		targets = selectChannelsForAutomaticTest(
@@ -1094,7 +1210,11 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 			common.GetTimestamp(),
 		)
 	}
-	summary := performChannelTests(ctx, targets, testUserID, report)
+	summary := performChannelTests(ctx, targets, testUserID, channelTestHistoryContext{
+		RunID:  taskID,
+		TaskID: taskID,
+		Source: source,
+	}, report)
 	if notify && (ctx == nil || ctx.Err() == nil) {
 		service.NotifyRootUser(dto.NotifyTypeChannelTest, "通道测试完成", "所有通道测试已完成")
 	}
@@ -1135,6 +1255,7 @@ func selectChannelsForAutomaticTest(channels []*model.Channel, globalMode string
 			Channel:                 channel,
 			AllowDisable:            mode != dto.ChannelHealthCheckModePassiveRecovery,
 			RecordAutomaticTestTime: true,
+			HealthCheckMode:         string(mode),
 		})
 	}
 	return targets

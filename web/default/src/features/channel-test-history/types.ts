@@ -33,6 +33,7 @@ export type ChannelTestResult = {
   channel_id: number
   channel_name: string
   channel_type: number
+  channel_groups: string
   source: 'scheduled' | 'manual_batch' | 'manual_single'
   health_check_mode?: string
   model_name: string
@@ -82,6 +83,7 @@ export type ChannelTestHistoryParams = {
   p: number
   page_size: number
   channel_id?: number
+  group?: string
   run_id?: string
   task_id?: string
   status?: ChannelTestResultStatus
@@ -89,6 +91,24 @@ export type ChannelTestHistoryParams = {
   model_name?: string
   start_at?: number
   end_at?: number
+}
+
+export type ChannelTestFilterOption = {
+  id: number
+  name: string
+  status: number
+  groups: string[]
+}
+
+export type ChannelTestFilterOptionsData = {
+  channels: ChannelTestFilterOption[]
+  groups: string[]
+}
+
+export type ChannelTestFilterOptionsResponse = {
+  success: boolean
+  message?: string
+  data?: ChannelTestFilterOptionsData
 }
 
 export type ChannelTestHistoryResponse = {

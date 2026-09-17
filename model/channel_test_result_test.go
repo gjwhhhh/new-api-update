@@ -45,9 +45,9 @@ func TestChannelTestResultListUsesStableOrderAndStatusIndependentSummary(t *test
 	truncateTables(t)
 	keyIndex := 0
 	results := []*ChannelTestResult{
-		{RunID: "run-1", RequestID: "req-1", ChannelID: 36, ChannelName: "test", Source: "scheduled", Status: "succeeded", FailureKind: "none", StateAction: "none", KeyIndex: &keyIndex, CreatedAt: 100},
-		{RunID: "run-1", RequestID: "req-2", ChannelID: 36, ChannelName: "test", Source: "scheduled", Status: "failed", FailureKind: "upstream_http", StateAction: "channel_disabled", CreatedAt: 100},
-		{RunID: "run-1", RequestID: "req-3", ChannelID: 51, ChannelName: "other", Source: "scheduled", Status: "cancelled", FailureKind: "cancelled", StateAction: "skipped_cancelled", CreatedAt: 100},
+		{RunID: "run-1", RequestID: "req-1", ChannelID: 36, ChannelName: "test", ChannelGroups: "default,gpt-pro", Source: "scheduled", Status: "succeeded", FailureKind: "none", StateAction: "none", KeyIndex: &keyIndex, CreatedAt: 100},
+		{RunID: "run-1", RequestID: "req-2", ChannelID: 36, ChannelName: "test", ChannelGroups: "gpt-pro-plus", Source: "scheduled", Status: "failed", FailureKind: "upstream_http", StateAction: "channel_disabled", CreatedAt: 100},
+		{RunID: "run-1", RequestID: "req-3", ChannelID: 51, ChannelName: "other", ChannelGroups: "default", Source: "scheduled", Status: "cancelled", FailureKind: "cancelled", StateAction: "skipped_cancelled", CreatedAt: 100},
 	}
 	for _, result := range results {
 		require.NoError(t, CreateChannelTestResult(result))
@@ -74,6 +74,36 @@ func TestChannelTestResultListUsesStableOrderAndStatusIndependentSummary(t *test
 	assert.Greater(t, allItems[1].ID, allItems[2].ID)
 	require.NotNil(t, allItems[2].KeyIndex)
 	assert.Equal(t, 0, *allItems[2].KeyIndex)
+
+	groupItems, groupTotal, groupSummary, err := ListChannelTestResults(ChannelTestResultFilter{
+		Group: "gpt-pro",
+		Limit: 20,
+	})
+	require.NoError(t, err)
+	require.Len(t, groupItems, 1)
+	assert.Equal(t, int64(1), groupTotal)
+	assert.Equal(t, int64(1), groupSummary.Tested)
+	assert.Equal(t, "req-1", groupItems[0].RequestID)
+}
+
+func TestListChannelTestFilterOptionsReturnsOnlySafeMetadata(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Create(&Channel{
+		Name:   "history-option",
+		Key:    "must-not-be-returned",
+		Status: common.ChannelStatusEnabled,
+		Group:  "default,gpt-pro",
+	}).Error)
+
+	options, err := ListChannelTestFilterOptions()
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+	assert.Equal(t, "history-option", options[0].Name)
+	assert.Equal(t, []string{"default", "gpt-pro"}, options[0].Groups)
+	serialized, err := common.Marshal(options)
+	require.NoError(t, err)
+	assert.NotContains(t, string(serialized), "must-not-be-returned")
+	assert.NotContains(t, string(serialized), "channel_groups")
 }
 
 func TestDeleteChannelTestResultsBeforeDeletesInBatches(t *testing.T) {

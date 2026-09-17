@@ -38,7 +38,7 @@
 | `run_id` | 每次运行的稳定分组 ID；系统任务时等于 `task_id`，单渠道手动测试复用外层请求 ID |
 | `request_id` | 每个渠道测试尝试的独立关联 ID；写入安全服务端日志，便于从页面定位原始运行日志 |
 | `task_id` | 可空字符串；关联定时/手动全量测试的系统任务 |
-| `channel_id`、`channel_name`、`channel_type` | 测试时的渠道快照；名称用于渠道删除后仍可读 |
+| `channel_id`、`channel_name`、`channel_type`、`channel_groups` | 测试时的渠道快照；名称和分组用于渠道删除或改组后仍可按测试时状态追溯 |
 | `source` | `scheduled`、`manual_batch`、`manual_single` |
 | `health_check_mode` | 可空；自动测试时记录实际生效模式，手动测试为空 |
 | `model_name`、`endpoint_type`、`request_path`、`is_stream` | 本次实际解析后的测试目标；`request_path` 是最终请求路径，避免自动推断端点时 `endpoint_type` 为空 |
@@ -48,7 +48,7 @@
 | `failure_kind` | 受控枚举：`none`、`unsupported`、`setup`、`transport`、`upstream_http`、`stream_terminated`、`response_decode`、`response_invalid`、`timeout`、`response_time_exceeded`、`cancelled`、`unknown` |
 | `key_index` | 可空；多 Key 渠道仅记录被选中的索引，索引 `0` 与未选择必须可区分 |
 | `state_action` | `none`、`channel_disabled`、`channel_enabled`、`key_disabled`、`key_enabled`、`stale_ignored`、`skipped_cancelled`、`action_failed` |
-| `duration_ms`、`created_at` | 本次测试耗时和完成时间 |
+| `duration_ms`、`created_at` | 本次测试耗时（数据库/API 保持毫秒，控制台统一显示为秒）和完成时间 |
 
 不设置可自由写入的 `error_message` 或上游 `error_code` 字段。页面根据受控的 `failure_kind`、两个状态码和 `state_action` 生成本地化说明，例如“上游返回 HTTP 504”“上游 HTTP 200 后流内失败，网关归一化为 502”或“响应时间超过自动禁用阈值”。原始错误仅保留在包含 `request_id` 的服务端日志中，避免把上游错误体或敏感信息落库。
 
@@ -75,12 +75,12 @@
 | Migration | `model/main.go` | 将新模型加入主库 `AutoMigrate` |
 | Service | `service/channel_test_history.go` | 受控失败类型、脱敏写入输入、结果持久化、同步健康状态转换和清理业务规则 |
 | Test integration | `controller/channel-test.go` | 扩展 `testResult`，统一耗时与关联 ID，并在现有测试/同步状态转换结束后调用 Service；普通 Relay 的异步错误处理保持不变 |
-| Read API | `controller/channel_test_history.go` | 历史列表和单条详情 Handler |
-| Route | `router/channel-router.go` | 注册 `/api/channel/test-history` 的两个只读路由和 `ChannelRead` 权限 |
+| Read API | `controller/channel_test_history.go` | 历史列表、单条详情和脱敏筛选选项 Handler |
+| Route | `router/channel-router.go` | 注册 `/api/channel/test-history` 的列表、详情、筛选选项三个只读路由和 `ChannelRead` 权限 |
 | Retention task | `model/system_task.go`、`controller/system_task_handlers.go` | 新增每日清理任务类型及跨实例租约执行器；清理是否运行不依赖记录开关 |
 | Config | `setting/operation_setting/channel_test_history_setting.go` | 注册 `channel_test_history_setting`，通过后端配置更新器校验启停和保留期 |
 
-前端新增独立功能目录 `web/default/src/features/channel-test-history/`，其中由 `api.ts`、`types.ts`、`index.tsx` 和表格/筛选/详情抽屉组件组成；它可复用 `features/channels/api.ts` 的渠道选择数据，但不把历史查询塞进现有渠道列表的状态管理。
+前端新增独立功能目录 `web/default/src/features/channel-test-history/`，其中由 `api.ts`、`types.ts`、`index.tsx` 和表格/筛选/详情抽屉组件组成。筛选选项由专用脱敏接口返回，避免为了下拉框加载渠道密钥、Base URL 等无关字段，也不把历史查询塞进现有渠道列表的状态管理。
 
 路由新增 `web/default/src/routes/_authenticated/channels/test-history.tsx`，地址为 `/channels/test-history`。从渠道页工具栏进入，单渠道行操作可带 `channel_id` 查询参数跳转；系统任务面板 `web/default/src/features/system-info/components/system-tasks-panel.tsx` 增加按 `task_id` 跳转。不会新增侧边栏一级菜单，也不会放到“使用日志”或“会话审计”页面。
 
@@ -93,9 +93,10 @@
 | 接口 | 用途 | 权限 |
 | --- | --- | --- |
 | `GET /api/channel/test-history` | 分页列表 | `ChannelRead` |
+| `GET /api/channel/test-history/filter-options` | 返回渠道 ID、名称、状态、分组及分组集合，用于直接选择筛选 | `ChannelRead` |
 | `GET /api/channel/test-history/:id` | 单条安全详情 | `ChannelRead` |
 
-列表支持 `channel_id`、`run_id`、`task_id`、`source`、`status`、`model_name`、起止时间、页码和页大小筛选。页大小上限为 `100`；服务端始终按完成时间倒序返回。接口不返回 Key、错误原文、请求/响应正文、测试用户或计费字段。
+列表支持 `channel_id`、`group`、`run_id`、`task_id`、`source`、`status`、`model_name`、起止时间、页码和页大小筛选。`group` 对测试记录中的 `channel_groups` 快照执行精确成员匹配，不读取渠道当前分组，且不会把 `gpt-pro` 错配为 `gpt-pro-plus`。页大小上限为 `100`；服务端始终按完成时间倒序返回。接口不返回 Key、错误原文、请求/响应正文、测试用户或计费字段。
 
 列表响应契约为：
 
@@ -144,9 +145,11 @@
 3. **单次测试完成入口**：单渠道测试接口在写入记录成功后返回 `test_result_id`。普通快捷测试的成功/失败提示提供“查看本次记录”动作；测试对话框的结果区域也提供同一按钮。它只打开详情抽屉，不强制把管理员从当前渠道列表带走。
 4. **全量测试入口**：管理员点击“测试全部渠道”后，提交成功提示提供“查看本轮记录”，跳转携带新建系统任务的 `task_id`。任务还在执行时，历史页展示已经完成的渠道并定时刷新，不把尚未测试的渠道标为失败。
 5. **系统任务入口**：在“系统信息 → 系统任务”的 `channel_test` 行增加“查看本轮记录”链接，同样按 `task_id` 过滤。任务的 `succeeded` 状态旁仍显示汇总 `6 成功 / 1 失败`，避免用户把任务完成理解为全部探测成功。
-6. **未启用状态**：历史入口始终保留。若记录功能未启用，页面展示“尚未收集渠道测试记录”的空态；Root 可直接跳转到“系统设置 → 运营 → 监控与告警”启用，其他管理员只看到说明，不会看到不存在的历史数据。
+6. **未启用状态**：历史入口始终保留。若记录功能未启用，页面展示“尚未收集渠道测试记录”的空态，并提供跳转到“系统设置 → 运营 → 监控与告警”的入口；其他管理员只看到说明，不会看到不存在的历史数据。
 
-页面的查询参数是可复制、可回退的状态：`channel_id`、`task_id`、`status`、`source`、时间范围和 `result_id`。`result_id` 用于打开对应详情抽屉，关闭抽屉只移除该参数，保留原有筛选。
+页面的查询参数是可复制、可回退的状态：`channel_id`、`group`、`task_id`、`status`、`source`、时间范围和 `result_id`。`result_id` 用于打开对应详情抽屉，关闭抽屉只移除该参数，保留原有筛选。
+
+渠道状态页提供三层管理员入口：页头“测试记录”打开最近 7 天；渠道卡片“查看测试记录”携带 `channel_id`；分组卡片“查看测试记录”携带 `group`。渠道视图已选中分组时，页头入口也继承该分组。所有入口均只读取历史，不触发新测试。
 
 ### 页面布局与信息层级
 
@@ -154,7 +157,7 @@
 
 1. **页头**：面包屑“渠道管理 / 渠道测试记录”、标题和一句说明“查看手动与自动测试的结果，不计入使用量”。右侧提供刷新和“返回渠道”；不把“测试全部渠道”放在此页，避免在排障页误触发一批上游请求。
 2. **一行运行摘要**：在筛选栏下方以轻量文字显示当前范围内的“已测试、成功、失败、已取消”数量；失败数可点击，等价于打开“仅失败”筛选。摘要遵循除结果状态外的当前筛选条件，不因切换“全部/仅失败”而改变总分布。它不是独立的指标卡，避免把列表页做成重复的性能仪表盘。
-3. **筛选栏**：时间快捷项（24 小时、7 天、30 天、全部保留记录、自定义）、渠道搜索选择器、结果分段控件（全部/仅失败）、来源和模型的折叠高级筛选，以及“清除筛选”。从渠道跳转默认带最近 7 天，从任务跳转默认带全部保留记录；其他入口默认最近 24 小时。自定义范围的开始和结束时间写入可复制的查询参数。
+3. **筛选栏**：时间快捷项（24 小时、7 天、30 天、全部保留记录、自定义）、已有分组选择器、可按名称或 ID 搜索的已有渠道选择器、结果筛选、来源筛选，以及“清除筛选”。选择分组后渠道选项同步收窄；若当前渠道不属于新分组则自动清除渠道，避免形成隐蔽的空结果。从渠道或状态页跳转默认带最近 7 天，从任务跳转默认带全部保留记录；其他入口默认最近 24 小时。自定义范围的开始和结束时间写入可复制的查询参数。
 4. **结果表**：列为完成时间、结果、渠道、来源、模型/端点、状态码、耗时、多 Key/自动动作、任务。失败行先显示可读原因（例如“上游返回 HTTP 504”）；状态码列优先展示网关结果码，若上游码不同则展示为“上游 200 → 结果 502”。颜色只辅助成功、失败和取消状态，不单独承载含义。
 5. **详情抽屉**：点击行从右侧打开，不离开当前筛选结果。抽屉分为“结果”“测试对象”“自动动作”三组，展示受控失败说明、上游 HTTP 状态、网关结果状态、时间/耗时、渠道 ID 与快照名称、模型/端点/最终请求路径/流式标记、来源、任务/运行/请求 ID、Key 索引与实际禁用或恢复动作。它提供复制请求 ID、复制运行 ID 和跳转到关联系统任务，但不显示 Key、Body 或原始上游错误。
 6. **运行中状态**：按 `task_id` 查看尚未结束的批次时，页头显示“正在执行，已完成 N / M”，列表定时刷新；完成后自动停止刷新。

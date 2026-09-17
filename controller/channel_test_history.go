@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,31 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+func GetChannelTestHistoryFilterOptions(c *gin.Context) {
+	channels, err := model.ListChannelTestFilterOptions()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	groupSet := make(map[string]struct{})
+	for _, channel := range channels {
+		for _, group := range channel.Groups {
+			if group != "" {
+				groupSet[group] = struct{}{}
+			}
+		}
+	}
+	groups := make([]string, 0, len(groupSet))
+	for group := range groupSet {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	common.ApiSuccess(c, gin.H{
+		"channels": channels,
+		"groups":   groups,
+	})
+}
 
 type channelTestRunProjection struct {
 	TaskID    string                 `json:"task_id"`
@@ -72,6 +98,7 @@ func GetChannelTestHistory(c *gin.Context) {
 
 func parseChannelTestResultFilter(c *gin.Context) (model.ChannelTestResultFilter, bool) {
 	filter := model.ChannelTestResultFilter{
+		Group:     strings.TrimSpace(c.Query("group")),
 		RunID:     strings.TrimSpace(c.Query("run_id")),
 		TaskID:    strings.TrimSpace(c.Query("task_id")),
 		Source:    strings.TrimSpace(c.Query("source")),

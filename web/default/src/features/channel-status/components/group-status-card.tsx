@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   ArrowDown,
   ArrowUp,
@@ -24,6 +25,7 @@ import {
   Eraser,
   Eye,
   EyeOff,
+  History,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -198,16 +200,32 @@ export function GroupStatusCard(props: {
             aria-label={t('Visible to users')}
           />
         </div>
-        <Button
-          type='button'
-          variant='outline'
-          size='sm'
-          onClick={() => setClearOpen(true)}
-          disabled={clearMutation.isPending}
-        >
-          <Eraser className='size-3.5' />
-          {t('Clear recent samples')}
-        </Button>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Button
+            variant='outline'
+            size='sm'
+            nativeButton={false}
+            render={
+              <Link
+                to='/channels/test-history'
+                search={{ group: props.group.group, time_range: '7d' }}
+              />
+            }
+          >
+            <History className='size-3.5' />
+            {t('View test history')}
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            onClick={() => setClearOpen(true)}
+            disabled={clearMutation.isPending}
+          >
+            <Eraser className='size-3.5' />
+            {t('Clear recent samples')}
+          </Button>
+        </div>
       </div>
     )
   }

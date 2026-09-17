@@ -26,6 +26,7 @@ import { useAuthStore } from '@/stores/auth-store'
 const searchSchema = z.object({
   p: z.number().int().positive().optional().catch(1),
   channel_id: z.number().int().positive().optional().catch(undefined),
+  group: z.string().trim().min(1).optional().catch(undefined),
   run_id: z.string().optional().catch(undefined),
   task_id: z.string().optional().catch(undefined),
   status: z

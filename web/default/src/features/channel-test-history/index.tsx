@@ -19,13 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { ChevronLeft, ChevronRight, History, RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Empty,
   EmptyDescription,
@@ -54,7 +56,11 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { getChannelTestHistory, getChannelTestResult } from './api'
+import {
+  getChannelTestFilterOptions,
+  getChannelTestHistory,
+  getChannelTestResult,
+} from './api'
 import type {
   ChannelTestHistoryTimeRange,
   ChannelTestResult,
@@ -110,6 +116,11 @@ function readableCode(result: ChannelTestResult) {
   return result.result_status_code || result.upstream_http_status || '-'
 }
 
+function formatDurationSeconds(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return '-'
+  return `${(durationMs / 1000).toFixed(2)} s`
+}
+
 function ResultDetails(props: { resultId?: number }) {
   const { t } = useTranslation()
   const query = useQuery({
@@ -128,6 +139,16 @@ function ResultDetails(props: { resultId?: number }) {
   if (query.isLoading) {
     return <Skeleton className='m-4 h-56' />
   }
+  if (query.isError) {
+    return (
+      <ErrorState
+        className='min-h-[220px]'
+        title={t('Failed to load test record')}
+        description={t('Try again in a moment or refresh the page.')}
+        onRetry={() => void query.refetch()}
+      />
+    )
+  }
   if (!result) {
     return (
       <p className='text-muted-foreground p-4'>
@@ -141,8 +162,12 @@ function ResultDetails(props: { resultId?: number }) {
     [t('Failure type'), t(result.failure_kind)],
     [t('Upstream HTTP status'), result.upstream_http_status || '-'],
     [t('Gateway result status'), result.result_status_code || '-'],
-    [t('Duration'), `${result.duration_ms} ms`],
+    [t('Duration'), formatDurationSeconds(result.duration_ms)],
     [t('Channel'), `#${result.channel_id} ${result.channel_name}`],
+    [
+      t('Groups'),
+      result.channel_groups ? result.channel_groups.split(',').join(', ') : '-',
+    ],
     [t('Model'), result.model_name || '-'],
     [t('Endpoint'), result.endpoint_type || result.request_path],
     [t('Streaming'), result.is_stream ? t('Yes') : t('No')],
@@ -188,13 +213,72 @@ export function ChannelTestHistory() {
     startAt = search.start_at
   }
   const endAt = timeRange === 'custom' ? search.end_at : undefined
+  const filterOptionsQuery = useQuery({
+    queryKey: ['channel-test-history', 'filter-options'],
+    queryFn: async () => {
+      const response = await getChannelTestFilterOptions()
+      if (!response.success || !response.data) {
+        throw new Error(response.message || t('Failed to load channels'))
+      }
+      return response.data
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+  const channelOptions = useMemo(() => {
+    const channels = filterOptionsQuery.data?.channels ?? []
+    const selectedGroup = search.group
+    const filteredChannels = selectedGroup
+      ? channels.filter((channel) => channel.groups.includes(selectedGroup))
+      : channels
+    const options = [
+      { value: '', label: t('All channels') },
+      ...filteredChannels.map((channel) => ({
+        value: String(channel.id),
+        label: `#${channel.id} · ${channel.name}`,
+      })),
+    ]
+    if (
+      search.channel_id &&
+      !options.some((option) => option.value === String(search.channel_id))
+    ) {
+      options.splice(1, 0, {
+        value: String(search.channel_id),
+        label: `#${search.channel_id}`,
+      })
+    }
+    return options
+  }, [filterOptionsQuery.data?.channels, search.channel_id, search.group, t])
+  const groupOptions = useMemo(() => {
+    const groups = filterOptionsQuery.data?.groups ?? []
+    if (search.group && !groups.includes(search.group)) {
+      return [search.group, ...groups]
+    }
+    return groups
+  }, [filterOptionsQuery.data?.groups, search.group])
   const query = useQuery({
-    queryKey: ['channel-test-history', search, timeRange, startAt, endAt],
+    queryKey: [
+      'channel-test-history',
+      'list',
+      {
+        page,
+        channelId: search.channel_id,
+        group: search.group,
+        runId: search.run_id,
+        taskId: search.task_id,
+        status: search.status,
+        source: search.source,
+        modelName: search.model_name,
+        timeRange,
+        startAt,
+        endAt,
+      },
+    ],
     queryFn: async () => {
       const response = await getChannelTestHistory({
         p: page,
         page_size: PAGE_SIZE,
         channel_id: search.channel_id,
+        group: search.group,
         run_id: search.run_id,
         task_id: search.task_id,
         status: search.status,
@@ -258,13 +342,27 @@ export function ChannelTestHistory() {
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='flex h-full min-h-0 flex-col gap-4'>
-          {!data?.recording_enabled && !query.isLoading && (
+          {data && !data.recording_enabled && !query.isLoading && (
             <Alert>
               <AlertTitle>{t('Channel test history is disabled')}</AlertTitle>
               <AlertDescription>
                 {t(
                   'Enable it in Monitoring & Alerts to collect new test records.'
                 )}
+                <Button
+                  variant='link'
+                  size='sm'
+                  className='ml-1 h-auto px-0 align-baseline'
+                  nativeButton={false}
+                  render={
+                    <Link
+                      to='/system-settings/operations/$section'
+                      params={{ section: 'alerts' }}
+                    />
+                  }
+                >
+                  {t('Go to settings')}
+                </Button>
               </AlertDescription>
             </Alert>
           )}
@@ -277,6 +375,15 @@ export function ChannelTestHistory() {
                   processed: data.run.processed,
                   total: data.run.total,
                 })}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {filterOptionsQuery.isError && (
+            <Alert variant='destructive'>
+              <AlertTitle>{t('Failed to load channels')}</AlertTitle>
+              <AlertDescription>
+                {t('Try again in a moment or refresh the page.')}
               </AlertDescription>
             </Alert>
           )}
@@ -311,7 +418,9 @@ export function ChannelTestHistory() {
               <NativeSelectOption value='24h'>
                 {t('Last 24 hours')}
               </NativeSelectOption>
-              <NativeSelectOption value='7d'>{t('Last 7 days')}</NativeSelectOption>
+              <NativeSelectOption value='7d'>
+                {t('Last 7 days')}
+              </NativeSelectOption>
               <NativeSelectOption value='30d'>
                 {t('Last 30 days')}
               </NativeSelectOption>
@@ -352,17 +461,48 @@ export function ChannelTestHistory() {
                 />
               </>
             )}
-            <Input
-              className='w-36'
-              type='number'
-              min={1}
-              placeholder={t('Channel ID')}
-              value={search.channel_id ?? ''}
+            <NativeSelect
+              value={search.group ?? ''}
+              disabled={filterOptionsQuery.isLoading}
               onChange={(event) => {
-                const value = Number(event.target.value)
-                updateSearch({ channel_id: value > 0 ? value : undefined })
+                const group = event.target.value || undefined
+                const selectedChannel = filterOptionsQuery.data?.channels.find(
+                  (channel) => channel.id === search.channel_id
+                )
+                const keepChannel =
+                  !group || selectedChannel?.groups.includes(group)
+                updateSearch({
+                  group,
+                  channel_id: keepChannel ? search.channel_id : undefined,
+                })
               }}
-            />
+            >
+              <NativeSelectOption value=''>
+                {t('All Groups')}
+              </NativeSelectOption>
+              {groupOptions.map((group) => (
+                <NativeSelectOption key={group} value={group}>
+                  {group}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            {filterOptionsQuery.isLoading ? (
+              <Skeleton className='h-9 w-full sm:w-56' />
+            ) : (
+              <Combobox
+                options={channelOptions}
+                value={search.channel_id ? String(search.channel_id) : ''}
+                onValueChange={(value) => {
+                  const channelId = Number(value)
+                  updateSearch({
+                    channel_id: channelId > 0 ? channelId : undefined,
+                  })
+                }}
+                searchPlaceholder={t('Search channels by name or ID')}
+                emptyText={t('No matching channels')}
+                className='w-full sm:w-56'
+              />
+            )}
             <NativeSelect
               value={search.status ?? ''}
               onChange={(event) =>
@@ -402,6 +542,7 @@ export function ChannelTestHistory() {
               </NativeSelectOption>
             </NativeSelect>
             {(search.channel_id ||
+              search.group ||
               search.status ||
               search.source ||
               search.task_id ||
@@ -416,6 +557,7 @@ export function ChannelTestHistory() {
                 onClick={() =>
                   updateSearch({
                     channel_id: undefined,
+                    group: undefined,
                     status: undefined,
                     source: undefined,
                     task_id: undefined,
@@ -440,7 +582,15 @@ export function ChannelTestHistory() {
                 ))}
               </div>
             )}
-            {!query.isLoading && !data?.items.length && (
+            {query.isError && (
+              <ErrorState
+                className='h-full'
+                title={t('Failed to load channel test history')}
+                description={t('Try again in a moment or refresh the page.')}
+                onRetry={() => void query.refetch()}
+              />
+            )}
+            {!query.isLoading && !query.isError && !data?.items.length && (
               <Empty className='h-full min-h-64'>
                 <EmptyHeader>
                   <EmptyMedia variant='icon'>
@@ -455,68 +605,88 @@ export function ChannelTestHistory() {
                 </EmptyHeader>
               </Empty>
             )}
-            {!query.isLoading && Boolean(data?.items.length) && (
-              <Table className='min-w-[1050px]'>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('Completed')}</TableHead>
-                    <TableHead>{t('Result')}</TableHead>
-                    <TableHead>{t('Channel')}</TableHead>
-                    <TableHead>{t('Source')}</TableHead>
-                    <TableHead>{t('Model / endpoint')}</TableHead>
-                    <TableHead>{t('Status code')}</TableHead>
-                    <TableHead>{t('Duration')}</TableHead>
-                    <TableHead>{t('Automatic action')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data?.items.map((result) => (
-                    <TableRow
-                      key={result.id}
-                      className='cursor-pointer'
-                      onClick={() =>
-                        updateSearch({ result_id: result.id }, false)
-                      }
-                    >
-                      <TableCell className='whitespace-nowrap'>
-                        {formatTimestampToDate(result.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={statusClass[result.status]}
-                          variant='secondary'
-                        >
-                          {t(result.status)}
-                        </Badge>
-                        {result.failure_kind !== 'none' && (
-                          <div className='text-muted-foreground mt-1 text-xs'>
-                            {t(result.failure_kind)}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className='font-medium'>#{result.channel_id}</div>
-                        <div className='text-muted-foreground max-w-40 truncate text-xs'>
-                          {result.channel_name}
-                        </div>
-                      </TableCell>
-                      <TableCell>{t(result.source)}</TableCell>
-                      <TableCell>
-                        <div>{result.model_name || '-'}</div>
-                        <div className='text-muted-foreground text-xs'>
-                          {result.endpoint_type || result.request_path}
-                        </div>
-                      </TableCell>
-                      <TableCell className='font-mono'>
-                        {readableCode(result)}
-                      </TableCell>
-                      <TableCell>{result.duration_ms} ms</TableCell>
-                      <TableCell>{t(result.state_action)}</TableCell>
+            {!query.isLoading &&
+              !query.isError &&
+              Boolean(data?.items.length) && (
+                <Table className='min-w-[1050px]'>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Completed')}</TableHead>
+                      <TableHead>{t('Result')}</TableHead>
+                      <TableHead>{t('Channel')}</TableHead>
+                      <TableHead>{t('Source')}</TableHead>
+                      <TableHead>{t('Model / endpoint')}</TableHead>
+                      <TableHead>{t('Status code')}</TableHead>
+                      <TableHead>{t('Duration')}</TableHead>
+                      <TableHead>{t('Automatic action')}</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+                  </TableHeader>
+                  <TableBody>
+                    {data?.items.map((result) => (
+                      <TableRow
+                        key={result.id}
+                        className='focus-visible:bg-muted/50 cursor-pointer focus-visible:outline-none'
+                        role='button'
+                        tabIndex={0}
+                        aria-label={t('View test record')}
+                        onClick={() =>
+                          updateSearch({ result_id: result.id }, false)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            updateSearch({ result_id: result.id }, false)
+                          }
+                        }}
+                      >
+                        <TableCell className='whitespace-nowrap'>
+                          {formatTimestampToDate(result.created_at)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            className={statusClass[result.status]}
+                            variant='secondary'
+                          >
+                            {t(result.status)}
+                          </Badge>
+                          {result.failure_kind !== 'none' && (
+                            <div className='text-muted-foreground mt-1 text-xs'>
+                              {t(result.failure_kind)}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className='font-medium'>
+                            #{result.channel_id}
+                          </div>
+                          <div className='text-muted-foreground max-w-40 truncate text-xs'>
+                            {result.channel_name}
+                          </div>
+                          {result.channel_groups && (
+                            <div className='text-muted-foreground max-w-40 truncate text-xs'>
+                              {result.channel_groups.split(',').join(', ')}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>{t(result.source)}</TableCell>
+                        <TableCell>
+                          <div>{result.model_name || '-'}</div>
+                          <div className='text-muted-foreground text-xs'>
+                            {result.endpoint_type || result.request_path}
+                          </div>
+                        </TableCell>
+                        <TableCell className='font-mono'>
+                          {readableCode(result)}
+                        </TableCell>
+                        <TableCell>
+                          {formatDurationSeconds(result.duration_ms)}
+                        </TableCell>
+                        <TableCell>{t(result.state_action)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
           </div>
 
           <div className='flex items-center justify-between'>
@@ -556,26 +726,25 @@ export function ChannelTestHistory() {
             </div>
           </div>
         </div>
+        <Sheet
+          open={Boolean(search.result_id)}
+          onOpenChange={(open) => {
+            if (!open) updateSearch({ result_id: undefined }, false)
+          }}
+        >
+          <SheetContent className='sm:max-w-xl'>
+            <SheetHeader>
+              <SheetTitle>{t('Channel test record')}</SheetTitle>
+              <SheetDescription>
+                {t(
+                  'Safe diagnostic metadata only; request and response bodies are not stored.'
+                )}
+              </SheetDescription>
+            </SheetHeader>
+            <ResultDetails resultId={search.result_id} />
+          </SheetContent>
+        </Sheet>
       </SectionPageLayout.Content>
-
-      <Sheet
-        open={Boolean(search.result_id)}
-        onOpenChange={(open) => {
-          if (!open) updateSearch({ result_id: undefined }, false)
-        }}
-      >
-        <SheetContent className='sm:max-w-xl'>
-          <SheetHeader>
-            <SheetTitle>{t('Channel test record')}</SheetTitle>
-            <SheetDescription>
-              {t(
-                'Safe diagnostic metadata only; request and response bodies are not stored.'
-              )}
-            </SheetDescription>
-          </SheetHeader>
-          <ResultDetails resultId={search.result_id} />
-        </SheetContent>
-      </Sheet>
     </SectionPageLayout>
   )
 }

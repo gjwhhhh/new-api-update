@@ -1012,6 +1012,13 @@ func buildChannelTestHistoryResult(channel *model.Channel, result testResult, hi
 			keyIndex = &selectedIndex
 		}
 	}
+	groups := channel.GetGroups()
+	normalizedGroups := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if group != "" {
+			normalizedGroups = append(normalizedGroups, group)
+		}
+	}
 	return &model.ChannelTestResult{
 		RunID:              historyContext.RunID,
 		RequestID:          requestID,
@@ -1019,6 +1026,7 @@ func buildChannelTestHistoryResult(channel *model.Channel, result testResult, hi
 		ChannelID:          channel.Id,
 		ChannelName:        channel.Name,
 		ChannelType:        channel.Type,
+		ChannelGroups:      strings.Join(normalizedGroups, ","),
 		Source:             historyContext.Source,
 		HealthCheckMode:    historyContext.HealthCheckMode,
 		ModelName:          result.modelName,

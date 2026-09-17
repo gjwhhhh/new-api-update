@@ -15,6 +15,7 @@ type ChannelTestResult struct {
 	ChannelID          int    `json:"channel_id" gorm:"index:idx_channel_test_channel_time,priority:1"`
 	ChannelName        string `json:"channel_name" gorm:"type:varchar(255)"`
 	ChannelType        int    `json:"channel_type"`
+	ChannelGroups      string `json:"channel_groups" gorm:"type:varchar(4096)"`
 	Source             string `json:"source" gorm:"type:varchar(32);index"`
 	HealthCheckMode    string `json:"health_check_mode,omitempty" gorm:"type:varchar(32)"`
 	ModelName          string `json:"model_name" gorm:"type:varchar(255);index"`
@@ -40,6 +41,7 @@ func (result *ChannelTestResult) BeforeCreate(_ *gorm.DB) error {
 
 type ChannelTestResultFilter struct {
 	ChannelID int
+	Group     string
 	RunID     string
 	TaskID    string
 	Source    string
@@ -49,6 +51,14 @@ type ChannelTestResultFilter struct {
 	EndAt     int64
 	Offset    int
 	Limit     int
+}
+
+type ChannelTestFilterOption struct {
+	ID            int      `json:"id"`
+	Name          string   `json:"name"`
+	Status        int      `json:"status"`
+	Groups        []string `json:"groups" gorm:"-"`
+	ChannelGroups string   `json:"-" gorm:"column:channel_groups"`
 }
 
 type ChannelTestResultSummary struct {
@@ -69,6 +79,21 @@ func GetChannelTestResultByID(id int64) (*ChannelTestResult, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func ListChannelTestFilterOptions() ([]ChannelTestFilterOption, error) {
+	options := make([]ChannelTestFilterOption, 0)
+	if err := DB.Model(&Channel{}).
+		Select("id, name, status, " + commonGroupCol + " AS channel_groups").
+		Order("id DESC").
+		Scan(&options).Error; err != nil {
+		return nil, err
+	}
+	for i := range options {
+		channel := Channel{Group: options[i].ChannelGroups}
+		options[i].Groups = channel.GetGroups()
+	}
+	return options, nil
 }
 
 func ListChannelTestResults(filter ChannelTestResultFilter) ([]ChannelTestResult, int64, ChannelTestResultSummary, error) {
@@ -112,6 +137,7 @@ func applyChannelTestResultFilter(query *gorm.DB, filter ChannelTestResultFilter
 	if filter.ChannelID > 0 {
 		query = query.Where("channel_id = ?", filter.ChannelID)
 	}
+	query = applyChannelGroupFilter(query, filter.Group, "channel_groups")
 	if value := strings.TrimSpace(filter.RunID); value != "" {
 		query = query.Where("run_id = ?", value)
 	}

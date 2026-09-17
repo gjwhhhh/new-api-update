@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUpDown, ListOrdered, RefreshCw, Save } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import {
+  ArrowUpDown,
+  History,
+  ListOrdered,
+  RefreshCw,
+  Save,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -359,6 +366,26 @@ export function ChannelStatusPage() {
               </Button>
             ) : null}
           </>
+        ) : null}
+        {tab === 'local' && isAdmin ? (
+          <Button
+            variant='outline'
+            size='sm'
+            nativeButton={false}
+            render={
+              <Link
+                to='/channels/test-history'
+                search={{
+                  group:
+                    isChannelView && channelGroup ? channelGroup : undefined,
+                  time_range: '7d',
+                }}
+              />
+            }
+          >
+            <History className='size-3.5' />
+            {t('Test history')}
+          </Button>
         ) : null}
         <Button
           type='button'

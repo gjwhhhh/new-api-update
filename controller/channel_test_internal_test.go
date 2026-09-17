@@ -77,7 +77,7 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 }
 
 func TestBuildChannelTestHistoryResultKeepsUpstreamAndGatewayStatus(t *testing.T) {
-	channel := &model.Channel{Id: 36, Name: "stream", Type: 1}
+	channel := &model.Channel{Id: 36, Name: "stream", Type: 1, Group: " default, gpt-pro "}
 	streamErr := types.NewOpenAIError(
 		errors.New("stream terminated"),
 		types.ErrorCodeChannelUpstreamStreamTerminated,
@@ -102,6 +102,7 @@ func TestBuildChannelTestHistoryResultKeepsUpstreamAndGatewayStatus(t *testing.T
 	require.Equal(t, http.StatusOK, result.UpstreamHTTPStatus)
 	require.Equal(t, http.StatusBadGateway, result.ResultStatusCode)
 	require.Equal(t, "request-1", result.RequestID)
+	require.Equal(t, "default,gpt-pro", result.ChannelGroups)
 }
 
 func TestBuildChannelTestHistoryResultPreservesUnsupportedFailure(t *testing.T) {

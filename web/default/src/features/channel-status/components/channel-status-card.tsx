@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, Eraser } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { ChevronRight, Eraser, History } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -238,7 +239,24 @@ export function ChannelStatusCard(props: {
           </div>
         </button>
 
-        <div className='border-border/60 flex justify-end border-t pt-3'>
+        <div className='border-border/60 flex flex-wrap justify-between gap-2 border-t pt-3'>
+          <Button
+            variant='outline'
+            size='sm'
+            nativeButton={false}
+            render={
+              <Link
+                to='/channels/test-history'
+                search={{
+                  channel_id: props.channel.channel_id,
+                  time_range: '7d',
+                }}
+              />
+            }
+          >
+            <History className='size-3.5' />
+            {t('View test history')}
+          </Button>
           <Button
             type='button'
             variant='outline'

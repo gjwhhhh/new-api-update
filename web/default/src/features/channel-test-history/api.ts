@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import type {
+  ChannelTestFilterOptionsResponse,
   ChannelTestHistoryParams,
   ChannelTestHistoryResponse,
   ChannelTestResult,
@@ -28,6 +29,11 @@ export async function getChannelTestHistory(
   params: ChannelTestHistoryParams
 ): Promise<ChannelTestHistoryResponse> {
   const response = await api.get('/api/channel/test-history', { params })
+  return response.data
+}
+
+export async function getChannelTestFilterOptions(): Promise<ChannelTestFilterOptionsResponse> {
+  const response = await api.get('/api/channel/test-history/filter-options')
   return response.data
 }
 

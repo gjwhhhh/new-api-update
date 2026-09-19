@@ -37,7 +37,7 @@ interface EmailBindDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentEmail?: string
-  onSuccess: () => void
+  onSuccess: (email: string) => void
 }
 
 export function EmailBindDialog({
@@ -76,7 +76,7 @@ export function EmailBindDialog({
       } else {
         toast.error(response.message || t('Failed to send verification code'))
       }
-    } catch (_error) {
+    } catch {
       toast.error(t('Failed to send verification code'))
     } finally {
       setSendingCode(false)
@@ -96,7 +96,7 @@ export function EmailBindDialog({
       if (response.success) {
         toast.success(t('Email bound successfully!'))
         onOpenChange(false)
-        onSuccess()
+        onSuccess(email)
         // Reset form
         setEmail('')
         setCode('')
@@ -104,7 +104,7 @@ export function EmailBindDialog({
       } else {
         toast.error(response.message || t('Failed to bind email'))
       }
-    } catch (_error) {
+    } catch {
       toast.error(t('Failed to bind email'))
     } finally {
       setLoading(false)
@@ -122,6 +122,10 @@ export function EmailBindDialog({
       }
     }
   }
+
+  let sendButtonLabel = t('Send')
+  if (sendingCode) sendButtonLabel = t('Sending...')
+  if (isActive) sendButtonLabel = `${secondsLeft}s`
 
   return (
     <Dialog
@@ -189,11 +193,7 @@ export function EmailBindDialog({
               onClick={handleSendCode}
               disabled={sendingCode || isActive || !email}
             >
-              {isActive
-                ? `${secondsLeft}s`
-                : sendingCode
-                  ? t('Sending...')
-                  : t('Send')}
+              {sendButtonLabel}
             </Button>
           </div>
         </div>

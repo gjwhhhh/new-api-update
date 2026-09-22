@@ -748,7 +748,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 		if !plan.Enabled {
 			return errors.New("套餐未启用")
 		}
-		allowed, err := CanUserAccessSubscriptionPlan(userId, plan.Id)
+		allowed, err := canUserAccessSubscriptionPlan(tx, userId, plan.Id)
 		if err != nil {
 			return err
 		}

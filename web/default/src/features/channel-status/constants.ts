@@ -74,11 +74,14 @@ export const CHANNEL_STATUS_QUERY_KEYS = {
     page: number
     pageSize: number
     search: string
+    group: string
     health: string
     channelStatus: string
+    providerType: number | null
     sort: ChannelMetricsSort
     order: 'asc' | 'desc'
   }) => ['channel-status', 'channels', params] as const,
+  channelGroups: ['channel-status', 'channel-groups'] as const,
   channelDetail: (channelId: number, hours: GroupHours) =>
     ['channel-status', 'channel-detail', channelId, hours] as const,
   openai: ['channel-status', 'openai'] as const,

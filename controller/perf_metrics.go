@@ -160,6 +160,7 @@ func GetPerfMetricsChannels(c *gin.Context) {
 	}
 
 	search := strings.ToLower(strings.TrimSpace(c.Query("search")))
+	groupFilter := model.NormalizeChannelGroupFilter(c.Query("group"))
 	channelStatus := strings.ToLower(strings.TrimSpace(c.Query("channel_status")))
 	if !isValidChannelStatusFilter(channelStatus) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -219,6 +220,7 @@ func GetPerfMetricsChannels(c *gin.Context) {
 		StartTs:       window.StartTs,
 		EndTs:         window.EndTs,
 		Search:        search,
+		Group:         groupFilter,
 		ChannelStatus: configuredStatus,
 		ChannelType:   channelType,
 		Health:        healthFilter,
@@ -281,6 +283,21 @@ func GetPerfMetricsChannels(c *gin.Context) {
 			Group:  summary.ChannelGroup,
 		}, metric, health))
 	}
+	providerTypeCounts, err := model.CountChannelsGroupByType()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	providerTypes := make([]int, 0, len(providerTypeCounts))
+	for providerType := range providerTypeCounts {
+		if providerType >= 0 {
+			providerTypes = append(providerTypes, int(providerType))
+		}
+	}
+	sort.Ints(providerTypes)
 
 	common.ApiSuccess(c, gin.H{
 		"items":          items,
@@ -291,6 +308,7 @@ func GetPerfMetricsChannels(c *gin.Context) {
 		"bucket_seconds": metrics.BucketSeconds,
 		"start_ts":       metrics.StartTs,
 		"end_ts":         metrics.EndTs,
+		"provider_types": providerTypes,
 	})
 }
 

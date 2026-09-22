@@ -151,6 +151,7 @@ export type ChannelStatusData = {
   total: number
   page: number
   page_size: number
+  provider_types: number[]
   health_counts: Record<ChannelHealth, number>
   bucket_seconds: number
   start_ts: number

@@ -558,6 +558,10 @@ export async function deleteOllamaModel(params: {
 export async function testAllChannels(): Promise<{
   success: boolean
   message?: string
+  data?: {
+    task_id: string
+    status: string
+  }
 }> {
   const res = await api.get('/api/channel/test', channelActionConfig())
   return res.data

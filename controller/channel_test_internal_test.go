@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -72,6 +74,46 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.Equal(t, "tiered_expr", other["billing_mode"])
 	require.Equal(t, "base", other["matched_tier"])
 	require.NotEmpty(t, other["expr_b64"])
+}
+
+func TestBuildChannelTestHistoryResultKeepsUpstreamAndGatewayStatus(t *testing.T) {
+	channel := &model.Channel{Id: 36, Name: "stream", Type: 1, Group: " default, gpt-pro "}
+	streamErr := types.NewOpenAIError(
+		errors.New("stream terminated"),
+		types.ErrorCodeChannelUpstreamStreamTerminated,
+		http.StatusBadGateway,
+	)
+	result := buildChannelTestHistoryResult(channel, testResult{
+		localErr:           streamErr,
+		newAPIError:        streamErr,
+		modelName:          "gpt-test",
+		requestPath:        "/v1/responses",
+		isStream:           true,
+		upstreamHTTPStatus: http.StatusOK,
+		resultStatusCode:   http.StatusBadGateway,
+	}, channelTestHistoryContext{
+		RunID:     "run-1",
+		RequestID: "request-1",
+		Source:    "scheduled",
+	}, 1200, service.ChannelTestActionNone)
+
+	require.Equal(t, service.ChannelTestStatusFailed, result.Status)
+	require.Equal(t, "stream_terminated", result.FailureKind)
+	require.Equal(t, http.StatusOK, result.UpstreamHTTPStatus)
+	require.Equal(t, http.StatusBadGateway, result.ResultStatusCode)
+	require.Equal(t, "request-1", result.RequestID)
+	require.Equal(t, "default,gpt-pro", result.ChannelGroups)
+}
+
+func TestBuildChannelTestHistoryResultPreservesUnsupportedFailure(t *testing.T) {
+	channel := &model.Channel{Id: 36, Name: "unsupported", Type: 1}
+	result := buildChannelTestHistoryResult(channel, testResult{
+		localErr:    errors.New("channel test is not supported"),
+		failureKind: service.ChannelTestFailureKindUnsupported,
+	}, channelTestHistoryContext{Source: "manual_single"}, 0, service.ChannelTestActionNone)
+
+	require.Equal(t, service.ChannelTestStatusFailed, result.Status)
+	require.Equal(t, service.ChannelTestFailureKindUnsupported, result.FailureKind)
 }
 
 func TestResolveChannelTestUserIDUsesRequestUser(t *testing.T) {

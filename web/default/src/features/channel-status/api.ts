@@ -52,8 +52,10 @@ export async function getPerfMetricChannels(params: {
   page: number
   pageSize: number
   search: string
+  group: string
   health: string
   channelStatus: '' | 'enabled' | 'auto_disabled' | 'manually_disabled'
+  providerType: number | null
   sort: ChannelMetricsSort
   order: 'asc' | 'desc'
 }) {
@@ -67,8 +69,10 @@ export async function getPerfMetricChannels(params: {
       p: params.page,
       page_size: params.pageSize,
       search: params.search || undefined,
+      group: params.group || undefined,
       health: params.health || undefined,
       channel_status: params.channelStatus || undefined,
+      type: params.providerType ?? undefined,
       sort: params.sort,
       order: params.order,
     },

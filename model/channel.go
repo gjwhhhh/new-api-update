@@ -91,6 +91,70 @@ type ChannelHealthCheckResult struct {
 	Stale         bool
 }
 
+// ApplySingleKeyHealthCheckResult applies a completed health check while
+// verifying that the channel state has not changed since the probe started.
+func ApplySingleKeyHealthCheckResult(channelId, originalStatus int, success, shouldDisable, shouldEnable bool, reason string) (ChannelHealthCheckResult, error) {
+	result := ChannelHealthCheckResult{}
+	channelStatusLock.Lock()
+
+	tx := DB.Begin()
+	if tx.Error != nil {
+		channelStatusLock.Unlock()
+		return result, tx.Error
+	}
+	channel := &Channel{}
+	if err := lockForUpdate(tx).Where("id = ?", channelId).First(channel).Error; err != nil {
+		tx.Rollback()
+		channelStatusLock.Unlock()
+		return result, err
+	}
+	if channel.ChannelInfo.IsMultiKey || channel.ChannelInfo.ManuallyDisabled || channel.Status != originalStatus {
+		tx.Rollback()
+		channelStatusLock.Unlock()
+		result.Stale = true
+		return result, nil
+	}
+
+	nextStatus := channel.Status
+	switch {
+	case !success && originalStatus == common.ChannelStatusEnabled && shouldDisable:
+		nextStatus = common.ChannelStatusAutoDisabled
+		result.Disabled = true
+	case success && originalStatus == common.ChannelStatusAutoDisabled && shouldEnable:
+		nextStatus = common.ChannelStatusEnabled
+		result.Enabled = true
+	default:
+		tx.Rollback()
+		channelStatusLock.Unlock()
+		return result, nil
+	}
+
+	info := channel.GetOtherInfo()
+	info["status_reason"] = reason
+	info["status_time"] = common.GetTimestamp()
+	channel.SetOtherInfo(info)
+	channel.Status = nextStatus
+	result.Changed = true
+	result.StatusChanged = true
+	if err := tx.Omit("key").Save(channel).Error; err != nil {
+		tx.Rollback()
+		channelStatusLock.Unlock()
+		return ChannelHealthCheckResult{}, err
+	}
+	if err := tx.Model(&Ability{}).Where("channel_id = ?", channelId).Select("enabled").Update("enabled", nextStatus == common.ChannelStatusEnabled).Error; err != nil {
+		tx.Rollback()
+		channelStatusLock.Unlock()
+		return ChannelHealthCheckResult{}, err
+	}
+	if err := tx.Commit().Error; err != nil {
+		channelStatusLock.Unlock()
+		return ChannelHealthCheckResult{}, err
+	}
+	channelStatusLock.Unlock()
+	InitChannelCache()
+	return result, nil
+}
+
 type ChannelSortOptions struct {
 	SortBy    string
 	SortOrder string
@@ -159,11 +223,21 @@ func NormalizeChannelGroupFilter(group string) string {
 	return group
 }
 
-func channelGroupFilterCondition() string {
-	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		return `CONCAT(',', ` + commonGroupCol + `, ',') LIKE ? ESCAPE '!'`
+func channelGroupFilterCondition(query *gorm.DB, groupColumn string) string {
+	if query != nil && query.Dialector.Name() == string(common.DatabaseTypeMySQL) {
+		return `CONCAT(',', ` + groupColumn + `, ',') LIKE ? ESCAPE '!'`
 	}
-	return `(',' || ` + commonGroupCol + ` || ',') LIKE ? ESCAPE '!'`
+	return `(',' || ` + groupColumn + ` || ',') LIKE ? ESCAPE '!'`
+}
+
+func channelGroupFilterColumn(query *gorm.DB) string {
+	if commonGroupCol != "" {
+		return commonGroupCol
+	}
+	if query != nil && query.Dialector.Name() == string(common.DatabaseTypePostgreSQL) {
+		return `"group"`
+	}
+	return "`group`"
 }
 
 func channelGroupFilterPattern(group string) string {
@@ -176,11 +250,15 @@ func channelGroupFilterPattern(group string) string {
 }
 
 func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
+	return applyChannelGroupFilter(query, group, channelGroupFilterColumn(query))
+}
+
+func applyChannelGroupFilter(query *gorm.DB, group string, groupColumn string) *gorm.DB {
 	group = NormalizeChannelGroupFilter(group)
 	if group == "" {
 		return query
 	}
-	return query.Where(channelGroupFilterCondition(), channelGroupFilterPattern(group))
+	return query.Where(channelGroupFilterCondition(query, groupColumn), channelGroupFilterPattern(group))
 }
 
 // Value implements driver.Valuer interface

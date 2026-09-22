@@ -69,6 +69,10 @@ const monitoringSchema = z.object({
     bucket_time: z.enum(['minute', '5min', 'hour']),
     retention_days: z.coerce.number().min(0),
   }),
+  channel_test_history_setting: z.object({
+    enabled: z.boolean(),
+    retention_days: z.coerce.number().int().min(1).max(90),
+  }),
 })
 
 type MonitoringFormInput = z.input<typeof monitoringSchema>
@@ -81,6 +85,8 @@ type FlatMonitoringDefaults = {
   'perf_metrics_setting.flush_interval': number
   'perf_metrics_setting.bucket_time': 'minute' | '5min' | 'hour'
   'perf_metrics_setting.retention_days': number
+  'channel_test_history_setting.enabled': boolean
+  'channel_test_history_setting.retention_days': number
 }
 
 type MonitoringSettingsSectionProps = {
@@ -98,6 +104,10 @@ const buildFormDefaults = (
     bucket_time: defaults['perf_metrics_setting.bucket_time'],
     retention_days: defaults['perf_metrics_setting.retention_days'],
   },
+  channel_test_history_setting: {
+    enabled: defaults['channel_test_history_setting.enabled'],
+    retention_days: defaults['channel_test_history_setting.retention_days'],
+  },
 })
 
 const normalizeDefaults = (
@@ -113,6 +123,10 @@ const normalizeDefaults = (
     defaults['perf_metrics_setting.bucket_time'],
   'perf_metrics_setting.retention_days':
     defaults['perf_metrics_setting.retention_days'],
+  'channel_test_history_setting.enabled':
+    defaults['channel_test_history_setting.enabled'],
+  'channel_test_history_setting.retention_days':
+    defaults['channel_test_history_setting.retention_days'],
 })
 
 const normalizeFormValues = (
@@ -127,6 +141,10 @@ const normalizeFormValues = (
   'perf_metrics_setting.bucket_time': values.perf_metrics_setting.bucket_time,
   'perf_metrics_setting.retention_days':
     values.perf_metrics_setting.retention_days,
+  'channel_test_history_setting.enabled':
+    values.channel_test_history_setting.enabled,
+  'channel_test_history_setting.retention_days':
+    values.channel_test_history_setting.retention_days,
 })
 
 export function MonitoringSettingsSection({
@@ -162,6 +180,9 @@ export function MonitoringSettingsSection({
   }, [defaultValues])
 
   const perfMetricsEnabled = form.watch('perf_metrics_setting.enabled')
+  const channelTestHistoryEnabled = form.watch(
+    'channel_test_history_setting.enabled'
+  )
 
   const onSubmit = async (values: MonitoringFormValues) => {
     const normalized = normalizeFormValues(values)
@@ -339,6 +360,63 @@ export function MonitoringSettingsSection({
                   </FormControl>
                   <FormDescription>
                     {t('0 means data is kept permanently')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <div>
+            <h4 className='font-medium'>{t('Channel test history')}</h4>
+            <p className='text-muted-foreground mt-1 text-xs'>
+              {t(
+                'Store safe success and failure records for manual and scheduled channel tests without affecting usage logs.'
+              )}
+            </p>
+          </div>
+
+          <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
+            <FormField
+              control={form.control}
+              name='channel_test_history_setting.enabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Enable channel test history')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'New channel tests will be recorded after this is enabled.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='channel_test_history_setting.retention_days'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Test history retention days')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={1}
+                      max={90}
+                      step={1}
+                      {...safeNumberFieldProps(field)}
+                      disabled={!channelTestHistoryEnabled}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Records older than this are deleted in daily batches.')}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

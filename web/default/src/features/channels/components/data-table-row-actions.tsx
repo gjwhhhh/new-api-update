@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from '@tanstack/react-router'
 import type { Row } from '@tanstack/react-table'
 import {
   MoreHorizontal,
@@ -33,6 +34,7 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  History,
 } from 'lucide-react'
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -83,6 +85,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const channel = row.original
   const { setOpen, setCurrentRow, upstream } = useChannels()
   const queryClient = useQueryClient()
+  const navigate = useNavigate({ from: '/channels/' })
   const currentUser = useAuthStore((s) => s.auth.user)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
@@ -110,9 +113,22 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     e.stopPropagation()
     setIsTesting(true)
     try {
-      await handleTestChannel(channel.id, { channelName: channel.name }, () => {
-        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
-      })
+      await handleTestChannel(
+        channel.id,
+        { channelName: channel.name },
+        () => {
+          queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+        },
+        (resultId) =>
+          void navigate({
+            to: '/channels/test-history',
+            search: {
+              channel_id: channel.id,
+              result_id: resultId,
+              time_range: '7d',
+            },
+          })
+      )
     } finally {
       setIsTesting(false)
     }
@@ -278,6 +294,20 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             {t('Test Connection')}
             <DropdownMenuShortcut>
               <PlugZap size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+
+          <DropdownMenuItem
+            render={
+              <Link
+                to='/channels/test-history'
+                search={{ channel_id: channel.id, time_range: '7d' }}
+              />
+            }
+          >
+            {t('View test history')}
+            <DropdownMenuShortcut>
+              <History size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 

@@ -1818,6 +1818,7 @@
     "Exchange rate is required": "Le taux de change est requis",
     "Exchange rate must be greater than 0": "Le taux de change doit être supérieur à 0",
     "Exclude from automatic tests": "Exclure des tests automatiques",
+    "Exclude Username": "Exclure l'utilisateur",
     "Execute code in a sandbox during the response": "Exécuter du code dans un bac à sable pendant la réponse",
     "Executor": "Exécuteur",
     "Exhausted": "Épuisé",

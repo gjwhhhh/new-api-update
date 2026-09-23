@@ -209,6 +209,9 @@ export function buildApiParams(config: {
     ...(isAdmin && searchParams.username
       ? { username: String(searchParams.username) }
       : {}),
+    ...(isAdmin && searchParams.excludeUsername
+      ? { exclude_username: String(searchParams.excludeUsername) }
+      : {}),
     ...(searchParams.requestId
       ? { request_id: String(searchParams.requestId) }
       : {}),

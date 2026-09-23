@@ -16,6 +16,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const maxLogTextFilterValues = 50
+
 func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm.DB, error) {
 	if value == "" {
 		return tx, nil
@@ -28,6 +30,50 @@ func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm
 		return tx.Where(condition, pattern), nil
 	}
 	return tx.Where(column+" = ?", value), nil
+}
+
+func splitLogFilterValues(value string) []string {
+	normalized := strings.ReplaceAll(value, "，", ",")
+	parts := strings.Split(normalized, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		values = append(values, part)
+	}
+	return values
+}
+
+func applyExcludedLogTextFilter(tx *gorm.DB, column string, value string) (*gorm.DB, error) {
+	values := splitLogFilterValues(value)
+	if len(values) == 0 {
+		return tx, nil
+	}
+	if len(values) > maxLogTextFilterValues {
+		return nil, errors.New("排除用户过多")
+	}
+
+	exactValues := make([]string, 0, len(values))
+	for _, item := range values {
+		if !strings.Contains(item, "%") {
+			exactValues = append(exactValues, item)
+			continue
+		}
+		condition, pattern, err := buildLogLikeCondition(column, item)
+		if err != nil {
+			return nil, err
+		}
+		tx = tx.Where("NOT ("+condition+")", pattern)
+	}
+	if len(exactValues) == 1 {
+		return tx.Where(column+" <> ?", exactValues[0]), nil
+	}
+	if len(exactValues) > 1 {
+		return tx.Where(column+" NOT IN ?", exactValues), nil
+	}
+	return tx, nil
 }
 
 func buildLogLikeCondition(column string, value string) (string, string, error) {
@@ -465,7 +511,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, excludeUsername string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -477,6 +523,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		return nil, 0, err
 	}
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
+		return nil, 0, err
+	}
+	if tx, err = applyExcludedLogTextFilter(tx, "logs.username", excludeUsername); err != nil {
 		return nil, 0, err
 	}
 	if tokenName != "" {
@@ -615,7 +664,7 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeUsername string) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 
 	// 为rpm和tpm创建单独的查询
@@ -625,6 +674,12 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 		return stat, err
 	}
 	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
+		return stat, err
+	}
+	if tx, err = applyExcludedLogTextFilter(tx, "username", excludeUsername); err != nil {
+		return stat, err
+	}
+	if rpmTpmQuery, err = applyExcludedLogTextFilter(rpmTpmQuery, "username", excludeUsername); err != nil {
 		return stat, err
 	}
 	if tokenName != "" {

@@ -1818,6 +1818,7 @@
     "Exchange rate is required": "匯率為必填項",
     "Exchange rate must be greater than 0": "匯率必須大於 0",
     "Exclude from automatic tests": "不參與自動測試",
+    "Exclude Username": "Exclude Username",
     "Execute code in a sandbox during the response": "在回應過程中沙箱執行程式碼",
     "Executor": "執行實例",
     "Exhausted": "已耗盡",

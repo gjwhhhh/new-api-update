@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageSquare,
+  PanelsTopLeft,
   Radio,
   ServerCog,
   Settings,
@@ -61,6 +62,11 @@ export function useSidebarData(): SidebarData {
             title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
+          },
+          {
+            title: t('AI Workspace'),
+            url: '/ai-workspace',
+            icon: PanelsTopLeft,
           },
           {
             title: t('Chat'),

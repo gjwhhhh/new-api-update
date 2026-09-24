@@ -30,11 +30,11 @@ import { useStatus } from '@/hooks/use-status'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
 
 import { ConnectionWalkthrough } from './connection-walkthrough'
-import { IntegrationDemo } from './integration-demo'
 import { Reveal } from './reveal'
 
 export function GettingStarted(props: {
   startUrl: '/dashboard' | '/sign-in' | '/sign-up'
+  hasModelSection: boolean
 }) {
   const { t } = useTranslation()
   const { status } = useStatus()
@@ -81,7 +81,9 @@ export function GettingStarted(props: {
         <div className='brand-container brand-section'>
           <Reveal className='brand-section-heading'>
             <div>
-              <p className='brand-section-number'>02 / {t('Quick start')}</p>
+              <p className='brand-section-number'>
+                {props.hasModelSection ? '03' : '02'} / {t('Quick start')}
+              </p>
               <h2 id='setup-title'>
                 {t('From an idea to your first request.')}
               </h2>
@@ -99,10 +101,6 @@ export function GettingStarted(props: {
             )}
           </Reveal>
           <ConnectionWalkthrough />
-          <details className='signal-playground-disclosure'>
-            <summary>{t('API request example')} · Python / cURL</summary>
-            <IntegrationDemo />
-          </details>
           <div className='brand-setup-bottom'>
             <code>OpenAI SDK / cURL / Cherry Studio</code>
             <Link className='brand-text-link' to={props.startUrl}>
@@ -117,7 +115,9 @@ export function GettingStarted(props: {
         aria-labelledby='faq-title'
       >
         <Reveal>
-          <p className='brand-section-number'>03 / {t('Before you begin')}</p>
+          <p className='brand-section-number'>
+            {props.hasModelSection ? '04' : '03'} / {t('Before you begin')}
+          </p>
           <h2 id='faq-title'>{t('A few things worth knowing.')}</h2>
           <p className='brand-section-description'>
             {t('Clear answers, before your first call.')}

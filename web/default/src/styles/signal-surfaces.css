@@ -1,0 +1,1662 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+/* Shared visual language for public destinations. Keep these tokens derived
+ * from the active theme so public pages stay coherent in light and dark mode. */
+:root {
+  --app-canvas: var(--background);
+  --app-surface: var(--card);
+  --app-surface-raised: color-mix(in srgb, var(--muted) 72%, var(--card));
+  --app-border: color-mix(in srgb, var(--border) 84%, transparent);
+  --app-border-strong: color-mix(in srgb, var(--foreground) 22%, var(--border));
+  --app-foreground: var(--foreground);
+  --app-muted: var(--muted-foreground);
+  --app-subtle: color-mix(in srgb, var(--muted-foreground) 72%, transparent);
+  --app-primary: var(--primary);
+  --app-primary-foreground: var(--primary-foreground);
+  --signal-public-canvas: var(--background);
+  --signal-public-surface: var(--card);
+  --signal-public-raised: color-mix(in srgb, var(--muted) 72%, var(--card));
+  --signal-public-border: color-mix(in srgb, var(--border) 84%, transparent);
+  --signal-public-strong: var(--foreground);
+  --signal-public-muted: var(--muted-foreground);
+  --signal-public-radius-sm: 0.5rem;
+  --signal-public-radius-md: 0.75rem;
+  --signal-public-radius-lg: 1.25rem;
+  --signal-public-radius-pill: 999px;
+}
+
+/* Include body-level portals, not just controls nested under a page shell. */
+body:where(:not([data-theme-preset]))
+  :is([data-slot='button'], [data-slot='sidebar-menu-button']) {
+  border-radius: calc(var(--radius) * 2 / 3);
+}
+
+body:where(:not([data-theme-preset]))
+  :is(
+    [data-slot='card'],
+    [data-slot='dialog-content'],
+    [data-slot='alert-dialog-content'],
+    [data-slot='data-table-card']
+  ) {
+  border-radius: var(--radius);
+}
+
+/* Authentication, setup, and status routes */
+.signal-auth-shell,
+.signal-setup-shell,
+.signal-error-page {
+  --background: #f7f7f6;
+  --card: #ffffff;
+  --muted: #eeeeec;
+  --border: #dcdcd8;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  min-height: 100svh;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.dark .signal-auth-shell,
+.dark .signal-setup-shell,
+.dark .signal-error-page {
+  --background: #111111;
+  --card: #191919;
+  --muted: #242424;
+  --border: #383838;
+  --primary: #f5f5f3;
+  --primary-foreground: #111111;
+}
+
+.signal-auth-shell .container > div {
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--card) 96%, transparent);
+  box-shadow: none;
+}
+
+.signal-auth-shell [data-slot='input'],
+.signal-setup-shell [data-slot='input'] {
+  border-color: var(--input);
+  background: var(--card);
+}
+
+.signal-auth-shell [data-slot='input']:focus,
+.signal-setup-shell [data-slot='input']:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.signal-setup-shell [data-slot='card'] {
+  border-color: var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-error-page h1 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  letter-spacing: -0.06em;
+}
+
+/* Console shell */
+body:where(:not([data-theme-preset])) .signal-console-shell {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.49 0 0);
+  --border: oklch(0.93 0 0);
+  --input: oklch(0.93 0 0);
+  --ring: oklch(0.708 0.16 249.003);
+  --sidebar: color-mix(in oklch, var(--foreground) 0.5%, var(--background));
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: var(--foreground);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: color-mix(in srgb, var(--foreground) 7%, var(--background));
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: oklch(0.93 0 0);
+  --sidebar-ring: var(--foreground);
+  --skeleton-base: oklch(0.97 0 0);
+  --skeleton-highlight: oklch(0.985 0 0);
+  --table-row: var(--background);
+  --table-header: color-mix(
+    in oklch,
+    var(--foreground) 1.5%,
+    var(--background)
+  );
+  --table-header-hover: color-mix(
+    in oklch,
+    var(--foreground) 3%,
+    var(--background)
+  );
+  --table-selected: var(--muted);
+  --table-selected-hover: var(--table-header-hover);
+}
+
+.dark body:where(:not([data-theme-preset])) .signal-console-shell {
+  --background: oklch(0.235 0 0);
+  --foreground: oklch(0.965 0 0);
+  --card: oklch(0.285 0 0);
+  --card-foreground: oklch(0.965 0 0);
+  --popover: oklch(0.305 0 0);
+  --popover-foreground: oklch(0.965 0 0);
+  --muted: oklch(0.305 0 0);
+  --muted-foreground: oklch(0.78 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 17%);
+  --ring: oklch(0.554 0.148 250.726);
+  --sidebar: oklch(0.225 0 0);
+  --sidebar-foreground: oklch(0.95 0 0);
+  --sidebar-primary: var(--foreground);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: color-mix(in srgb, var(--foreground) 7%, var(--background));
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: oklch(1 0 0 / 11%);
+  --sidebar-ring: var(--foreground);
+  --skeleton-base: oklch(0.335 0 0);
+  --skeleton-highlight: oklch(0.44 0 0);
+  --table-row: var(--background);
+  --table-header: color-mix(in oklch, var(--foreground) 6%, var(--background));
+  --table-header-hover: color-mix(
+    in oklch,
+    var(--foreground) 9%,
+    var(--background)
+  );
+  --table-selected: var(--muted);
+  --table-selected-hover: var(--table-header-hover);
+}
+
+.signal-console-shell {
+  --app-header-height: 3.5rem;
+  min-height: 100svh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+}
+
+.signal-console-shell > header {
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 95%, transparent);
+  box-shadow: none;
+  backdrop-filter: blur(18px);
+}
+
+.signal-console-shell > header > div {
+  position: relative;
+  z-index: 1;
+  padding-inline: 0.75rem;
+}
+
+.signal-console-shell > header [data-slot='system-brand'] {
+  height: 2rem;
+  gap: 0.5rem;
+  padding-inline: 0.375rem;
+  border-radius: 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.signal-console-shell [data-slot='sidebar-container'],
+.signal-console-shell [data-slot='sidebar-inner'],
+.signal-console-shell [data-slot='sidebar-inset'] {
+  background: var(--background);
+}
+
+.signal-console-shell [data-slot='sidebar-container'] {
+  border-color: var(--sidebar-border);
+}
+
+.signal-console-shell [data-slot='sidebar-content'] {
+  padding-top: 0.5rem;
+}
+
+.signal-console-shell [data-slot='sidebar-group'] {
+  padding-block: 0.35rem;
+}
+
+.signal-console-shell [data-slot='sidebar-group-label'] {
+  height: 1.8rem;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.signal-console-shell [data-slot='sidebar-menu'] {
+  gap: 0.2rem;
+}
+
+.signal-console-shell [data-slot='sidebar-menu-button'] {
+  border-radius: 0.5rem;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.signal-console-shell [data-slot='sidebar-menu-button'][data-active] {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 7%, var(--background));
+  box-shadow: none;
+}
+
+.signal-console-shell [data-slot='sidebar-menu-button'][data-active]:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 10%, var(--background));
+}
+
+.signal-console-shell [data-slot='sidebar-menu-button']:active {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 10%, var(--background));
+}
+
+.signal-console-shell [data-slot='section-page-heading'],
+.signal-console-shell [data-slot='section-page-content'],
+.signal-console-shell [data-slot='section-page-footer'] {
+  background: var(--background);
+}
+
+.signal-console-shell [data-slot='section-page-heading'] h2 {
+  font-size: clamp(1.25rem, 2vw, 1.5rem);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+}
+
+.signal-console-shell [data-slot='card'] {
+  border-color: var(--border);
+  border-radius: 1rem;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-console-shell
+  :is(
+    [data-slot='input'],
+    [data-slot='select-trigger'],
+    [data-slot='textarea']
+  ) {
+  border-color: var(--input);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+}
+
+.signal-console-shell
+  :is(
+    [data-slot='input'],
+    [data-slot='select-trigger'],
+    [data-slot='textarea']
+  ):focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 12%, transparent);
+}
+
+.signal-console-shell [data-slot='button'] {
+  border-radius: 0.5rem;
+}
+
+.signal-console-shell [data-slot='alert'] {
+  border-color: color-mix(in srgb, var(--border) 90%, transparent);
+}
+
+.signal-console-shell [data-slot='tabs-list']:not([data-variant='line']) {
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: var(--muted);
+}
+
+.signal-console-shell
+  [data-slot='tabs-list']:not([data-variant='line'])
+  [data-slot='tabs-trigger'][data-active] {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+.signal-console-shell [data-slot='table'] {
+  background: var(--table-row);
+}
+
+.signal-console-shell [data-slot='table-header'] {
+  background: var(--table-header);
+}
+
+.signal-console-shell [data-slot='table-head'] {
+  color: color-mix(in srgb, var(--foreground) 76%, var(--muted-foreground));
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.signal-console-shell [data-slot='table-row'] {
+  border-color: color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.signal-console-shell [data-slot='table-row']:hover {
+  background: color-mix(in oklch, var(--muted) 50%, var(--background));
+}
+
+.signal-console-shell [data-slot='data-table-page'] {
+  gap: 0.75rem;
+}
+
+.signal-console-shell [data-slot='data-table-toolbar'] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.signal-console-shell [data-slot='logs-filter-toolbar'] {
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--card) 96%, transparent);
+  padding: 0.75rem;
+  box-shadow: none;
+}
+
+.signal-console-shell [data-slot='data-table-view'] {
+  border-color: var(--border);
+  border-radius: 1rem;
+  background: var(--table-row);
+}
+
+.signal-console-shell [data-slot='data-table-card'] {
+  border-color: var(--border);
+  border-radius: 1rem;
+  background: var(--table-row);
+  box-shadow: none;
+}
+
+.signal-console-shell [data-slot='status-badge'] {
+  min-height: 1.375rem;
+  border-radius: 999px;
+}
+
+.signal-wallet-page [data-slot='section-page-content'],
+.signal-system-settings-page [data-slot='section-page-content'] {
+  padding-bottom: 2rem;
+}
+
+@media (min-width: 768px) {
+  .signal-console-shell > header > div {
+    padding-inline: 1.25rem;
+  }
+
+  .signal-console-shell [data-slot='section-page-heading'],
+  .signal-console-shell [data-slot='section-page-content'],
+  .signal-console-shell [data-slot='section-page-footer'] {
+    padding-inline: 1.5rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .signal-console-shell > header > div,
+  .signal-console-shell [data-slot='section-page-heading'],
+  .signal-console-shell [data-slot='section-page-content'],
+  .signal-console-shell [data-slot='section-page-footer'] {
+    padding-inline: 2rem;
+  }
+}
+
+.signal-dashboard [data-slot='section-page-heading'] {
+  border-bottom: 0;
+  background: var(--background);
+}
+
+.signal-dashboard [data-slot='section-page-heading'] h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.signal-dashboard [data-slot='section-page-content'],
+.signal-dashboard [data-slot='section-page-footer'] {
+  background: var(--background);
+}
+
+.signal-dashboard .signal-dashboard-overview {
+  gap: 1rem;
+}
+
+.signal-dashboard .signal-dashboard-backdrop {
+  display: none;
+}
+
+.signal-dashboard
+  :is(
+    .signal-dashboard-setup-main,
+    .signal-dashboard-quick-actions,
+    .signal-dashboard-setup-collapsed,
+    .signal-dashboard-summary,
+    .signal-dashboard-panel
+  ) {
+  border-color: var(--border);
+  border-radius: 1rem;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-dashboard .signal-dashboard-setup-main > div {
+  padding: 1.25rem;
+}
+
+.signal-dashboard .signal-dashboard-quick-actions {
+  padding: 1.25rem;
+}
+
+.signal-dashboard .signal-dashboard-steps {
+  border-color: var(--border);
+  border-radius: 1rem;
+  background: var(--card);
+  backdrop-filter: none;
+}
+
+.signal-dashboard .signal-dashboard-step {
+  padding-bottom: 0.75rem;
+}
+
+.signal-dashboard .signal-dashboard-step-indicator {
+  border-color: var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-dashboard .signal-dashboard-step-link {
+  border-color: var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-dashboard .signal-dashboard-step-link:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 3%, var(--card));
+}
+
+.signal-dashboard .signal-dashboard-request-preview {
+  border-color: var(--border);
+  border-radius: 1rem;
+  background: var(--card);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.signal-dashboard .signal-dashboard-request-code {
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 0.5rem;
+  background: var(--muted);
+}
+
+.signal-dashboard .signal-dashboard-request-signal {
+  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.signal-dashboard .signal-dashboard-request-signal:first-of-type {
+  border-top: 0;
+}
+
+.signal-dashboard .signal-dashboard-quick-action {
+  border-color: var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-dashboard .signal-dashboard-quick-action:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 3%, var(--card));
+}
+
+.signal-dashboard .signal-dashboard-panel [class*='border-b'] {
+  border-color: var(--border);
+}
+
+/* Shared public navigation */
+.signal-public-header {
+  --signal-header-glass: var(--card);
+  --signal-header-edge: var(--border);
+  --signal-header-scrim-strong: color-mix(
+    in srgb,
+    var(--card) 92%,
+    transparent
+  );
+  --signal-header-scrim-soft: color-mix(in srgb, var(--card) 64%, transparent);
+  --signal-header-blur-tint: color-mix(in srgb, var(--card) 4%, transparent);
+  border-bottom: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Public pages intentionally use the homepage's cool neutral canvas even
+ * when a theme preset uses a warmer editorial background elsewhere. */
+.signal-public-shell,
+.signal-pricing {
+  --signal-public-canvas: #f7f7f6;
+  --signal-public-surface: #ffffff;
+  --signal-public-raised: #eeeeec;
+  --signal-public-border: #dcdcd8;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --background: var(--signal-public-canvas);
+  --card: var(--signal-public-surface);
+  --popover: var(--signal-public-surface);
+  --secondary: var(--signal-public-raised);
+  --muted: var(--signal-public-raised);
+  --border: var(--signal-public-border);
+  --input: #b8b8b2;
+}
+
+.dark .signal-public-shell,
+.dark .signal-pricing {
+  --signal-public-canvas: #111111;
+  --signal-public-surface: #191919;
+  --signal-public-raised: #242424;
+  --signal-public-border: #383838;
+  --primary: #f5f5f3;
+  --primary-foreground: #111111;
+  --background: var(--signal-public-canvas);
+  --card: var(--signal-public-surface);
+  --popover: var(--signal-public-surface);
+  --secondary: var(--signal-public-raised);
+  --muted: var(--signal-public-raised);
+  --border: var(--signal-public-border);
+  --input: #666666;
+}
+
+.signal-public-header::before,
+.signal-public-header::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 500ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.signal-public-header::before {
+  background: var(--signal-header-blur-tint);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    #000 0%,
+    rgb(0 0 0 / 0.88) 52%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    #000 0%,
+    rgb(0 0 0 / 0.88) 52%,
+    transparent 100%
+  );
+}
+
+.signal-public-header::after {
+  background: linear-gradient(
+    180deg,
+    var(--signal-header-scrim-strong) 0%,
+    var(--signal-header-scrim-soft) 58%,
+    transparent 100%
+  );
+}
+
+.signal-public-header > div {
+  position: relative;
+  z-index: 1;
+  max-width: 1552px;
+  padding-inline: 56px;
+}
+
+.signal-public-header > div > nav {
+  height: 86px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  transition-property:
+    height, padding, border-radius, background-color, box-shadow,
+    backdrop-filter;
+}
+
+.signal-public-header .brand-name-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 23px;
+  letter-spacing: -0.055em;
+}
+
+.signal-public-header .brand-name-mark {
+  display: block;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  object-fit: contain;
+}
+
+.signal-public-header nav a:is(.text-muted-foreground, .text-foreground) {
+  transition-property: color, font-weight;
+  transition-duration: 180ms;
+}
+
+.signal-public-header nav a.text-muted-foreground:hover {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.signal-public-header nav a.text-foreground {
+  font-weight: 600;
+}
+
+.signal-public-header :is(a, button):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--foreground) 72%, transparent);
+  outline-offset: 3px;
+}
+
+.signal-public-header[data-scrolled='true'] {
+  background: transparent;
+}
+
+.signal-public-header[data-scrolled='true']::before,
+.signal-public-header[data-scrolled='true']::after {
+  opacity: 0;
+}
+
+.signal-public-header[data-scrolled='true'] > div {
+  max-width: min(74rem, calc(100% - 24px));
+  padding: 12px;
+}
+
+.signal-public-header[data-scrolled='true'] > div > nav {
+  height: 60px;
+  padding: 0 8px 0 18px;
+  border: 1px solid var(--signal-header-edge);
+  border-radius: 20px;
+  background: var(--signal-header-glass);
+  box-shadow: 0 14px 36px -22px rgb(26 26 22 / 0.45);
+  backdrop-filter: blur(24px);
+}
+
+.signal-public-header[data-scrolled='true'] .brand-name-row {
+  font-size: 19px;
+}
+
+.signal-public-header[data-scrolled='true'] .brand-name-mark {
+  width: 24px;
+  height: 24px;
+}
+
+/* Public destinations and Model Square */
+
+.signal-pricing {
+  --accent: color-mix(in srgb, var(--primary) 7%, var(--card));
+  --input: color-mix(in srgb, var(--foreground) 28%, var(--border));
+}
+
+.dark .signal-pricing {
+  --accent: color-mix(in srgb, var(--primary) 10%, var(--card));
+  --input: color-mix(in srgb, var(--foreground) 30%, var(--border));
+}
+
+.signal-public-shell {
+  min-height: 100svh;
+  background: var(--background);
+  color: var(--signal-public-strong);
+}
+
+.signal-public-shell [data-slot='card'] {
+  border-color: var(--border);
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-public-shell [data-slot='alert'] {
+  border-color: color-mix(in srgb, var(--border) 90%, transparent);
+}
+
+.signal-public-rankings {
+  min-height: 100svh;
+  background: var(--background);
+}
+
+.signal-public-rankings-aura {
+  display: none;
+}
+
+.signal-public-rankings .signal-rankings-panel {
+  border-color: var(--border);
+  border-radius: var(--signal-public-radius-md);
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-public-rankings .signal-rankings-panel :is(.border-t, .border-b) {
+  border-color: var(--border);
+}
+
+.signal-pricing-page {
+  min-height: 100svh;
+  background: var(--background);
+}
+
+.signal-pricing-ribbon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  display: block;
+  width: min(78rem, 78vw);
+  height: 25rem;
+  object-fit: cover;
+  object-position: center top;
+  pointer-events: none;
+  filter: grayscale(1) saturate(0.35) contrast(0.92);
+  opacity: 0.1;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    #000 0%,
+    rgb(0 0 0 / 0.8) 45%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    #000 0%,
+    rgb(0 0 0 / 0.8) 45%,
+    transparent 100%
+  );
+}
+
+.dark .signal-pricing-ribbon {
+  opacity: 0.06;
+  filter: grayscale(1) brightness(0.5);
+}
+
+.signal-pricing-content {
+  isolation: isolate;
+}
+
+@media (min-width: 768px) {
+  .signal-pricing-content {
+    padding-top: 4.25rem;
+  }
+
+  .signal-pricing-hero {
+    margin-bottom: 1.75rem;
+  }
+}
+
+.signal-pricing-hero h1 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.signal-pricing-hero > p:first-of-type {
+  color: var(--muted-foreground);
+}
+
+.signal-pricing-search-bar input {
+  height: 3rem;
+  border-color: var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--card) 90%, transparent);
+  box-shadow: none;
+}
+
+.signal-pricing-search-bar input:hover {
+  border-color: color-mix(in srgb, var(--foreground) 24%, var(--border));
+}
+
+.signal-pricing-search-bar input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.signal-pricing-search-bar kbd {
+  border-color: var(--border);
+  border-radius: 0.375rem;
+  background: var(--muted);
+}
+
+.signal-pricing-layout {
+  align-items: start;
+  gap: 1rem;
+}
+
+.signal-pricing .signal-pricing-sidebar-panel,
+.signal-pricing .signal-pricing-toolbar,
+.signal-pricing .signal-model-card {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--card) 86%, transparent);
+  box-shadow: none;
+}
+
+.signal-pricing .signal-pricing-sidebar-panel {
+  border-radius: 0.625rem;
+  padding: 0.875rem;
+}
+
+.signal-pricing .signal-pricing-sidebar-panel.signal-pricing-sidebar-mobile {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.signal-pricing .signal-pricing-filter-section {
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.signal-pricing .signal-pricing-filter-chip {
+  border-color: color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 0.375rem;
+  background: var(--card);
+  color: var(--muted-foreground);
+  box-shadow: none;
+}
+
+.signal-pricing .signal-pricing-filter-chip:hover {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+  background: color-mix(in srgb, var(--primary) 3%, var(--card));
+  color: var(--foreground);
+}
+
+.signal-pricing .signal-pricing-filter-chip[data-active='true'] {
+  border-color: color-mix(in srgb, var(--primary) 68%, var(--border));
+  background: color-mix(in srgb, var(--primary) 7%, var(--card));
+  color: var(--primary);
+  box-shadow: none;
+}
+
+.signal-pricing .signal-pricing-filter-chip > span:last-child {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.signal-pricing
+  .signal-pricing-filter-chip[data-active='true']
+  > span:last-child {
+  background: var(--card);
+  color: var(--primary);
+}
+
+.signal-pricing .signal-pricing-toolbar {
+  border-radius: 0.625rem;
+  padding: 0.75rem 0.875rem;
+}
+
+.signal-pricing .signal-pricing-segmented-control {
+  border-color: var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+}
+
+.signal-pricing .signal-pricing-segmented-control button {
+  border-radius: 0.375rem;
+}
+
+.signal-pricing .signal-pricing-segmented-control button[aria-pressed='true'] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: none;
+}
+
+.signal-pricing .signal-model-card-grid-items {
+  gap: 1rem;
+}
+
+.signal-pricing .signal-model-card {
+  min-height: 10.25rem;
+  border-radius: var(--signal-public-radius-md);
+  padding: 1rem;
+  box-shadow: 0 1px 0 rgb(20 22 18 / 0.02);
+}
+
+.signal-pricing .signal-model-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 2%, var(--card));
+  box-shadow: none;
+}
+
+.signal-pricing .signal-model-card-icon {
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.signal-pricing .signal-model-card-action,
+.signal-pricing .signal-model-card-copy {
+  border-color: var(--border);
+  border-radius: 0.375rem;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.signal-pricing .signal-model-card-action:hover,
+.signal-pricing .signal-model-card-copy:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 3%, var(--card));
+}
+
+.signal-pricing .signal-model-billing-mode,
+.signal-pricing-drawer .signal-model-billing-mode {
+  color: var(--primary);
+}
+
+.signal-pricing-drawer {
+  border-color: var(--border);
+  background: var(--background);
+}
+
+/* About and other prose-based public pages use the same quiet reading lane. */
+.signal-about-content {
+  max-width: 48rem;
+  margin-inline: auto;
+  padding-block: clamp(3.5rem, 7vw, 6rem);
+}
+
+.signal-about-content :is(h1, h2, h3, h4) {
+  color: var(--signal-public-strong);
+  letter-spacing: -0.035em;
+}
+
+.signal-about-content :is(p, li) {
+  color: var(--signal-public-muted);
+  line-height: 1.8;
+}
+
+.signal-about-content a {
+  color: var(--signal-public-strong);
+  text-underline-offset: 0.2em;
+}
+
+.signal-about-empty {
+  min-height: min(60vh, 38rem);
+  padding: clamp(3rem, 8vw, 7rem) 1.5rem;
+}
+
+.signal-pricing-drawer [data-slot='tabs-list'] {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+}
+
+.signal-pricing-drawer [data-slot='tabs-trigger'] {
+  border-radius: 0.375rem;
+}
+
+.signal-pricing-drawer [data-slot='tabs-trigger'][data-active] {
+  border-color: color-mix(in srgb, var(--border) 78%, transparent);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+/* Content below the retained navigation and page headings keeps the palette
+ * from codex/custom-prod. The refreshed shell controls remain neutral. */
+.signal-pricing-legacy-colors,
+.signal-public-legacy-colors,
+.signal-console-legacy-colors,
+body[data-console-active='true']
+  :is(
+    [data-slot='dialog-content'],
+    [data-slot='alert-dialog-content'],
+    [data-slot='sheet-content'],
+    [data-slot='drawer-content']
+  ) {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.692 0.141 243.716);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0 0);
+  --secondary-foreground: oklch(0.42 0.16 250);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.49 0 0);
+  --accent: color-mix(in oklch, var(--primary) 12%, var(--background));
+  --accent-foreground: oklch(0.145 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.596 0.145 163.225);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.681 0.162 75.834);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.588 0.158 241.966);
+  --info-foreground: oklch(0.985 0 0);
+  --neutral: oklch(0.708 0 0);
+  --neutral-foreground: oklch(0.145 0 0);
+  --border: oklch(0.93 0 0);
+  --input: oklch(0.93 0 0);
+  --ring: oklch(0.708 0.16 249.003);
+  --chart-1: oklch(0.72 0.18 250);
+  --chart-2: oklch(0.65 0.15 200);
+  --chart-3: oklch(0.7 0.12 280);
+  --chart-4: oklch(0.68 0.19 325);
+  --chart-5: oklch(0.68 0.16 155);
+  --overview-accent-1: oklch(0.72 0.18 250);
+  --overview-accent-2: oklch(0.65 0.15 200);
+  --overview-accent-3: oklch(0.7 0.12 280);
+  --sidebar: color-mix(in oklch, var(--foreground) 0.5%, var(--background));
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.64 0.197 253.892);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: color-mix(in oklch, var(--primary) 12%, var(--background));
+  --sidebar-accent-foreground: oklch(0.579 0.196 255.909);
+  --sidebar-border: oklch(0.93 0 0);
+  --sidebar-ring: oklch(0.58 0.2 250);
+  --skeleton-base: oklch(0.97 0 0);
+  --skeleton-highlight: oklch(0.985 0 0);
+  --table-row: var(--background);
+  --table-header: color-mix(
+    in oklch,
+    var(--foreground) 1.5%,
+    var(--background)
+  );
+  --table-header-hover: color-mix(
+    in oklch,
+    var(--foreground) 3%,
+    var(--background)
+  );
+  --table-selected: color-mix(in oklch, var(--foreground) 4%, var(--table-row));
+  --table-selected-hover: color-mix(
+    in oklch,
+    var(--foreground) 6%,
+    var(--table-row)
+  );
+  --table-disabled: color-mix(
+    in oklch,
+    var(--foreground) 3%,
+    var(--background)
+  );
+  --table-disabled-hover: color-mix(
+    in oklch,
+    var(--foreground) 4.5%,
+    var(--background)
+  );
+  --table-disabled-border: color-mix(
+    in oklch,
+    var(--foreground) 16%,
+    var(--background)
+  );
+  --signal-public-canvas: var(--background);
+  --signal-public-surface: var(--card);
+  --signal-public-raised: var(--muted);
+  --signal-public-border: var(--border);
+  --signal-public-strong: var(--foreground);
+  --signal-public-muted: var(--muted-foreground);
+}
+
+.dark .signal-pricing-legacy-colors,
+.dark .signal-public-legacy-colors,
+.dark .signal-console-legacy-colors,
+.dark
+  body[data-console-active='true']
+  :is(
+    [data-slot='dialog-content'],
+    [data-slot='alert-dialog-content'],
+    [data-slot='sheet-content'],
+    [data-slot='drawer-content']
+  ) {
+  --background: oklch(0.235 0 0);
+  --foreground: oklch(0.965 0 0);
+  --card: oklch(0.285 0 0);
+  --card-foreground: oklch(0.965 0 0);
+  --popover: oklch(0.305 0 0);
+  --popover-foreground: oklch(0.965 0 0);
+  --primary: oklch(0.54 0.142 248.516);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.335 0 0);
+  --secondary-foreground: oklch(0.9 0.05 250);
+  --muted: oklch(0.305 0 0);
+  --muted-foreground: oklch(0.78 0 0);
+  --accent: color-mix(in oklch, var(--primary) 20%, var(--background));
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.696 0.17 162.48);
+  --success-foreground: oklch(0.145 0 0);
+  --warning: oklch(0.769 0.188 70.08);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.613 0.14 239.919);
+  --info-foreground: oklch(0.145 0 0);
+  --neutral: oklch(0.76 0 0);
+  --neutral-foreground: oklch(0.155 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 17%);
+  --ring: oklch(0.554 0.148 250.726);
+  --chart-1: oklch(0.76 0.14 250);
+  --chart-2: oklch(0.76 0.13 200);
+  --chart-3: oklch(0.76 0.13 285);
+  --chart-4: oklch(0.75 0.16 325);
+  --chart-5: oklch(0.76 0.14 155);
+  --sidebar: oklch(0.225 0 0);
+  --sidebar-foreground: oklch(0.95 0 0);
+  --sidebar-primary: oklch(0.588 0.123 246.488);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: color-mix(in oklch, var(--primary) 20%, var(--background));
+  --sidebar-accent-foreground: oklch(0.9 0.05 250);
+  --sidebar-border: oklch(1 0 0 / 11%);
+  --sidebar-ring: oklch(0.7 0.17 250);
+  --skeleton-base: oklch(0.335 0 0);
+  --skeleton-highlight: oklch(0.44 0 0);
+  --table-row: var(--background);
+  --table-header: color-mix(in oklch, var(--foreground) 6%, var(--background));
+  --table-header-hover: color-mix(
+    in oklch,
+    var(--foreground) 9%,
+    var(--background)
+  );
+  --table-selected: color-mix(in oklch, var(--foreground) 8%, var(--table-row));
+  --table-selected-hover: color-mix(
+    in oklch,
+    var(--foreground) 11%,
+    var(--table-row)
+  );
+  --table-disabled: color-mix(
+    in oklch,
+    var(--foreground) 7%,
+    var(--background)
+  );
+  --table-disabled-hover: color-mix(
+    in oklch,
+    var(--foreground) 9.5%,
+    var(--background)
+  );
+  --table-disabled-border: color-mix(
+    in oklch,
+    var(--foreground) 24%,
+    var(--background)
+  );
+  --signal-public-canvas: var(--background);
+  --signal-public-surface: var(--card);
+  --signal-public-raised: var(--muted);
+  --signal-public-border: var(--border);
+  --signal-public-strong: var(--foreground);
+  --signal-public-muted: var(--muted-foreground);
+}
+
+/* Public page content returns to the custom-prod palette while the refreshed
+ * navigation keeps its current neutral colors. */
+.signal-public-legacy-colors > .signal-public-header {
+  --background: #f7f7f6;
+  --foreground: #0d0d0d;
+  --card: #ffffff;
+  --card-foreground: #0d0d0d;
+  --popover: #ffffff;
+  --popover-foreground: #0d0d0d;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --secondary: #eeeeec;
+  --secondary-foreground: #232323;
+  --muted: #eeeeec;
+  --muted-foreground: #5d5d5a;
+  --accent: #e8e8e6;
+  --accent-foreground: #0d0d0d;
+  --border: #dcdcd8;
+  --input: #b8b8b2;
+  --ring: #3f8fc7;
+}
+
+.dark .signal-public-legacy-colors > .signal-public-header {
+  --background: #111111;
+  --foreground: #f5f5f3;
+  --card: #191919;
+  --card-foreground: #f5f5f3;
+  --popover: #191919;
+  --popover-foreground: #f5f5f3;
+  --primary: #f5f5f3;
+  --primary-foreground: #111111;
+  --secondary: #242424;
+  --secondary-foreground: #f5f5f3;
+  --muted: #242424;
+  --muted-foreground: #aaa9a5;
+  --accent: #343434;
+  --accent-foreground: #f5f5f3;
+  --border: #383838;
+  --input: #666666;
+  --ring: #72a9cf;
+}
+
+.signal-console-legacy-colors,
+body[data-console-active='true']
+  :is(
+    [data-slot='dialog-content'],
+    [data-slot='alert-dialog-content'],
+    [data-slot='sheet-content'],
+    [data-slot='drawer-content']
+  ) {
+  --app-canvas: var(--background);
+  --app-surface: var(--card);
+  --app-surface-raised: var(--muted);
+  --app-border: var(--border);
+  --app-border-strong: color-mix(in srgb, var(--foreground) 22%, var(--border));
+  --app-foreground: var(--foreground);
+  --app-muted: var(--muted-foreground);
+  --app-subtle: color-mix(in srgb, var(--muted-foreground) 72%, transparent);
+  --app-primary: var(--primary);
+  --app-primary-foreground: var(--primary-foreground);
+}
+
+/* The selected controls are intentionally black in the refreshed design. */
+.signal-pricing-legacy-colors button[aria-pressed='true'] {
+  background: #0c0c0c;
+  color: #fff;
+}
+
+.signal-pricing-legacy-colors [data-slot='button'].bg-primary {
+  background: #0c0c0c;
+  color: #ffffff;
+}
+
+/* Keep the refreshed console's black primary actions and large title color. */
+.signal-console-legacy-colors [data-slot='button'].bg-primary {
+  background: #111111;
+  color: #ffffff;
+}
+
+body[data-console-active='true']
+  :is(
+    [data-slot='dialog-content'],
+    [data-slot='alert-dialog-content'],
+    [data-slot='sheet-content'],
+    [data-slot='drawer-content']
+  )
+  [data-slot='button'].bg-primary {
+  background: #111111;
+  color: #ffffff;
+}
+
+.dark .signal-console-legacy-colors [data-slot='button'].bg-primary {
+  background: #f5f5f3;
+  color: #111111;
+}
+
+.dark .signal-pricing-legacy-colors [data-slot='button'].bg-primary {
+  background: #f5f5f3;
+  color: #111111;
+}
+
+.dark
+  body[data-console-active='true']
+  :is(
+    [data-slot='dialog-content'],
+    [data-slot='alert-dialog-content'],
+    [data-slot='sheet-content'],
+    [data-slot='drawer-content']
+  )
+  [data-slot='button'].bg-primary {
+  background: #f5f5f3;
+  color: #111111;
+}
+
+@media (max-width: 1279px) {
+  .signal-public-header > div {
+    padding-inline: 32px;
+  }
+
+  .signal-public-header .brand-name-row {
+    font-size: 19px;
+  }
+
+  .signal-public-header nav a {
+    padding-inline: 6px;
+  }
+
+  .signal-pricing-ribbon {
+    width: min(72rem, 100%);
+    height: 21rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .signal-public-header > div {
+    padding-inline: 20px;
+  }
+
+  .signal-public-header > div > nav {
+    height: 76px;
+  }
+
+  .signal-public-header .brand-name-row {
+    font-size: 20px;
+  }
+
+  .signal-dashboard .signal-dashboard-setup-main > div,
+  .signal-dashboard .signal-dashboard-quick-actions,
+  .signal-dashboard .signal-dashboard-summary-main {
+    padding: 1rem;
+  }
+
+  .signal-dashboard .signal-dashboard-summary-stat {
+    border-radius: 0.5rem;
+  }
+
+  .signal-pricing-ribbon {
+    width: 100%;
+    height: 15rem;
+    object-position: 55% top;
+    opacity: 0.14;
+  }
+
+  .signal-pricing .signal-model-card {
+    min-height: 0;
+  }
+}
+
+/* Console surfaces share the same neutral palette while retaining their
+ * denser information architecture. Semantic status colors remain untouched. */
+body[data-console-active='true'],
+.signal-console-shell {
+  --background: #f6f6f5;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+  --secondary: #eeeeec;
+  --secondary-foreground: #1b1b1b;
+  --muted: #eeeeec;
+  --muted-foreground: #676762;
+  --accent: #e9e9e7;
+  --accent-foreground: #111111;
+  --border: #dcdcd8;
+  --input: #b8b8b2;
+  --ring: #202020;
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+  --sidebar: #f1f1ef;
+  --sidebar-foreground: #171717;
+  --sidebar-primary: #111111;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e5e5e2;
+  --sidebar-accent-foreground: #111111;
+  --sidebar-border: #d8d8d4;
+  --sidebar-ring: #202020;
+  --app-canvas: var(--background);
+  --app-surface: var(--card);
+  --app-surface-raised: var(--muted);
+  --app-border: var(--border);
+  --app-border-strong: color-mix(in srgb, var(--foreground) 22%, var(--border));
+  --app-foreground: var(--foreground);
+  --app-muted: var(--muted-foreground);
+  --app-subtle: color-mix(in srgb, var(--muted-foreground) 72%, transparent);
+  --app-primary: var(--primary);
+  --app-primary-foreground: var(--primary-foreground);
+  background: var(--app-canvas);
+  color: var(--app-foreground);
+}
+
+.dark body[data-console-active='true'],
+.dark .signal-console-shell {
+  --background: #111111;
+  --foreground: #f5f5f3;
+  --card: #191919;
+  --card-foreground: #f5f5f3;
+  --popover: #1d1d1d;
+  --popover-foreground: #f5f5f3;
+  --secondary: #242424;
+  --secondary-foreground: #f2f2ef;
+  --muted: #242424;
+  --muted-foreground: #a8a8a2;
+  --accent: #2b2b2b;
+  --accent-foreground: #f5f5f3;
+  --border: #383838;
+  --input: #666666;
+  --ring: #e7e7e3;
+  --primary: #f5f5f3;
+  --primary-foreground: #111111;
+  --sidebar: #151515;
+  --sidebar-foreground: #f2f2ef;
+  --sidebar-primary: #f5f5f3;
+  --sidebar-primary-foreground: #111111;
+  --sidebar-accent: #272727;
+  --sidebar-accent-foreground: #f5f5f3;
+  --sidebar-border: #343434;
+  --sidebar-ring: #e7e7e3;
+}
+
+.signal-console-shell
+  :is(
+    [data-slot='card'],
+    [data-slot='data-table-card'],
+    [data-slot='dialog-content'],
+    [data-slot='sheet-content'],
+    [data-slot='popover-content']
+  ) {
+  border-color: var(--app-border);
+  background: var(--app-surface);
+  box-shadow: none;
+}
+
+.signal-console-shell
+  :is(
+    [data-slot='input'],
+    [data-slot='textarea'],
+    [data-slot='select-trigger'],
+    [data-slot='combobox-input']
+  ) {
+  border-color: var(--app-border);
+  background: var(--app-surface);
+}
+
+.signal-console-shell
+  :is(
+    [data-slot='input'],
+    [data-slot='textarea'],
+    [data-slot='select-trigger'],
+    [data-slot='combobox-input']
+  ):focus,
+.signal-console-shell
+  :is(
+    [data-slot='input'],
+    [data-slot='textarea'],
+    [data-slot='select-trigger'],
+    [data-slot='combobox-input']
+  ):focus-visible {
+  border-color: var(--app-border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-primary) 14%, transparent);
+}
+
+.signal-console-shell [data-slot='table-header'] {
+  background: var(--app-surface-raised);
+}
+
+.signal-console-shell
+  :is([data-slot='tabs-list'], [data-slot='pagination-content']) {
+  border-color: var(--app-border);
+  background: var(--app-surface-raised);
+}
+
+.signal-console-shell [data-slot='button']:not([data-variant='destructive']) {
+  border-color: var(--app-border);
+}
+
+.signal-console-shell
+  :is([data-slot='button'], [data-slot='sidebar-menu-button']):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--app-primary) 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* Console hierarchy ----------------------------------------------------- */
+.signal-console-shell [data-slot='section-page-heading'] {
+  padding-block: 1.25rem 0.85rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.signal-console-shell [data-slot='section-page-heading'] h2 {
+  color: var(--app-foreground);
+  font-size: clamp(1.25rem, 2vw, 1.55rem);
+  font-weight: 620;
+  letter-spacing: -0.04em;
+}
+
+.signal-console-shell
+  .signal-console-legacy-colors
+  [data-slot='section-page-heading']
+  h2 {
+  color: #111111;
+}
+
+.dark
+  .signal-console-shell
+  .signal-console-legacy-colors
+  [data-slot='section-page-heading']
+  h2 {
+  color: #f5f5f3;
+}
+
+.signal-console-shell [data-slot='section-page-content'] {
+  padding-top: 1rem;
+}
+
+.signal-console-shell :is([data-slot='card'], [data-slot='data-table-card']) {
+  border-color: var(--app-border);
+  border-radius: 0.75rem;
+  background: var(--app-surface);
+}
+
+.signal-console-shell [data-slot='card-footer'] {
+  border-color: var(--app-border);
+  background: var(--app-surface-raised);
+}
+
+.signal-console-shell [data-slot='table-container'] {
+  border-radius: 0.75rem;
+  background: var(--app-surface);
+}
+
+.signal-console-shell [data-slot='table-row'] {
+  border-color: var(--app-border);
+}
+
+.signal-console-shell [data-slot='table-row']:hover {
+  background: color-mix(in srgb, var(--app-surface-raised) 72%, transparent);
+}
+
+.signal-console-shell [data-slot='table-head'] {
+  color: color-mix(in srgb, var(--app-foreground) 72%, transparent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.signal-console-shell [data-slot='empty'] {
+  color: var(--app-muted);
+  border-color: var(--app-border);
+  background: transparent;
+}
+
+.signal-console-shell
+  :is(
+    [data-slot='accordion-item'],
+    [data-slot='collapsible'],
+    [data-slot='alert']
+  ) {
+  border-color: var(--app-border);
+}
+
+.signal-console-shell [data-slot='badge-cell'] {
+  border-color: var(--app-border);
+  background: var(--app-surface-raised);
+}
+
+/* Portalled console controls inherit the same neutral surface language. */
+body[data-console-active='true']
+  :is(
+    [data-slot='dialog-content'],
+    [data-slot='alert-dialog-content'],
+    [data-slot='sheet-content'],
+    [data-slot='drawer-content'],
+    [data-slot='popover-content'],
+    [data-slot='dropdown-menu-content'],
+    [data-slot='combobox-content'],
+    [data-slot='command']
+  ) {
+  border-color: var(--app-border);
+  background: var(--app-surface);
+  box-shadow: 0 24px 60px -34px rgb(0 0 0 / 0.42);
+}
+
+body[data-console-active='true']
+  :is(
+    [data-slot='dropdown-menu-item'],
+    [data-slot='combobox-item'],
+    [data-slot='command-item']
+  ):is(:hover, [data-highlighted], [data-selected='true']) {
+  background: var(--app-surface-raised);
+  color: var(--app-foreground);
+}
+
+body[data-console-active='true']
+  :is(
+    [data-slot='dialog-overlay'],
+    [data-slot='alert-dialog-overlay'],
+    [data-slot='sheet-overlay'],
+    [data-slot='drawer-overlay']
+  ) {
+  background: rgb(12 12 12 / 0.46);
+  backdrop-filter: blur(2px);
+}
+
+/* Dense resource pages keep their information architecture but use lighter
+ * separation and a shared rhythm. */
+.signal-console-shell[data-console-section='keys']
+  :is([data-slot='data-table-card'], [data-slot='table-container']),
+.signal-console-shell[data-console-section='channels']
+  :is([data-slot='data-table-card'], [data-slot='table-container']),
+.signal-console-shell[data-console-section='models']
+  :is([data-slot='data-table-card'], [data-slot='table-container']),
+.signal-console-shell[data-console-section='usage-logs']
+  :is([data-slot='data-table-card'], [data-slot='table-container']) {
+  border: 1px solid var(--app-border);
+  box-shadow: none;
+}
+
+.signal-console-shell[data-console-section='profile'] [data-slot='card'],
+.signal-console-shell[data-console-section='wallet'] [data-slot='card'],
+.signal-console-shell[data-console-section='subscriptions'] [data-slot='card'],
+.signal-console-shell[data-console-section='system-settings']
+  [data-slot='card'] {
+  box-shadow: none;
+}
+
+@media (max-width: 767px) {
+  .signal-console-shell [data-slot='section-page-heading'] {
+    padding-block: 1rem 0.75rem;
+  }
+
+  .signal-console-shell [data-slot='section-page-content'] {
+    padding-top: 0.75rem;
+  }
+}

@@ -127,7 +127,7 @@ export function ConnectionWalkthrough() {
         </div>
         <div className='brand-walkthrough-stage'>
           <span>0{active + 1} / 03</span>
-          <strong>{steps[active].title}</strong>
+          <strong style={{ color: '#ffffff' }}>{steps[active].title}</strong>
         </div>
         <pre
           className='brand-walkthrough-code'

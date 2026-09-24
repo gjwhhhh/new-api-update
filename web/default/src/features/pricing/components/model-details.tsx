@@ -1228,8 +1228,11 @@ export function ModelDetailsDrawer(props: ModelDetailsDrawerProps) {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side='right'
-        className={sideDrawerContentClassName(
-          'sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'
+        className={cn(
+          'signal-pricing-legacy-colors',
+          sideDrawerContentClassName(
+            'sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'
+          )
         )}
       >
         <SheetHeader className='sr-only'>

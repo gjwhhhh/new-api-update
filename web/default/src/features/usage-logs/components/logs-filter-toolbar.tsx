@@ -138,6 +138,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
     return (
       <Drawer open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
         <div
+          data-slot='logs-filter-toolbar'
           className={cn('bg-card/50 rounded-lg border p-2.5', props.className)}
         >
           {!mobilePanelCollapsed && (
@@ -156,11 +157,11 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
                 type='button'
                 variant='ghost'
                 size='icon'
-                onClick={() => setMobilePanelCollapsed((collapsed) => !collapsed)}
-                aria-expanded={!mobilePanelCollapsed}
-                aria-label={
-                  mobilePanelCollapsed ? t('Expand') : t('Collapse')
+                onClick={() =>
+                  setMobilePanelCollapsed((collapsed) => !collapsed)
                 }
+                aria-expanded={!mobilePanelCollapsed}
+                aria-label={mobilePanelCollapsed ? t('Expand') : t('Collapse')}
                 className='text-muted-foreground hover:text-foreground mr-auto size-7'
               >
                 <ChevronDown
@@ -244,6 +245,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
 
   return (
     <div
+      data-slot='logs-filter-toolbar'
       className={cn(
         'bg-card/50 rounded-lg border p-2.5 sm:p-3',
         props.className

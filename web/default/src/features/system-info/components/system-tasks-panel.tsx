@@ -57,22 +57,21 @@ const STATUS_CLASS_NAME: Record<SystemTaskStatus, string> = {
     'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
   running:
     'bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300 [&_span]:bg-sky-500',
-  succeeded:
-    'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  succeeded: 'bg-success/10 text-success',
   failed: '',
 }
 
 const STATUS_DOT_CLASS_NAME: Record<SystemTaskStatus, string> = {
   pending: 'bg-amber-500',
   running: 'bg-sky-500',
-  succeeded: 'bg-emerald-500',
+  succeeded: 'bg-success',
   failed: 'bg-destructive',
 }
 
 const PROGRESS_BAR_CLASS_NAME: Record<SystemTaskStatus, string> = {
   pending: '[&_[data-slot=progress-indicator]]:bg-amber-500',
   running: '[&_[data-slot=progress-indicator]]:bg-sky-500',
-  succeeded: '[&_[data-slot=progress-indicator]]:bg-emerald-500',
+  succeeded: '[&_[data-slot=progress-indicator]]:bg-success',
   failed: '[&_[data-slot=progress-indicator]]:bg-destructive',
 }
 
@@ -256,7 +255,7 @@ export function SystemTasksPanel() {
             <span
               className={cn(
                 'size-1.5 rounded-full',
-                hasActiveTasks ? 'bg-emerald-500' : 'bg-muted-foreground/40'
+                hasActiveTasks ? 'bg-success' : 'bg-muted-foreground/40'
               )}
               aria-hidden='true'
             />
@@ -285,13 +284,14 @@ export function SystemTasksPanel() {
       </div>
 
       <div aria-busy={tasksQuery.isFetching}>
-        {loading ? (
+        {loading && (
           <div className='space-y-2 p-4 sm:p-5'>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className='h-9 w-full rounded-md' />
+            {['pending', 'running', 'completed', 'failed'].map((key) => (
+              <Skeleton key={key} className='h-9 w-full rounded-md' />
             ))}
           </div>
-        ) : tasksQuery.isError ? (
+        )}
+        {!loading && tasksQuery.isError && (
           <ErrorState
             title={t('We could not load system tasks.')}
             description={
@@ -304,7 +304,8 @@ export function SystemTasksPanel() {
             }}
             className='min-h-[260px]'
           />
-        ) : tasks.length === 0 ? (
+        )}
+        {!loading && !tasksQuery.isError && tasks.length === 0 && (
           <div className='px-4 py-10 text-center sm:px-5'>
             <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
               <ListChecks
@@ -316,7 +317,8 @@ export function SystemTasksPanel() {
               {t('No system tasks yet.')}
             </p>
           </div>
-        ) : (
+        )}
+        {!loading && !tasksQuery.isError && tasks.length > 0 && (
           <div className='space-y-4 p-4 sm:p-5'>
             <div>
               <div className='mb-2 flex items-center justify-between gap-3'>

@@ -49,7 +49,7 @@ export function TokenflyBrandMark(props: SVGProps<SVGSVGElement>) {
         cx='24.4'
         cy='10.75'
         r='1.65'
-        fill='#8b7cf6'
+        fill='#d4d4d8'
         stroke='currentColor'
         strokeWidth='0.9'
       />

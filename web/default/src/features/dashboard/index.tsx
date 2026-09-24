@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { Eye, EyeOff } from 'lucide-react'
+import { getRouteApi, Link, useNavigate } from '@tanstack/react-router'
+import { Eye, EyeOff, KeyRound } from 'lucide-react'
 import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -318,8 +318,16 @@ export function Dashboard() {
   const sectionActions = modelActions ?? flowActions
 
   return (
-    <SectionPageLayout>
+    <SectionPageLayout className='signal-dashboard'>
       <SectionPageLayout.Title>{t(meta.titleKey)}</SectionPageLayout.Title>
+      {activeSection === 'overview' && (
+        <SectionPageLayout.Actions>
+          <Button render={<Link to='/keys' />}>
+            <KeyRound data-icon='inline-start' />
+            {t('Create API Key')}
+          </Button>
+        </SectionPageLayout.Actions>
+      )}
       <SectionPageLayout.Content>
         <div className='space-y-3 sm:space-y-4'>
           {activeSection !== 'overview' && (

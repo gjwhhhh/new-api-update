@@ -19,1008 +19,1566 @@ For commercial licensing, please contact support@quantumnous.com
 
 @import '@fontsource-variable/inter';
 
-/* A monochrome, product-first identity scoped to the built-in landing page. */
 .signal-home {
-  --background: #ffffff;
-  --foreground: #111111;
-  --primary: #111111;
+  --signal-public-canvas: #f7f7f5;
+  --signal-public-raised: #e9e9e7;
+  --background: #f4f4f3;
+  --foreground: #0d0d0d;
+  --primary: #0c0c0c;
   --primary-foreground: #ffffff;
   --card: #ffffff;
   --card-foreground: #111111;
   --popover: #ffffff;
   --popover-foreground: #111111;
-  --secondary: #f1f1f1;
+  --secondary: #ececeb;
   --secondary-foreground: #171717;
-  --muted: #f5f5f5;
-  --muted-foreground: #666666;
-  --accent: #eeeeee;
+  --muted: #eeeeed;
+  --muted-foreground: #5d5d5a;
+  --accent: #e8e8e6;
   --accent-foreground: #111111;
-  --border: #dedede;
-  --ring: #171717;
-  --brand-code: #f7f7f7;
-  font-family: var(--font-inter);
-}
-.dark .signal-home {
-  --background: #0b0b0c;
-  --foreground: #f7f7f7;
-  --primary: #f7f7f7;
-  --primary-foreground: #111111;
-  --card: #141416;
-  --card-foreground: #f7f7f7;
-  --popover: #171719;
-  --popover-foreground: #f7f7f7;
-  --secondary: #202023;
-  --secondary-foreground: #f4f4f5;
-  --muted: #18181a;
-  --muted-foreground: #a1a1aa;
-  --accent: #242427;
-  --accent-foreground: #fafafa;
-  --border: #303034;
-  --ring: #e4e4e7;
-  --brand-code: #101012;
-}
-.signal-home .brand-container {
-  width: min(80rem, calc(100% - 3rem));
+  --border: rgb(20 20 20 / 0.16);
+  --ring: #161616;
+  min-height: 100svh;
+  overflow: hidden;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-inter), 'Inter', sans-serif;
 }
 
-/* Header */
+.signal-home .brand-container {
+  width: min(86rem, calc(100% - 6rem));
+  margin-inline: auto;
+}
+
 .signal-home .brand-home-header {
+  color: #111111;
   border: 0;
-  background: color-mix(in srgb, var(--background) 88%, transparent);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
-}
-.signal-home .brand-home-header > div {
-  max-width: 80rem;
-  padding-inline: 1.5rem;
-}
-.signal-home .brand-home-header > div > nav {
-  height: 4.5rem;
-}
-.signal-home .brand-home-header .brand-name-row {
-  gap: 0.55rem;
-  font-size: 1.1rem;
-  letter-spacing: -0.035em;
-}
-.signal-home .brand-home-header .brand-name-mark {
-  width: 1.8rem;
-  height: 1.8rem;
-  color: var(--foreground);
-  filter: drop-shadow(0 7px 12px rgb(0 0 0 / 0.14));
-  transition:
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 220ms ease;
-}
-.signal-home .brand-home-header a:hover .brand-name-mark {
-  filter: drop-shadow(0 9px 15px rgb(0 0 0 / 0.2));
-  transform: translateY(-1px) rotate(-4deg);
-}
-.signal-home .brand-home-header nav a.text-muted-foreground {
-  color: var(--muted-foreground);
-}
-.signal-home .brand-home-header nav a.text-muted-foreground:hover,
-.signal-home .brand-home-header nav a.text-foreground {
-  color: var(--foreground);
-}
-.signal-home .brand-home-header[data-scrolled='true'] {
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+
+.signal-home .brand-home-header > div {
+  max-width: 86rem;
+  padding-inline: 3rem;
+}
+
+.signal-home .brand-home-header > div > nav {
+  height: 5rem;
+  padding-inline: 0;
+}
+
+.signal-home .brand-home-header .brand-name-row {
+  gap: 0.65rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.035em;
+}
+
+.signal-home .brand-home-header .brand-name-mark {
+  width: 1.9rem;
+  height: 1.9rem;
+  color: #111111;
+  filter: drop-shadow(0 7px 13px rgb(0 0 0 / 0.14));
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 220ms ease;
+}
+
+.signal-home .brand-home-header a:hover .brand-name-mark {
+  filter: drop-shadow(0 9px 15px rgb(0 0 0 / 0.2));
+  transform: translateY(-1px) rotate(-4deg);
+}
+
+.signal-home .brand-home-header nav a.text-muted-foreground {
+  color: rgb(20 20 20 / 0.62);
+}
+
+.signal-home .brand-home-header nav a.text-muted-foreground:hover,
+.signal-home .brand-home-header nav a.text-foreground {
+  color: #111111;
+}
+
 .signal-home .brand-home-header[data-scrolled='true'] > div {
   max-width: 56rem;
   padding: 0.75rem;
 }
+
 .signal-home .brand-home-header[data-scrolled='true'] > div > nav {
   height: 3.5rem;
   padding: 0 0.45rem 0 1.1rem;
-  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--background) 82%, transparent);
-  box-shadow: 0 20px 42px -28px rgb(0 0 0 / 0.36);
-  -webkit-backdrop-filter: blur(22px);
-  backdrop-filter: blur(22px);
+  background: rgb(247 247 246 / 0.74);
+  box-shadow: 0 16px 42px -24px rgb(0 0 0 / 0.3);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 
-/* Hero */
-.signal-hero {
+.signal-immersive-hero {
+  --signal-media-x: 0px;
+  --signal-media-y: 0px;
   position: relative;
+  isolation: isolate;
+  min-height: 100svh;
   overflow: hidden;
-  padding: 9.5rem 0 0;
+  color: #101010;
+  background: #f4f4f3;
 }
-.signal-hero::before {
+
+.signal-hero-media {
   position: absolute;
-  inset: 0 0 auto;
-  height: 34rem;
-  background:
-    radial-gradient(circle at 50% -15%, rgb(0 0 0 / 0.055), transparent 48%),
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size:
-    auto,
-    64px 64px,
-    64px 64px;
-  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.25), transparent 78%);
-  content: '';
-  pointer-events: none;
+  z-index: -2;
+  inset: -1.25rem;
+  transform: translate3d(var(--signal-media-x), var(--signal-media-y), 0)
+    scale(1.025);
+  transition: transform 350ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
-.dark .signal-hero::before {
-  background:
-    radial-gradient(
-      circle at 50% -15%,
-      rgb(255 255 255 / 0.1),
-      transparent 48%
-    ),
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size:
-    auto,
-    64px 64px,
-    64px 64px;
+
+.signal-hero-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  user-select: none;
 }
-.signal-hero-layout {
+
+.signal-immersive-layout {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
+  display: grid;
+  min-height: 100svh;
+  padding-block: clamp(8.5rem, 16vh, 11.25rem) 2rem;
+  grid-template-rows: 1fr auto auto;
 }
+
+.signal-copy-column {
+  align-self: start;
+  width: min(44rem, 54%);
+}
+
 .signal-rating {
   display: inline-flex;
   align-items: center;
   gap: 0.65rem;
-  margin-bottom: 2rem;
-  font-size: 0.82rem;
-  font-weight: 500;
+  margin-bottom: 1.5rem;
+  color: rgb(20 20 20 / 0.72);
+  font-size: 0.8rem;
+  font-weight: 520;
 }
+
 .signal-rating > span {
   display: grid;
   width: 1.7rem;
   height: 1.7rem;
   place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 0.45rem;
-  background: var(--background);
-}
-.signal-rating svg {
-  width: 0.85rem;
-  height: 0.85rem;
-  fill: var(--foreground);
-}
-.signal-headline {
-  width: 100%;
-}
-.signal-headline h1 {
-  margin-inline: auto;
-  font-size: clamp(3.45rem, 7vw, 5.75rem);
-  font-weight: 450;
-  line-height: 1.02;
-  letter-spacing: -0.065em;
-  text-wrap: balance;
-}
-.signal-headline h1 span {
-  color: transparent;
-  background: linear-gradient(90deg, var(--foreground), #737373 58%, #a3a3a3);
-  background-clip: text;
-  -webkit-background-clip: text;
-}
-.dark .signal-headline h1 span {
-  background-image: linear-gradient(90deg, #fafafa, #a1a1aa 62%, #71717a);
-}
-.signal-hero-aside {
-  max-width: 44rem;
-  margin-top: 1.75rem;
-}
-.signal-hero-aside > p {
-  color: var(--muted-foreground);
-  font-size: clamp(1rem, 1.55vw, 1.2rem);
-  line-height: 1.75;
-  text-wrap: balance;
-}
-.signal-home .brand-actions {
-  justify-content: center;
-  align-items: center;
-  gap: 1.5rem;
-  margin-top: 2rem;
-}
-.signal-home .brand-actions [data-slot='button'],
-.signal-home .brand-closing [data-slot='button'] {
-  min-height: 3rem;
-  padding-inline: 1.65rem;
-  border-radius: 999px;
-  font-size: 0.9rem;
-}
-.signal-home .brand-text-link {
-  gap: 0.45rem;
-  color: var(--muted-foreground);
-  font-size: 0.86rem;
-  text-decoration: none;
-}
-.signal-home .brand-text-link:hover {
-  color: var(--foreground);
-}
-.signal-showcase-reveal {
-  width: 100%;
-  margin-top: 4.5rem;
-}
-.signal-showcase {
-  width: 100%;
-}
-.signal-tabs {
-  display: inline-grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.25rem;
-  max-width: 46rem;
-  padding: 0.3rem;
-  border-radius: 0.8rem;
-  background: var(--muted);
-}
-.signal-tabs button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  min-width: 9.5rem;
-  padding: 0.7rem 1rem;
-  border-radius: 0.6rem;
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
-  font-weight: 500;
-  transition:
-    color 180ms ease,
-    background 180ms ease,
-    box-shadow 180ms ease;
-}
-.signal-tabs button:hover {
-  color: var(--foreground);
-}
-.signal-tabs button.is-active {
-  color: var(--foreground);
-  background: var(--card);
-  box-shadow: 0 1px 5px rgb(0 0 0 / 0.08);
-}
-.signal-tabs svg {
-  width: 1rem;
-  height: 1rem;
-}
-.signal-stage {
-  position: relative;
-  display: grid;
-  min-height: 31rem;
-  margin-top: 1.75rem;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid #252528;
-  border-radius: 2rem;
-  background:
-    radial-gradient(
-      ellipse at 50% 112%,
-      rgb(255 255 255 / 0.2),
-      transparent 38%
-    ),
-    radial-gradient(circle at 14% 18%, rgb(124 92 255 / 0.16), transparent 27%),
-    radial-gradient(circle at 86% 22%, rgb(77 144 255 / 0.13), transparent 24%),
-    linear-gradient(145deg, #151519 0%, #09090b 48%, #111115 100%);
-  box-shadow:
-    inset 0 1px rgb(255 255 255 / 0.08),
-    0 36px 90px -54px rgb(0 0 0 / 0.7);
-}
-.signal-stage::before {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgb(255 255 255 / 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 255 255 / 0.04) 1px, transparent 1px);
-  background-size: 56px 56px;
-  mask-image: radial-gradient(ellipse at center, black 5%, transparent 72%);
-  content: '';
-}
-.signal-stage::after {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(
-      circle at 12% 31%,
-      rgb(255 255 255 / 0.75) 0 1px,
-      transparent 2px
-    ),
-    radial-gradient(
-      circle at 24% 72%,
-      rgb(255 255 255 / 0.5) 0 1px,
-      transparent 2px
-    ),
-    radial-gradient(
-      circle at 35% 15%,
-      rgb(255 255 255 / 0.6) 0 1px,
-      transparent 2px
-    ),
-    radial-gradient(
-      circle at 67% 19%,
-      rgb(255 255 255 / 0.75) 0 1px,
-      transparent 2px
-    ),
-    radial-gradient(
-      circle at 78% 68%,
-      rgb(255 255 255 / 0.55) 0 1px,
-      transparent 2px
-    ),
-    radial-gradient(
-      circle at 91% 37%,
-      rgb(255 255 255 / 0.7) 0 1px,
-      transparent 2px
-    );
-  content: '';
-  opacity: 0.7;
-  animation: signal-star-drift 8s ease-in-out infinite alternate;
-}
-.signal-stage-glow {
-  position: absolute;
-  z-index: 1;
-  top: 52%;
-  left: 50%;
-  width: min(54rem, 78vw);
-  height: 21rem;
-  border: 1px solid rgb(255 255 255 / 0.13);
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 5rem rgb(255 255 255 / 0.016),
-    0 0 0 10rem rgb(255 255 255 / 0.01),
-    inset 0 -5rem 8rem rgb(132 109 255 / 0.055);
-  transform: translate(-50%, -50%) rotate(-9deg);
-  animation: signal-orbit-float 9s ease-in-out infinite alternate;
-}
-.signal-stage-glow::before {
-  position: absolute;
-  inset: 3.7rem 6.8rem;
-  border: 1px dashed rgb(255 255 255 / 0.12);
-  border-radius: 50%;
-  content: '';
-}
-.signal-stage-glow::after {
-  position: absolute;
-  top: 48%;
-  left: -0.25rem;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow:
-    25rem -10.1rem 0 -1px rgb(184 174 255 / 0.9),
-    47rem 1.6rem 0 -2px rgb(168 207 255 / 0.9);
-  content: '';
-}
-.signal-demo-panel {
-  position: relative;
-  z-index: 2;
-  width: min(31rem, calc(100% - 2.5rem));
-  padding: 1.6rem;
-  border: 1px solid rgb(255 255 255 / 0.78);
-  border-radius: 1.15rem;
-  color: #161616;
-  background: rgb(255 255 255 / 0.94);
-  box-shadow:
-    0 30px 80px -26px rgb(0 0 0 / 0.78),
-    0 0 0 1px rgb(255 255 255 / 0.2);
-  text-align: left;
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
-  animation: signal-panel-in 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-.signal-demo-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.signal-demo-heading span {
-  color: #8a8a8a;
-  font-size: 0.65rem;
-  letter-spacing: 0.14em;
-}
-.signal-demo-heading h3 {
-  margin-top: 0.35rem;
-  font-size: 1.2rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-}
-.signal-demo-heading > svg {
-  width: 2.3rem;
-  height: 2.3rem;
-  padding: 0.58rem;
-  border-radius: 50%;
-  background: #f0f0f0;
-}
-.signal-demo-panel > p {
-  max-width: 26rem;
-  color: #6b6b6b;
-  font-size: 0.8rem;
-  line-height: 1.7;
-}
-.signal-key-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 1.3rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid #e4e4e4;
-  border-radius: 0.75rem;
-  background: #fafafa;
-}
-.signal-key-field code {
-  overflow: hidden;
-  font-size: 0.76rem;
-  text-overflow: ellipsis;
-}
-.signal-key-field span,
-.signal-check-list strong {
-  color: #666;
-  font-size: 0.68rem;
-  font-weight: 600;
-}
-.signal-progress {
-  height: 0.35rem;
-  margin-top: 1.25rem;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #ededed;
-}
-.signal-progress span {
-  display: block;
-  width: 25%;
-  height: 100%;
-  border-radius: inherit;
-  background: #7c3aed;
-}
-.signal-route-list,
-.signal-check-list {
-  display: grid;
-  gap: 0.65rem;
-  margin-top: 1.25rem;
-}
-.signal-route-list > div,
-.signal-check-list > div {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.8rem 0.9rem;
-  border: 1px solid #e9e9e9;
-  border-radius: 0.7rem;
-  background: #fbfbfb;
-  font-size: 0.78rem;
-}
-.signal-route-list span,
-.signal-check-list p {
-  flex: 1;
-}
-.signal-route-list strong {
-  font-size: 0.75rem;
-}
-.signal-route-list > div::before {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: #111;
-  content: '';
-}
-.signal-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.7rem;
-  margin-top: 1.25rem;
-}
-.signal-metrics > div {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  background: #f5f5f5;
-}
-.signal-metrics span {
-  color: #777;
-  font-size: 0.68rem;
-}
-.signal-metrics strong {
-  font-size: 1.1rem;
-  letter-spacing: -0.03em;
-}
-.signal-check-list > div > span {
-  display: grid;
-  width: 1.25rem;
-  height: 1.25rem;
-  flex: none;
-  place-items: center;
-  border-radius: 50%;
-  color: white;
-  background: #111;
-}
-.signal-check-list svg {
-  width: 0.75rem;
-  height: 0.75rem;
+  color: #101010;
+  border: 1px solid rgb(20 20 20 / 0.18);
+  border-radius: 0.48rem;
+  background: rgb(255 255 255 / 0.42);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 
-/* Supporting sections */
-.signal-home .brand-ecosystem {
-  padding-block: 5rem 4.5rem;
-  border: 0;
-  text-align: center;
+.signal-rating svg {
+  width: 0.82rem;
+  height: 0.82rem;
 }
-.signal-home .brand-ecosystem > div > p:first-child {
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
+
+.signal-headline h1 {
+  max-width: 12ch;
+  margin: 0;
+  font-size: clamp(4.5rem, 6.2vw, 6.25rem);
+  font-weight: 530;
+  line-height: 0.98;
+  letter-spacing: -0.075em;
+  text-wrap: balance;
 }
-.signal-home .brand-provider-rail {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0;
-  padding-block: 2.5rem 1.8rem;
+
+.signal-headline h1 span {
+  color: #5d5d5a;
 }
-.signal-home .brand-provider-rail span {
-  font-size: clamp(1rem, 1.6vw, 1.35rem);
-  font-weight: 600;
-  letter-spacing: -0.035em;
+
+.signal-hero-aside {
+  margin-top: 1.7rem;
 }
-.signal-home .brand-provider-rail span + span {
-  border-left: 1px solid var(--border);
+
+.signal-hero-aside > p {
+  max-width: 41rem;
+  color: rgb(20 20 20 / 0.66);
+  font-size: clamp(0.98rem, 1.25vw, 1.15rem);
+  line-height: 1.75;
 }
-.signal-home .brand-caption {
-  color: var(--muted-foreground);
-}
-.signal-home .brand-section {
-  padding-block: 6rem;
-}
-.signal-home .brand-section-number {
-  margin-bottom: 1rem;
-  color: var(--muted-foreground);
-  font-size: 0.7rem;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-.signal-home h2 {
-  font-size: clamp(2rem, 4vw, 3.4rem);
-  font-weight: 500;
-  line-height: 1.08;
-  letter-spacing: -0.055em;
-}
-.signal-home .brand-section-description {
-  color: var(--muted-foreground);
-}
-.signal-home .brand-model-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.8rem;
-  margin-top: 2.5rem;
-}
-.signal-home .brand-model-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 1rem;
-  padding: 1.35rem;
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  background: var(--card);
-}
-.signal-home .brand-model-row:hover {
-  background: var(--muted);
-}
-.signal-home .brand-model-initial {
-  border: 0;
-  border-radius: 0.7rem;
-  background: var(--muted);
-}
-.signal-home .brand-model-price {
-  grid-column: 2;
-  align-items: flex-start;
-}
-.signal-home .brand-model-row > svg {
-  grid-row: 1;
-  grid-column: 3;
-}
-.signal-home .brand-model-list > .brand-caption {
-  grid-column: 1 / -1;
-  padding-top: 1rem;
-  border: 0;
-}
-.signal-home .brand-catalog-message {
-  border-radius: 1rem;
-}
-.signal-home .brand-setup-band {
-  width: min(84rem, calc(100% - 2rem));
-  margin-inline: auto;
-  border: 1px solid var(--border);
-  border-radius: 2rem;
-  background: var(--muted);
-}
-.signal-home .brand-setup-band .brand-section {
-  width: 100%;
-  padding: 5rem clamp(2rem, 5vw, 4.5rem);
-}
-.signal-home .brand-walkthrough {
+
+.signal-home .brand-actions {
   display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  margin-top: 3rem;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.6rem;
+  margin-top: 1.6rem;
 }
-.signal-home .brand-walkthrough-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-.signal-home .brand-walkthrough-steps li {
-  min-height: 0;
-  padding: 0;
-  border: 0;
-}
-.signal-home .brand-step-select {
-  display: flex;
-  width: 100%;
-  min-height: 11rem;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  padding: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  color: var(--muted-foreground);
-  background: color-mix(in srgb, var(--card) 72%, transparent);
-  text-align: left;
+
+.signal-home .brand-actions [data-slot='button'] {
+  min-height: 3.3rem;
+  padding-inline: 1.8rem;
+  border-radius: 999px;
+  background: #0b0b0b;
+  box-shadow: 0 18px 38px -22px rgb(0 0 0 / 0.7);
+  color: #ffffff;
   transition:
-    transform 180ms ease,
-    color 180ms ease,
-    border-color 180ms ease,
-    background 180ms ease,
-    box-shadow 180ms ease;
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms ease,
+    background-color 200ms ease;
 }
-.signal-home .brand-step-select:hover {
-  color: var(--foreground);
-  border-color: color-mix(in srgb, var(--foreground) 24%, var(--border));
+
+.signal-home .brand-actions [data-slot='button']:hover {
+  background: #232323;
+  box-shadow: 0 22px 42px -20px rgb(0 0 0 / 0.78);
   transform: translateY(-2px);
 }
-.signal-home .brand-step-select.is-active {
-  color: var(--foreground);
-  border-color: color-mix(in srgb, var(--foreground) 34%, var(--border));
-  background: var(--card);
-  box-shadow: 0 18px 34px -30px rgb(0 0 0 / 0.55);
+
+.signal-home .brand-text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: rgb(20 20 20 / 0.7);
+  font-size: 0.9rem;
+  font-weight: 560;
+  text-underline-offset: 0.35rem;
+  transition: color 180ms ease;
 }
-.signal-home .brand-step-topline {
+
+.signal-home .brand-text-link:hover {
+  color: #111111;
+}
+
+.signal-compatibility {
+  position: absolute;
+  top: 47%;
+  right: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.4rem;
-}
-.signal-home .brand-step-index {
-  padding: 0;
-  color: var(--muted-foreground);
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-}
-.signal-home .brand-step-icon {
-  display: grid;
-  width: 2rem;
-  height: 2rem;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--foreground);
-  background: var(--muted);
-}
-.signal-home .brand-step-icon svg {
-  width: 1rem;
-  height: 1rem;
-}
-.signal-home .brand-step-select strong {
-  font-size: 1.05rem;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-}
-.signal-home .brand-step-description {
-  margin-top: 0.65rem;
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
-  line-height: 1.65;
-}
-.signal-home .brand-walkthrough-preview {
-  position: static;
-  width: 100%;
-  border-color: #29292d;
-  border-radius: 1.25rem;
-  color: #f4f4f5;
-  background: #0d0d0f;
-  box-shadow: 0 30px 70px -48px rgb(0 0 0 / 0.82);
-}
-.signal-home .brand-walkthrough-toolbar {
-  padding: 0.8rem 0.9rem 0.8rem 1.15rem;
-  border-color: #29292d;
-  color: #a1a1aa;
-}
-.signal-home .brand-walkthrough-toolbar > span {
-  gap: 0.75rem;
-}
-.signal-home .brand-walkthrough-toolbar [data-slot='button'] {
-  color: #d4d4d8;
-}
-.signal-home .brand-walkthrough-toolbar [data-slot='button']:hover {
-  color: #ffffff;
-  background: #27272a;
-}
-.signal-home .brand-terminal-dots {
-  display: inline-flex;
-  gap: 0.3rem;
-}
-.signal-home .brand-terminal-dots i {
-  width: 0.42rem;
-  height: 0.42rem;
-  border-radius: 50%;
-  background: #52525b;
-}
-.signal-home .brand-walkthrough-stage {
-  padding: 0.85rem 1.25rem;
-  border-bottom: 1px solid #29292d;
-  background: #151518;
-}
-.signal-home .brand-walkthrough-stage span {
-  color: #a1a1aa;
-}
-.signal-home .brand-walkthrough-stage strong {
-  color: #fafafa;
-}
-.signal-home .brand-walkthrough-code {
-  min-height: 18rem;
-  padding: 1rem;
-  color: #d4d4d8;
+  gap: 0.7rem;
+  padding: 0.68rem 1rem;
+  border: 1px solid rgb(255 255 255 / 0.55);
+  border-radius: 999px;
+  background: rgb(246 246 245 / 0.58);
+  box-shadow: 0 18px 46px -30px rgb(0 0 0 / 0.52);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  color: rgb(20 20 20 / 0.74);
   font-size: 0.76rem;
-  line-height: 1.72;
+  font-weight: 560;
 }
-.signal-home .brand-code-block {
+
+.signal-compatibility > span {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr);
-  padding: 0.9rem 1rem;
-  border: 0;
-  border-radius: 0.65rem;
-  color: #71717a;
-  opacity: 0.7;
-}
-.signal-home .brand-code-index {
-  color: #52525b;
-  user-select: none;
-}
-.signal-home .brand-code-block.is-active {
-  color: #fafafa;
-  background: #1b1b1f;
-  box-shadow: inset 2px 0 #f4f4f5;
-  opacity: 1;
-}
-.signal-home .brand-walkthrough-note {
-  padding: 0.9rem 1.25rem 1.05rem;
-  border-color: #29292d;
-  color: #71717a;
-}
-.signal-playground-disclosure {
-  margin-top: 2.5rem;
-  padding-block: 1.4rem;
-  border-top: 1px solid var(--border);
-}
-.signal-playground-disclosure summary {
-  width: fit-content;
-  color: var(--muted-foreground);
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-.signal-playground-disclosure .brand-playground {
-  max-width: 44rem;
-  margin: 2rem auto;
-}
-.signal-home .brand-faq {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-  gap: 8%;
-}
-.signal-home .brand-faq [data-slot='accordion-trigger'] {
-  padding-block: 1.5rem;
-  font-size: 0.95rem;
-}
-.signal-home .brand-closing {
-  margin-block: 2rem 5rem;
-  padding: 3rem;
-  border: 0;
-  border-radius: 2rem;
-  color: white;
-  background: #111;
-}
-.signal-home .brand-closing p {
-  color: #a3a3a3;
-}
-.signal-home .brand-closing [data-slot='button'] {
-  color: #111;
-  background: #fff;
-}
-.signal-home .brand-footer {
-  border-top: 1px solid var(--border);
-  background: var(--background);
-}
-.signal-home .brand-footer > div {
-  max-width: 80rem;
-  padding-inline: 1.5rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  place-items: center;
+  border: 1px solid rgb(20 20 20 / 0.18);
+  border-radius: 999px;
 }
 
-@keyframes signal-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(1rem) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+.signal-compatibility i {
+  display: block;
+  width: 0.3rem;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: #111111;
 }
 
-@keyframes signal-star-drift {
-  from {
-    opacity: 0.45;
-    transform: translateY(0);
-  }
-  to {
-    opacity: 0.85;
-    transform: translateY(-0.4rem);
-  }
+.signal-provider-region {
+  align-self: end;
+  width: min(48rem, 58%);
+  margin-bottom: clamp(1.3rem, 3.2vh, 2.2rem);
 }
 
-@keyframes signal-orbit-float {
-  from {
-    transform: translate(-50%, -50%) rotate(-9deg) scale(0.99);
-  }
-  to {
-    transform: translate(-50%, calc(-50% - 0.35rem)) rotate(-7deg) scale(1.01);
-  }
+.signal-provider-region > p,
+.signal-provider-region > small {
+  color: rgb(20 20 20 / 0.58);
+  font-size: 0.7rem;
 }
 
-@media (max-width: 900px) {
-  .signal-hero {
-    padding-top: 8rem;
-  }
-  .signal-headline h1 {
-    font-size: clamp(3rem, 10vw, 4.8rem);
-  }
-  .signal-tabs {
-    width: 100%;
-  }
-  .signal-tabs button {
-    min-width: 0;
-  }
-  .signal-tabs button span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .signal-stage {
-    min-height: 27rem;
-  }
-  .signal-home .brand-section {
-    padding-block: 4.5rem;
-  }
-  .signal-home .brand-walkthrough {
-    display: flex;
-  }
-  .signal-home .brand-walkthrough-steps {
-    gap: 0.65rem;
-  }
-  .signal-home .brand-step-select {
-    min-height: 10.5rem;
-  }
-  .signal-home .brand-faq {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-  }
+.signal-provider-region nav {
+  display: grid;
+  margin-block: 0.8rem 0.65rem;
+  border-block: 1px solid rgb(20 20 20 / 0.16);
+  grid-template-columns: repeat(5, 1fr);
 }
 
-@media (max-width: 639px) {
+.signal-provider-region nav :is(a, span) {
+  display: flex;
+  min-height: 3.65rem;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid rgb(20 20 20 / 0.14);
+  color: rgb(15 15 15 / 0.76);
+  font-size: clamp(0.82rem, 1.05vw, 1rem);
+  font-weight: 620;
+  letter-spacing: -0.035em;
+  transition:
+    color 180ms ease,
+    background-color 180ms ease;
+}
+
+.signal-provider-region nav :is(a, span):last-child {
+  border-right: 0;
+}
+
+.signal-provider-region nav a:hover {
+  color: #0a0a0a;
+  background: rgb(255 255 255 / 0.32);
+}
+
+.signal-proof-grid {
+  display: grid;
+  min-height: 6.35rem;
+  align-items: center;
+  border-top: 1px solid rgb(255 255 255 / 0.24);
+  color: #ffffff;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.signal-proof-grid > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+  padding-inline: clamp(1.25rem, 3vw, 3.2rem);
+  border-right: 1px solid rgb(255 255 255 / 0.24);
+}
+
+.signal-proof-grid > div:first-child {
+  padding-left: 0;
+}
+
+.signal-proof-grid > div:last-child {
+  border-right: 0;
+}
+
+.signal-proof-grid strong {
+  overflow: hidden;
+  font-size: clamp(1.2rem, 2vw, 1.75rem);
+  font-weight: 560;
+  letter-spacing: -0.045em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-proof-grid span {
+  color: rgb(255 255 255 / 0.68);
+  font-size: 0.7rem;
+}
+
+.signal-home :is(a, button):focus-visible {
+  outline: 2px solid #111111;
+  outline-offset: 4px;
+}
+
+@media (max-width: 1180px) {
   .signal-home .brand-container {
-    width: min(80rem, calc(100% - 2rem));
+    width: min(100% - 3rem, 74rem);
   }
+
+  .signal-home .brand-home-header > div {
+    padding-inline: 1.5rem;
+  }
+
+  .signal-copy-column {
+    width: 60%;
+  }
+
+  .signal-hero-media img {
+    object-position: 18% center;
+  }
+
+  .signal-headline h1 {
+    font-size: clamp(4rem, 7.5vw, 5.25rem);
+  }
+
+  .signal-provider-region {
+    width: 62%;
+  }
+
+  .signal-compatibility {
+    right: 1rem;
+  }
+}
+
+@media (max-width: 820px) {
+  .signal-home {
+    overflow: auto;
+  }
+
+  .signal-home .brand-container {
+    width: min(100% - 2rem, 44rem);
+  }
+
   .signal-home .brand-home-header > div {
     padding-inline: 1rem;
   }
+
   .signal-home .brand-home-header > div > nav {
-    height: 4rem;
+    height: 4.25rem;
   }
-  .signal-hero {
-    padding-top: 7.5rem;
+
+  .signal-immersive-hero {
+    min-height: max(100svh, 49rem);
   }
+
+  .signal-immersive-hero::after {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background: rgb(247 247 246 / 0.64);
+    content: '';
+    pointer-events: none;
+  }
+
+  .signal-hero-media {
+    inset: 0;
+    transform: none;
+  }
+
+  .signal-hero-media img {
+    object-position: 30% center;
+  }
+
+  .signal-immersive-layout {
+    min-height: max(100svh, 49rem);
+    padding-block: 6.2rem 1rem;
+  }
+
+  .signal-copy-column {
+    width: 100%;
+    max-width: 37rem;
+  }
+
   .signal-rating {
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.1rem;
   }
+
   .signal-headline h1 {
-    font-size: clamp(2.75rem, 13vw, 4rem);
+    max-width: 11ch;
+    font-size: clamp(3rem, 11vw, 4.4rem);
+    line-height: 1;
+  }
+
+  .signal-hero-aside {
+    margin-top: 1.25rem;
+  }
+
+  .signal-hero-aside > p {
+    max-width: 34rem;
+    font-size: 0.92rem;
+    line-height: 1.65;
+  }
+
+  .signal-home .brand-actions {
+    margin-top: 1.25rem;
+  }
+
+  .signal-home .brand-actions [data-slot='button'] {
+    min-height: 3rem;
+  }
+
+  .signal-compatibility {
+    display: none;
+  }
+
+  .signal-provider-region {
+    width: 100%;
+    margin-block: 1.4rem 0.9rem;
+  }
+
+  .signal-provider-region nav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .signal-provider-region > small {
+    display: none;
+  }
+
+  .signal-proof-grid {
+    min-height: 5.6rem;
+  }
+
+  .signal-proof-grid > div {
+    padding-inline: 1rem;
+  }
+
+  .signal-proof-grid strong {
+    font-size: clamp(1rem, 4vw, 1.35rem);
+  }
+}
+
+@media (max-width: 560px) {
+  .signal-home .brand-container {
+    width: calc(100% - 1.5rem);
+  }
+
+  .signal-immersive-hero {
+    min-height: max(100svh, 47rem);
+  }
+
+  .signal-hero-media img {
+    object-position: 32% center;
+  }
+
+  .signal-immersive-layout {
+    min-height: max(100svh, 47rem);
+    padding-block: 5.35rem 0.75rem;
+  }
+
+  .signal-rating {
+    max-width: calc(100% - 3rem);
+    font-size: 0.7rem;
+  }
+
+  .signal-headline h1 {
+    max-width: 10ch;
+    font-size: clamp(2.8rem, 14.5vw, 4rem);
     letter-spacing: -0.07em;
   }
-  .signal-hero-aside {
-    margin-top: 1.4rem;
+
+  .signal-headline h1 span {
+    color: #4e4e4b;
   }
+
+  .signal-hero-aside > p {
+    max-width: 28rem;
+    color: rgb(20 20 20 / 0.72);
+    font-size: 0.86rem;
+  }
+
   .signal-home .brand-actions {
-    display: grid;
     gap: 1.1rem;
   }
+
   .signal-home .brand-actions [data-slot='button'] {
-    width: 100%;
+    min-height: 2.85rem;
+    padding-inline: 1.3rem;
   }
-  .signal-showcase-reveal {
-    margin-top: 3.25rem;
+
+  .signal-provider-region > p {
+    font-size: 0.65rem;
   }
-  .signal-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+  .signal-provider-region nav {
+    grid-template-columns: repeat(3, 1fr);
   }
-  .signal-tabs button {
+
+  .signal-provider-region nav :is(a, span) {
+    min-height: 2.6rem;
+    font-size: 0.75rem;
+  }
+
+  .signal-provider-region nav :is(a, span):nth-child(3) {
+    border-right: 0;
+  }
+
+  .signal-provider-region nav :is(a, span):nth-child(n + 4) {
+    border-top: 1px solid rgb(20 20 20 / 0.14);
+  }
+
+  .signal-proof-grid {
+    min-height: 5.25rem;
+  }
+
+  .signal-proof-grid > div {
+    gap: 0.25rem;
     padding-inline: 0.65rem;
   }
-  .signal-stage {
-    min-height: 25rem;
-    margin-top: 1rem;
-    border-radius: 1.4rem;
+
+  .signal-proof-grid strong {
+    font-size: clamp(0.86rem, 3.8vw, 1.08rem);
   }
-  .signal-demo-panel {
-    width: calc(100% - 1.5rem);
-    padding: 1.2rem;
+
+  .signal-proof-grid span {
+    font-size: 0.6rem;
+    line-height: 1.3;
   }
-  .signal-demo-heading h3 {
-    font-size: 1.02rem;
+}
+
+@media (max-height: 780px) and (min-width: 821px) {
+  .signal-immersive-layout {
+    padding-block: 7.4rem 1.2rem;
   }
-  .signal-metrics {
-    gap: 0.5rem;
-  }
-  .signal-home .brand-ecosystem {
-    padding-block: 3.5rem;
-  }
-  .signal-home .brand-provider-rail {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1.5rem 0;
-  }
-  .signal-home .brand-provider-rail span {
-    font-size: 1rem;
-  }
-  .signal-home .brand-provider-rail span:nth-child(odd) {
-    border-left: 0;
-  }
-  .signal-home .brand-provider-rail span:last-child {
-    grid-column: 1 / -1;
-  }
-  .signal-home .brand-model-list {
-    grid-template-columns: 1fr;
-  }
-  .signal-home .brand-setup-band {
-    width: calc(100% - 1rem);
-    border-radius: 1.5rem;
-  }
-  .signal-home .brand-setup-band .brand-section {
-    padding: 3.5rem 1.25rem;
-  }
-  .signal-home .brand-walkthrough-steps {
-    grid-template-columns: 1fr;
-  }
-  .signal-home .brand-step-select {
-    min-height: 0;
-  }
-  .signal-home .brand-step-topline {
+
+  .signal-rating {
     margin-bottom: 1rem;
   }
-  .signal-home .brand-walkthrough-code {
-    min-height: 0;
-    padding: 0.75rem;
-    font-size: 0.68rem;
+
+  .signal-headline h1 {
+    font-size: clamp(3.75rem, 5.8vw, 5.1rem);
   }
-  .signal-home .brand-code-block {
-    grid-template-columns: 1.6rem minmax(0, 1fr);
-    padding-inline: 0.65rem;
+
+  .signal-hero-aside {
+    margin-top: 1.15rem;
   }
-  .signal-home .brand-closing {
-    align-items: flex-start;
-    padding: 2rem;
+
+  .signal-home .brand-actions {
+    margin-top: 1.1rem;
+  }
+
+  .signal-provider-region {
+    margin-bottom: 0.7rem;
+  }
+
+  .signal-provider-region nav :is(a, span) {
+    min-height: 3rem;
+  }
+
+  .signal-proof-grid {
+    min-height: 5.2rem;
+  }
+}
+
+/* Keep the landing page on the same monochrome system when the app is dark. */
+.dark .signal-home {
+  --signal-public-canvas: #111111;
+  --signal-public-raised: #242424;
+  --background: #111111;
+  --foreground: #f5f5f3;
+  --primary: #f5f5f3;
+  --primary-foreground: #111111;
+  --card: #191919;
+  --card-foreground: #f5f5f3;
+  --popover: #191919;
+  --popover-foreground: #f5f5f3;
+  --secondary: #242424;
+  --secondary-foreground: #f0f0ed;
+  --muted: #1d1d1d;
+  --muted-foreground: #aaa9a4;
+  --accent: #2b2b2b;
+  --accent-foreground: #f5f5f3;
+  --border: rgb(245 245 243 / 0.16);
+  --ring: #f0f0ed;
+}
+
+.dark .signal-home .brand-home-header,
+.dark .signal-immersive-hero,
+.dark .signal-home .brand-setup-band {
+  color: #f5f5f3;
+}
+
+.dark .signal-immersive-hero {
+  background: #111111;
+}
+
+.dark .signal-immersive-hero::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgb(17 17 17 / 0.94) 0%,
+    rgb(17 17 17 / 0.7) 46%,
+    rgb(17 17 17 / 0.2) 100%
+  );
+  content: '';
+  pointer-events: none;
+}
+
+.dark .signal-immersive-hero::after {
+  background: rgb(17 17 17 / 0.7);
+}
+
+.dark .signal-hero-media img,
+.dark .signal-story-media img {
+  filter: grayscale(1) brightness(0.56) contrast(1.08);
+}
+
+.dark .signal-home .brand-home-header .brand-name-mark,
+.dark .signal-home .brand-home-header nav a.text-muted-foreground:hover,
+.dark .signal-home .brand-home-header nav a.text-foreground,
+.dark .signal-home .brand-text-link:hover,
+.dark .signal-home .brand-setup-band .brand-text-link:hover,
+.dark .signal-home .brand-step-select:is(:hover, :focus-visible, .is-active) {
+  color: #f5f5f3;
+}
+
+.dark .signal-home .brand-home-header nav a.text-muted-foreground,
+.dark .signal-rating,
+.dark .signal-hero-aside > p,
+.dark .signal-home .brand-text-link,
+.dark .signal-compatibility,
+.dark .signal-provider-region nav :is(a, span),
+.dark .signal-home .brand-section-description,
+.dark .signal-home .brand-model-name p,
+.dark .signal-home .brand-model-price span,
+.dark .signal-home .brand-model-list > .brand-caption,
+.dark .signal-home .brand-setup-band .brand-section-number,
+.dark .signal-home .brand-setup-band .brand-section-description,
+.dark .signal-home .brand-setup-band .brand-text-link,
+.dark .signal-home .brand-setup-band .brand-setup-bottom code,
+.dark .signal-home .brand-step-description,
+.dark .signal-home .brand-step-select.is-active .brand-step-description,
+.dark .signal-home .brand-faq [data-slot='accordion-content'] {
+  color: rgb(245 245 243 / 0.66);
+}
+
+.dark .signal-headline h1 span {
+  color: #b8bab5;
+}
+
+.dark .signal-rating > span,
+.dark .signal-home .brand-model-initial {
+  color: #f5f5f3;
+  border-color: rgb(245 245 243 / 0.18);
+  background: rgb(255 255 255 / 0.06);
+}
+
+.dark .signal-compatibility {
+  border-color: rgb(245 245 243 / 0.16);
+  background: rgb(25 25 25 / 0.62);
+}
+
+.dark .signal-compatibility > span,
+.dark .signal-provider-region nav,
+.dark .signal-provider-region nav :is(a, span),
+.dark .signal-home .signal-story,
+.dark .signal-story-copy,
+.dark .signal-capability-list,
+.dark .signal-capability-list > div,
+.dark .signal-home .brand-model-list,
+.dark .signal-home .brand-model-row,
+.dark .signal-home .brand-model-list > .brand-caption,
+.dark .signal-home .brand-catalog-message,
+.dark .signal-home .brand-walkthrough-steps li,
+.dark .signal-home .brand-walkthrough-steps li:first-child,
+.dark .signal-home .brand-step-icon,
+.dark .signal-home .brand-setup-bottom,
+.dark .signal-home .brand-faq [data-slot='accordion-item'] {
+  border-color: rgb(245 245 243 / 0.14);
+}
+
+.dark .signal-compatibility i {
+  background: #f5f5f3;
+}
+
+.dark .signal-provider-region > p,
+.dark .signal-provider-region > small,
+.dark .signal-story-label,
+.dark .signal-home .brand-section-number,
+.dark .signal-capability-list span,
+.dark .signal-home .brand-step-index,
+.dark .signal-home .brand-step-select {
+  color: rgb(245 245 243 / 0.48);
+}
+
+.dark .signal-provider-region nav a:hover,
+.dark .signal-home .brand-model-row:hover,
+.dark .signal-home .brand-step-select:is(:hover, :focus-visible, .is-active) {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.dark .signal-provider-region nav a:hover {
+  color: #ffffff;
+}
+
+.dark .signal-home .brand-home-header[data-scrolled='true'] > div > nav {
+  background: rgb(17 17 17 / 0.76);
+  box-shadow: 0 16px 42px -24px rgb(0 0 0 / 0.8);
+}
+
+.dark .signal-home :is(a, button):focus-visible {
+  outline-color: #f5f5f3;
+}
+
+@media (max-width: 560px) {
+  .dark .signal-provider-region nav :is(a, span):nth-child(n + 4) {
+    border-top-color: rgb(245 245 243 / 0.14);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .signal-stage::after,
-  .signal-stage-glow,
-  .signal-demo-panel {
-    animation: none;
+  .signal-hero-media,
+  .signal-home .brand-actions [data-slot='button'],
+  .signal-home .brand-name-mark {
+    transition: none;
+  }
+
+  .signal-home .brand-actions [data-slot='button']:hover {
+    transform: none;
+  }
+}
+
+/* Editorial continuation below the immersive first viewport. */
+.signal-below {
+  position: relative;
+  z-index: 1;
+  padding-block: clamp(5rem, 8vw, 8rem) 2.5rem;
+  background: var(--signal-public-canvas);
+}
+
+.signal-home .signal-ecosystem {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 53rem;
+}
+
+.signal-story-intro {
+  max-width: 46rem;
+  margin-bottom: clamp(3rem, 5vw, 5rem);
+}
+
+.signal-home .signal-ecosystem h2 {
+  max-width: 11ch;
+}
+
+.signal-home .signal-ecosystem .brand-section-description {
+  max-width: 38rem;
+}
+
+.signal-home .signal-story {
+  display: grid;
+  min-height: 32rem;
+  overflow: hidden;
+  border: 1px solid rgb(20 20 20 / 0.1);
+  border-radius: 1.25rem;
+  background: var(--signal-public-raised);
+  grid-template-columns: minmax(0, 1.08fr) minmax(25rem, 0.92fr);
+}
+
+.signal-story-media {
+  min-height: 100%;
+  overflow: hidden;
+}
+
+.signal-story-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.signal-story:hover .signal-story-media img {
+  transform: scale(1.012);
+}
+
+.signal-story-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(3rem, 5.3vw, 5.5rem);
+  border-left: 1px solid rgb(20 20 20 / 0.11);
+}
+
+.signal-story-label {
+  margin: 0;
+  color: rgb(20 20 20 / 0.46);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.signal-home .brand-section-number {
+  margin-bottom: 1.25rem;
+  color: rgb(20 20 20 / 0.52);
+  font-family: var(--font-inter), 'Inter', sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.signal-home .signal-ecosystem h2,
+.signal-home .signal-models h2,
+.signal-home .brand-faq h2,
+.signal-home .brand-closing h2 {
+  margin: 0;
+  font-size: clamp(2.6rem, 4.8vw, 5rem);
+  font-weight: 540;
+  line-height: 0.98;
+  letter-spacing: -0.065em;
+  text-wrap: balance;
+}
+
+.signal-home .brand-section-description {
+  max-width: 40rem;
+  margin-top: 1.6rem;
+  color: rgb(20 20 20 / 0.58);
+  font-size: 0.94rem;
+  line-height: 1.8;
+}
+
+.signal-capability-list {
+  margin-block: 3rem 2.1rem;
+  border-block: 1px solid rgb(20 20 20 / 0.13);
+}
+
+.signal-capability-list > div {
+  display: grid;
+  min-height: 4rem;
+  align-items: center;
+  border-bottom: 1px solid rgb(20 20 20 / 0.11);
+  grid-template-columns: 2.5rem 1fr;
+}
+
+.signal-capability-list > div:last-child {
+  border-bottom: 0;
+}
+
+.signal-capability-list span {
+  color: rgb(20 20 20 / 0.38);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+}
+
+.signal-capability-list strong {
+  font-size: 0.88rem;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+}
+
+.signal-home .signal-story .brand-text-link svg,
+.signal-home .signal-models .brand-text-link svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.signal-home .signal-models {
+  padding-block: clamp(5rem, 8vw, 8rem);
+}
+
+.signal-home .signal-models .brand-section-heading {
+  display: grid;
+  align-items: end;
+  gap: 3rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.signal-home .signal-models h2 {
+  max-width: 12ch;
+}
+
+.signal-home .signal-models .brand-section-description {
+  max-width: 34rem;
+}
+
+.signal-home .brand-model-list {
+  margin-top: clamp(3.5rem, 6vw, 6rem);
+  border-bottom: 1px solid rgb(20 20 20 / 0.14);
+}
+
+.signal-home .brand-model-row {
+  display: grid;
+  min-height: 7.5rem;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1.4rem 1rem;
+  border-top: 1px solid rgb(20 20 20 / 0.14);
+  background: transparent;
+  grid-template-columns: 3.25rem minmax(0, 1fr) minmax(10rem, auto) 1.5rem;
+  transition:
+    padding 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 220ms ease;
+}
+
+.signal-home .brand-model-row:hover {
+  padding-inline: 1.5rem;
+  background: var(--signal-public-raised);
+}
+
+.signal-home .brand-model-initial {
+  display: grid;
+  width: 3.25rem;
+  height: 3.25rem;
+  place-items: center;
+  border: 1px solid rgb(20 20 20 / 0.14);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.42);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.signal-home .brand-model-name h3 {
+  font-size: clamp(1.1rem, 1.6vw, 1.4rem);
+  font-weight: 560;
+  letter-spacing: -0.035em;
+}
+
+.signal-home .brand-model-name p {
+  margin-top: 0.45rem;
+  color: rgb(20 20 20 / 0.5);
+  font-size: 0.75rem;
+}
+
+.signal-home .brand-model-price {
+  gap: 0.45rem;
+}
+
+.signal-home .brand-model-price strong {
+  font-size: 1rem;
+  font-weight: 560;
+}
+
+.signal-home .brand-model-price span,
+.signal-home .brand-model-list > .brand-caption {
+  color: rgb(20 20 20 / 0.46);
+  font-size: 0.67rem;
+}
+
+.signal-home .brand-model-list > .brand-caption {
+  padding-block: 1.1rem;
+  border-top: 1px solid rgb(20 20 20 / 0.14);
+}
+
+.signal-home .brand-catalog-message {
+  margin-top: 3rem;
+  padding: 2rem;
+  border: 1px solid rgb(20 20 20 / 0.14);
+  border-radius: 1.25rem;
+  background: var(--signal-public-raised);
+}
+
+.signal-home .brand-setup-band {
+  color: #111111;
+  background: transparent;
+}
+
+.signal-home .brand-setup-band .brand-container {
+  width: min(86rem, calc(100% - 6rem));
+}
+
+.signal-home .brand-setup-band .brand-section {
+  padding-block: clamp(5rem, 8vw, 8rem);
+}
+
+.signal-home .brand-setup-band .brand-section-number,
+.signal-home .brand-setup-band .brand-section-description,
+.signal-home .brand-setup-band .brand-text-link,
+.signal-home .brand-setup-band .brand-setup-bottom code {
+  color: rgb(20 20 20 / 0.52);
+}
+
+.signal-home .brand-setup-band .brand-text-link:hover {
+  color: #111111;
+}
+
+.signal-home .brand-setup-band .brand-section-heading {
+  display: grid;
+  align-items: end;
+  gap: 3rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.signal-home .brand-setup-band h2 {
+  max-width: 12ch;
+  font-size: clamp(2.7rem, 5vw, 5.2rem);
+  font-weight: 530;
+  line-height: 0.98;
+  letter-spacing: -0.065em;
+}
+
+.signal-home .brand-walkthrough {
+  display: grid;
+  gap: clamp(2.5rem, 6vw, 6.5rem);
+  margin-top: clamp(3.5rem, 6vw, 5.5rem);
+  grid-template-columns: minmax(18rem, 0.72fr) minmax(0, 1.28fr);
+}
+
+.signal-home .brand-walkthrough-steps {
+  display: flex;
+  flex-direction: column;
+}
+
+.signal-home .brand-walkthrough-steps li {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid rgb(20 20 20 / 0.14);
+}
+
+.signal-home .brand-walkthrough-steps li:first-child {
+  border-top: 1px solid rgb(20 20 20 / 0.14);
+}
+
+.signal-home .brand-step-select {
+  display: flex;
+  width: 100%;
+  min-height: 8.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.8rem;
+  padding: 1.3rem 1rem;
+  color: rgb(20 20 20 / 0.48);
+  text-align: left;
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    padding 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.signal-home .brand-step-select:is(:hover, :focus-visible, .is-active) {
+  padding-inline: 1.35rem 0.65rem;
+  color: #111111;
+  background: var(--signal-public-raised);
+}
+
+.signal-home .brand-step-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.signal-home .brand-step-index {
+  color: rgb(20 20 20 / 0.38);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+}
+
+.signal-home .brand-step-icon {
+  display: grid;
+  width: 1.9rem;
+  height: 1.9rem;
+  place-items: center;
+  border: 1px solid rgb(20 20 20 / 0.15);
+  border-radius: 50%;
+}
+
+.signal-home .brand-step-icon svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.signal-home .brand-step-select strong {
+  font-size: 1.05rem;
+  font-weight: 560;
+  letter-spacing: -0.025em;
+}
+
+.signal-home .brand-step-description {
+  color: rgb(20 20 20 / 0.48);
+  font-size: 0.72rem;
+  line-height: 1.65;
+}
+
+.signal-home .brand-step-select.is-active .brand-step-description {
+  color: rgb(20 20 20 / 0.62);
+}
+
+.signal-home .brand-walkthrough-preview {
+  --terminal-muted: rgb(255 255 255 / 0.56);
+  --terminal-text: rgb(255 255 255 / 0.76);
+  position: sticky;
+  top: 7.5rem;
+  align-self: start;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 1.5rem;
+  background: #181818;
+  box-shadow: 0 34px 80px -55px rgb(0 0 0 / 0.95);
+}
+
+.signal-home .brand-walkthrough-toolbar,
+.signal-home .brand-walkthrough-stage,
+.signal-home .brand-walkthrough-note {
+  border-color: rgb(255 255 255 / 0.11);
+}
+
+.signal-home .brand-walkthrough-toolbar {
+  display: flex;
+  min-height: 3.8rem;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: 1.3rem 0.8rem;
+  border-bottom: 1px solid rgb(255 255 255 / 0.11);
+  color: var(--terminal-text);
+  font-size: 0.72rem;
+}
+
+.signal-home .brand-walkthrough-toolbar > span {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.signal-home .brand-terminal-dots {
+  display: flex;
+  gap: 0.32rem;
+}
+
+.signal-home .brand-terminal-dots i {
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.3);
+}
+
+.signal-home .brand-walkthrough-toolbar [data-slot='button'] {
+  color: rgb(255 255 255 / 0.88);
+}
+
+.signal-home .brand-walkthrough-toolbar [data-slot='button']:hover {
+  color: #ffffff;
+  background: rgb(255 255 255 / 0.08);
+}
+
+.signal-home .brand-walkthrough-stage {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.35rem;
+  border-bottom: 1px solid rgb(255 255 255 / 0.09);
+  background: #202020;
+}
+
+.signal-home .brand-walkthrough-stage span,
+.signal-home .brand-code-index {
+  color: var(--terminal-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+}
+
+.signal-home .brand-walkthrough-preview .brand-walkthrough-stage > strong {
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 540;
+}
+
+.signal-home .brand-walkthrough-code {
+  margin: 0;
+  padding: 1.5rem;
+  overflow-x: auto;
+  color: var(--terminal-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.8;
+}
+
+.signal-home .brand-walkthrough-code code {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.signal-home .brand-code-block {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 2px solid transparent;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  transition:
+    color 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.signal-home .brand-code-block > span:last-child {
+  white-space: pre;
+}
+
+.signal-home .brand-code-block.is-active {
+  color: #ffffff;
+  border-color: rgb(255 255 255 / 0.88);
+  background: rgb(255 255 255 / 0.075);
+}
+
+.signal-home .brand-walkthrough-note {
+  padding: 1rem 1.35rem;
+  border-top: 1px solid rgb(255 255 255 / 0.1);
+  color: var(--terminal-muted);
+  font-size: 0.64rem;
+  line-height: 1.6;
+}
+
+.signal-home .brand-setup-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgb(20 20 20 / 0.14);
+}
+
+.signal-home .brand-faq {
+  display: grid;
+  gap: clamp(4rem, 9vw, 10rem);
+  padding-block: clamp(5rem, 8vw, 8rem);
+  grid-template-columns: minmax(18rem, 0.72fr) minmax(0, 1.28fr);
+}
+
+.signal-home .brand-faq h2 {
+  max-width: 9ch;
+}
+
+.signal-home .brand-faq [data-slot='accordion-item'] {
+  border-color: rgb(20 20 20 / 0.14);
+}
+
+.signal-home .brand-faq [data-slot='accordion-trigger'] {
+  min-height: 4.6rem;
+  padding-inline: 0.25rem;
+  border-radius: 0;
+  font-size: 0.9rem;
+  font-weight: 540;
+}
+
+.signal-home .brand-faq [data-slot='accordion-content'] {
+  padding-inline: 0.25rem;
+  color: rgb(20 20 20 / 0.56);
+  font-size: 0.82rem;
+  line-height: 1.8;
+}
+
+.signal-home .brand-closing {
+  display: flex;
+  min-height: 24rem;
+  align-items: end;
+  justify-content: space-between;
+  gap: 3rem;
+  padding: clamp(3rem, 6vw, 6rem);
+  color: #ffffff;
+  border: 0;
+  border-radius: 1.5rem;
+  background: #111111;
+}
+
+.signal-home .brand-closing .brand-section-number,
+.signal-home .brand-closing p {
+  color: rgb(255 255 255 / 0.5);
+}
+
+.signal-home .brand-closing h2 {
+  max-width: 10ch;
+}
+
+.signal-home .brand-closing p:not(.brand-section-number) {
+  margin-top: 1.3rem;
+  font-size: 0.9rem;
+}
+
+.signal-home .brand-closing [data-slot='button'] {
+  min-height: 3.4rem;
+  flex: 0 0 auto;
+  padding-inline: 1.8rem;
+  color: #111111;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.signal-home .brand-closing [data-slot='button']:hover {
+  color: #111111;
+  background: var(--signal-public-raised);
+  box-shadow: 0 20px 40px -25px rgb(255 255 255 / 0.28);
+}
+
+.signal-home .brand-closing :is(a, button):focus-visible {
+  outline-color: #ffffff;
+}
+
+.signal-home .brand-footer {
+  margin-top: 2.5rem;
+  background: var(--signal-public-canvas);
+}
+
+.signal-home .brand-footer > div {
+  max-width: 86rem;
+}
+
+@media (max-width: 1100px) {
+  .signal-home .signal-story {
+    min-height: 30rem;
+    grid-template-columns: minmax(0, 1fr) minmax(22rem, 0.85fr);
+  }
+
+  .signal-story-copy {
+    padding: 3.5rem;
+  }
+
+  .signal-home .brand-setup-band .brand-container {
+    width: min(100% - 3rem, 74rem);
+  }
+
+  .signal-home .brand-walkthrough {
+    gap: 3rem;
+  }
+}
+
+@media (max-width: 820px) {
+  .signal-below {
+    padding-top: 4.5rem;
+  }
+
+  .signal-home .signal-story {
+    min-height: 0;
+    border-radius: 1.5rem;
+    grid-template-columns: 1fr;
+  }
+
+  .signal-story-intro {
+    margin-bottom: 2.75rem;
+  }
+
+  .signal-story-media {
+    min-height: 25rem;
+  }
+
+  .signal-story-media img {
+    object-position: 40% center;
+  }
+
+  .signal-story-copy {
+    padding: 3.5rem 2.5rem;
+    border-top: 1px solid rgb(20 20 20 / 0.11);
+    border-left: 0;
+  }
+
+  .signal-home .signal-models .brand-section-heading,
+  .signal-home .brand-setup-band .brand-section-heading {
+    align-items: start;
+    grid-template-columns: 1fr;
+  }
+
+  .signal-home .brand-model-row {
+    grid-template-columns: 3rem minmax(0, 1fr) 1.25rem;
+  }
+
+  .signal-home .brand-model-price {
+    display: none;
+  }
+
+  .signal-home .brand-setup-band .brand-container {
+    width: min(100% - 2rem, 44rem);
+  }
+
+  .signal-home .brand-walkthrough {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .signal-home .brand-walkthrough-preview {
+    position: static;
+    display: block;
+  }
+
+  .signal-home .brand-step-select {
+    min-height: 7rem;
+  }
+
+  .signal-home .brand-faq {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-home .brand-closing {
+    min-height: 22rem;
+    align-items: start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 560px) {
+  .signal-below {
+    padding-block: 4rem 1.25rem;
+  }
+
+  .signal-home .signal-story {
+    border-radius: 1.25rem;
+  }
+
+  .signal-story-media {
+    min-height: 18rem;
+  }
+
+  .signal-story-copy {
+    padding: 2.5rem 1.5rem;
+  }
+
+  .signal-home .signal-ecosystem h2,
+  .signal-home .signal-models h2,
+  .signal-home .brand-faq h2,
+  .signal-home .brand-closing h2,
+  .signal-home .brand-setup-band h2 {
+    font-size: clamp(2.35rem, 12vw, 3.5rem);
+  }
+
+  .signal-capability-list {
+    margin-block: 2.25rem 1.75rem;
+  }
+
+  .signal-home .signal-models {
+    padding-block: 6rem;
+  }
+
+  .signal-home .brand-model-row {
+    min-height: 6.5rem;
+    gap: 1rem;
+    padding-inline: 0;
+  }
+
+  .signal-home .brand-model-row:hover {
+    padding-inline: 0.5rem;
+  }
+
+  .signal-home .brand-model-initial {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .signal-home .brand-setup-band .brand-container {
+    width: calc(100% - 1.5rem);
+  }
+
+  .signal-home .brand-setup-band .brand-section {
+    padding-block: 6rem;
+  }
+
+  .signal-home .brand-step-select {
+    min-height: 7.5rem;
+    padding-inline: 0.5rem;
+  }
+
+  .signal-home .brand-step-select:is(:hover, :focus-visible, .is-active) {
+    padding-inline: 0.75rem 0.25rem;
+  }
+
+  .signal-home .brand-walkthrough-code {
+    padding: 1rem;
+    font-size: 0.61rem;
+  }
+
+  .signal-home .brand-code-block {
+    grid-template-columns: 1.15rem minmax(0, 1fr);
+    padding-inline: 0.4rem;
+  }
+
+  .signal-home .brand-setup-bottom {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .signal-home .brand-faq {
+    gap: 3.5rem;
+    padding-block: 6rem;
+  }
+
+  .signal-home .brand-closing {
+    width: calc(100% - 1.5rem);
+    min-height: 23rem;
+    padding: 2.25rem 1.5rem;
+    border-radius: 1.5rem;
+  }
+
+  .signal-home .brand-closing [data-slot='button'] {
+    width: 100%;
+  }
+
+  .signal-home .brand-footer {
+    margin-top: 1.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signal-story-media img,
+  .signal-home .brand-model-row,
+  .signal-home .brand-step-select {
+    transition: none;
+  }
+
+  .signal-story:hover .signal-story-media img {
+    transform: none;
   }
 }

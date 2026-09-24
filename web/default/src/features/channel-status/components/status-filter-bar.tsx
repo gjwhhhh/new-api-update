@@ -24,7 +24,7 @@ import { CHANNEL_HEALTH_FILTERS, CHANNEL_HEALTH_LABEL } from '../constants'
 import type { ChannelHealth } from '../types'
 
 const DOT_CLASS: Record<ChannelHealth, string> = {
-  running: 'bg-emerald-500',
+  running: 'bg-success',
   fluctuating: 'bg-amber-500',
   abnormal: 'bg-red-500',
   no_data: 'bg-muted-foreground/40',

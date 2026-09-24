@@ -417,7 +417,7 @@ const percentTextClassName: Record<
   grey: 'text-muted-foreground',
   indigo: 'text-chart-1',
   'light-blue': 'text-info',
-  'light-green': 'text-emerald-500 dark:text-emerald-300',
+  'light-green': 'text-success',
   lime: 'text-chart-3',
   orange: 'text-warning',
   pink: 'text-chart-5',

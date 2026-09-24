@@ -34,7 +34,7 @@ import type {
 } from '../types'
 
 const DAY_STATUS_CLASS: Record<string, string> = {
-  operational: 'bg-emerald-500',
+  operational: 'bg-success',
   degraded_performance: 'bg-amber-400',
   under_maintenance: 'bg-sky-400',
   partial_outage: 'bg-orange-500',
@@ -184,9 +184,7 @@ function UptimeBarTooltipEvents(props: {
     )
   }
   if (props.status === 'operational') {
-    return (
-      <p className='mt-1 opacity-90'>{t('No active incidents')}</p>
-    )
+    return <p className='mt-1 opacity-90'>{t('No active incidents')}</p>
   }
   return null
 }

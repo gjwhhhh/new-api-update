@@ -16,6 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useRouterState } from '@tanstack/react-router'
+import { useEffect } from 'react'
+
 import { AnimatedOutlet } from '@/components/page-transition'
 import { SkipToMain } from '@/components/skip-to-main'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
@@ -33,21 +36,45 @@ type AuthenticatedLayoutProps = {
 
 export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
   const defaultOpen = getCookie('sidebar_state') !== 'false'
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const isDashboard =
+    pathname === '/dashboard' || pathname.startsWith('/dashboard/')
+  const consoleSection = pathname.split('/').find(Boolean) ?? 'dashboard'
+
+  useEffect(() => {
+    document.body.dataset.consoleActive = 'true'
+    document.body.dataset.consoleSection = consoleSection
+
+    return () => {
+      delete document.body.dataset.consoleActive
+      delete document.body.dataset.consoleSection
+    }
+  }, [consoleSection])
 
   return (
     <LayoutProvider>
       <SearchProvider>
-        <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
+        <SidebarProvider
+          defaultOpen={defaultOpen}
+          data-console-section={consoleSection}
+          className={cn(
+            'signal-console-shell flex-col',
+            isDashboard && 'signal-dashboard-shell'
+          )}
+        >
           <SkipToMain />
           <AppHeader />
-          <div className='flex min-h-0 w-full flex-1'>
+          <div className='flex min-h-0 w-full min-w-0 flex-1'>
             <AppSidebar />
             <SidebarInset
               className={cn(
                 '@container/content',
-                'h-[calc(100svh-var(--app-header-height,0px))]',
-                'min-h-0 overflow-hidden',
-                'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,0px)-(var(--spacing)*4))]'
+                'signal-console-legacy-colors',
+                'h-[calc(100dvh-var(--app-header-height,0px))]',
+                'min-h-0 min-w-0 overflow-hidden',
+                'peer-data-[variant=inset]:h-[calc(100dvh-var(--app-header-height,0px)-(var(--spacing)*4))]'
               )}
             >
               {props.children ?? <AnimatedOutlet />}

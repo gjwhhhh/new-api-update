@@ -62,19 +62,19 @@ function formatGroupRatio(
 
 function getRatioBadgeClassName(ratio: ApiKeyGroupOption['ratio']) {
   if (typeof ratio !== 'number') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300'
+    return 'border-primary/20 bg-primary/5 text-primary'
   }
 
   if (ratio > 5) {
-    return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300'
+    return 'border-destructive/20 bg-destructive/5 text-destructive'
   }
   if (ratio > 3) {
-    return 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/40 dark:text-orange-300'
+    return 'border-warning/20 bg-warning/5 text-warning'
   }
   if (ratio > 1) {
-    return 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300'
+    return 'border-info/20 bg-info/5 text-info'
   }
-  return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300'
+  return 'border-primary/20 bg-primary/5 text-primary'
 }
 
 function GroupRatioBadge({ ratio }: { ratio: ApiKeyGroupOption['ratio'] }) {

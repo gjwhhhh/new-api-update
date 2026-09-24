@@ -16,20 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
 import { cn } from '@/lib/utils'
 
 import type { TopNavLink } from '../types'
 import { PublicHeader, type PublicHeaderProps } from './public-header'
 
 const publicBrandMark = (
-  <img
-    src='/brand/tokenflyapi-mark-v2.png'
-    alt=''
-    aria-hidden='true'
-    width={28}
-    height={28}
-    className='brand-name-mark'
-  />
+  <TokenflyBrandMark aria-hidden='true' className='brand-name-mark' />
 )
 
 type PublicLayoutProps = {

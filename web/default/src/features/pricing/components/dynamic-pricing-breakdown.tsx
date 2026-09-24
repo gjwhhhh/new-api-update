@@ -268,6 +268,8 @@ export function DynamicPricingBreakdown({
                 tier.label === matchedTierLabel
               return (
                 <div
+                  // Positional expression rows may legally repeat labels and conditions.
+                  // eslint-disable-next-line react/no-array-index-key
                   key={`tier-mobile-${i}`}
                   className={cn(
                     'rounded-md border p-2',
@@ -427,6 +429,8 @@ export function DynamicPricingBreakdown({
           <ul className='space-y-1.5'>
             {ruleGroups.map((group, gi) => (
               <li
+                // Repeated multiplier groups are legal; these rows have no editable state.
+                // eslint-disable-next-line react/no-array-index-key
                 key={`group-${gi}`}
                 className='bg-muted/50 flex items-center justify-between gap-3 rounded-md px-3 py-2'
               >

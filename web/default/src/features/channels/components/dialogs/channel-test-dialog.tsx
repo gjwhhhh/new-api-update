@@ -1376,7 +1376,7 @@ function FailureDetailsSheet({
                 onClick={() => copyToClipboard(details.details)}
               >
                 {copiedText === details.details ? (
-                  <Check className='mr-2 h-4 w-4 text-green-600' />
+                  <Check className='text-success mr-2 h-4 w-4' />
                 ) : (
                   <Copy className='mr-2 h-4 w-4' />
                 )}

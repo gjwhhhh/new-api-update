@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { useTranslation } from 'react-i18next'
 
+import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
@@ -27,11 +27,10 @@ type AuthLayoutProps = {
 }
 
 export function AuthLayout({ children }: AuthLayoutProps) {
-  const { t } = useTranslation()
-  const { systemName, logo, loading } = useSystemConfig()
+  const { systemName, loading } = useSystemConfig()
 
   return (
-    <div className='relative grid h-svh max-w-none'>
+    <div className='signal-auth-shell relative grid min-h-dvh max-w-none'>
       <Link
         to='/'
         className='absolute top-4 left-4 z-10 flex items-center gap-2 transition-opacity hover:opacity-80 sm:top-8 sm:left-8'
@@ -40,10 +39,9 @@ export function AuthLayout({ children }: AuthLayoutProps) {
           {loading ? (
             <Skeleton className='absolute inset-0 rounded-full' />
           ) : (
-            <img
-              src={logo}
-              alt={t('Logo')}
-              className='h-8 w-8 rounded-full object-cover'
+            <TokenflyBrandMark
+              aria-hidden='true'
+              className='text-foreground size-8'
             />
           )}
         </div>

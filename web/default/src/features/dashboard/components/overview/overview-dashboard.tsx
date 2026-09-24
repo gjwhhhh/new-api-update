@@ -37,7 +37,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -47,6 +47,7 @@ import {
 } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -61,11 +62,16 @@ import {
   useDashboardContentVisibility,
 } from '../../hooks/use-status-data'
 import { AnnouncementsPanel } from './announcements-panel'
-import { ApiInfoPanel } from './api-info-panel'
 import { FAQPanel } from './faq-panel'
 import { PerformanceHealthPanel } from './performance-health-panel'
 import { SummaryCards } from './summary-cards'
 import { UptimePanel } from './uptime-panel'
+
+const OverviewActivity = lazy(() =>
+  import('./overview-activity').then((module) => ({
+    default: module.OverviewActivity,
+  }))
+)
 
 const SETUP_GUIDE_VISIBILITY_STORAGE_KEY =
   'dashboard_overview_setup_guide_expanded'
@@ -185,7 +191,7 @@ function SetupGuideBackdrop(props: { compact?: boolean }) {
     <>
       <div
         className={cn(
-          'pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_48%_120%_at_78%_0%,color-mix(in_oklch,var(--overview-accent-1)_14%,transparent)_0%,transparent_62%),linear-gradient(112deg,color-mix(in_oklch,var(--card)_94%,var(--overview-accent-2)_6%)_0%,color-mix(in_oklch,var(--card)_94%,var(--overview-accent-3)_6%)_48%,color-mix(in_oklch,var(--background)_90%,var(--overview-accent-1)_10%)_100%)] dark:opacity-60',
+          'signal-dashboard-backdrop pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_48%_120%_at_78%_0%,color-mix(in_oklch,var(--overview-accent-1)_14%,transparent)_0%,transparent_62%),linear-gradient(112deg,color-mix(in_oklch,var(--card)_94%,var(--overview-accent-2)_6%)_0%,color-mix(in_oklch,var(--card)_94%,var(--overview-accent-3)_6%)_48%,color-mix(in_oklch,var(--background)_90%,var(--overview-accent-1)_10%)_100%)] dark:opacity-60',
           props.compact
             ? '[mask-image:linear-gradient(90deg,black_0%,black_48%,transparent_74%)] opacity-55'
             : 'opacity-85'
@@ -194,7 +200,7 @@ function SetupGuideBackdrop(props: { compact?: boolean }) {
       />
       <div
         className={cn(
-          'text-foreground/5 dark:text-foreground/8 pointer-events-none absolute inset-y-0 right-0 hidden overflow-hidden font-mono sm:block',
+          'signal-dashboard-backdrop text-foreground/5 dark:text-foreground/8 pointer-events-none absolute inset-y-0 right-0 hidden overflow-hidden font-mono sm:block',
           props.compact ? 'w-1/2 opacity-45' : 'w-[58%] opacity-75'
         )}
         aria-hidden='true'
@@ -211,7 +217,7 @@ function SetupGuideBackdrop(props: { compact?: boolean }) {
         </pre>
       </div>
       <div
-        className='from-background/35 to-background/70 dark:from-background/20 dark:to-background/80 pointer-events-none absolute inset-0 bg-linear-to-b via-transparent'
+        className='signal-dashboard-backdrop from-background/35 to-background/70 dark:from-background/20 dark:to-background/80 pointer-events-none absolute inset-0 bg-linear-to-b via-transparent'
         aria-hidden='true'
       />
     </>
@@ -227,7 +233,7 @@ function StartStepItem(props: {
   const StatusIcon = props.step.completed ? Check : Circle
 
   return (
-    <li className='relative flex gap-3 pb-2.5 last:pb-0'>
+    <li className='signal-dashboard-step relative flex gap-3 pb-2.5 last:pb-0'>
       {!props.isLast && (
         <span
           className='bg-border absolute top-9 bottom-0 left-4 w-px'
@@ -236,7 +242,7 @@ function StartStepItem(props: {
       )}
       <span
         className={cn(
-          'bg-background relative z-10 flex size-8 shrink-0 items-center justify-center rounded-lg border shadow-xs',
+          'signal-dashboard-step-indicator bg-background relative z-10 flex size-8 shrink-0 items-center justify-center rounded-lg border shadow-xs',
           props.step.completed && 'border-success/30 bg-success/10'
         )}
       >
@@ -248,7 +254,7 @@ function StartStepItem(props: {
 
       <Link
         to={props.step.to}
-        className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-xs transition-colors outline-none focus-visible:ring-2'
+        className='signal-dashboard-step-link bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-xs transition-colors outline-none focus-visible:ring-2'
       >
         <span className='flex min-w-0 items-start gap-2.5'>
           <span className='bg-muted mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg'>
@@ -322,7 +328,7 @@ function RequestPreview(props: {
       initial={shouldReduceMotion ? false : { opacity: 0, y: 10, scale: 0.98 }}
       animate={shouldReduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={MOTION_TRANSITION.slow}
-      className='bg-background/75 relative overflow-hidden rounded-2xl border p-3 shadow-sm backdrop-blur'
+      className='signal-dashboard-request-preview bg-background/75 relative overflow-hidden rounded-2xl border p-3 shadow-sm backdrop-blur'
     >
       {!shouldReduceMotion && (
         <motion.div
@@ -368,7 +374,7 @@ function RequestPreview(props: {
         )}
       </div>
 
-      <div className='bg-foreground/[0.035] my-3 rounded-xl p-3 font-mono text-xs'>
+      <div className='signal-dashboard-request-code bg-foreground/[0.035] my-3 rounded-xl p-3 font-mono text-xs'>
         <div className='mb-2 flex items-center gap-1.5'>
           <span className='bg-destructive size-2 rounded-full' />
           <span className='bg-warning size-2 rounded-full' />
@@ -394,7 +400,7 @@ function RequestPreview(props: {
           return (
             <div
               key={signal.label}
-              className='bg-muted/40 flex items-center justify-between gap-3 rounded-xl px-3 py-2'
+              className='signal-dashboard-request-signal bg-muted/40 flex items-center justify-between gap-3 rounded-xl px-3 py-2'
             >
               <span className='flex min-w-0 items-center gap-2'>
                 <IconBadge tone={signal.tone} size='xs'>
@@ -421,7 +427,7 @@ function QuickActionItem(props: { action: QuickAction }) {
   return (
     <Button
       variant='outline'
-      className='h-auto justify-start rounded-xl px-3 py-3 text-left'
+      className='signal-dashboard-quick-action h-auto justify-start rounded-xl px-3 py-3 text-left'
       render={<Link to={props.action.to} />}
     >
       <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-lg'>
@@ -435,22 +441,6 @@ function QuickActionItem(props: { action: QuickAction }) {
           {props.action.description}
         </span>
       </span>
-    </Button>
-  )
-}
-
-function CompactQuickAction(props: { action: QuickAction }) {
-  const Icon = props.action.icon
-
-  return (
-    <Button
-      variant='outline'
-      size='sm'
-      className='bg-background/70 h-8 min-w-24 gap-1.5 px-2.5'
-      render={<Link to={props.action.to} />}
-    >
-      <Icon data-icon='inline-start' />
-      <span>{props.action.title}</span>
     </Button>
   )
 }
@@ -604,11 +594,9 @@ export function OverviewDashboard() {
 
   const completedStepCount = startSteps.filter((step) => step.completed).length
   const setupComplete = completedStepCount === startSteps.length
-  const setupStatusReady = apiKeysQuery.isFetched && Boolean(user)
-  const setupGuideExpanded =
-    manualSetupGuideExpanded ?? (setupStatusReady && !setupComplete)
+  const setupGuideExpanded = manualSetupGuideExpanded ?? false
   const showLeftContentPanels =
-    isAdmin || showApiInfoPanel || showAnnouncementsPanel || showFAQPanel
+    isAdmin || showAnnouncementsPanel || showFAQPanel
   const showContentPanels = showLeftContentPanels || showUptimePanel
 
   const handleSetupGuideToggle = () => {
@@ -618,10 +606,10 @@ export function OverviewDashboard() {
   }
 
   return (
-    <div className='flex flex-col gap-4'>
+    <div className='signal-dashboard-overview flex flex-col gap-4'>
       {setupGuideExpanded ? (
-        <CardStaggerContainer className='grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]'>
-          <CardStaggerItem className='bg-card h-full overflow-hidden rounded-2xl border shadow-xs'>
+        <CardStaggerContainer className='signal-dashboard-setup grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]'>
+          <CardStaggerItem className='signal-dashboard-setup-main bg-card h-full overflow-hidden rounded-2xl border shadow-xs'>
             <div className='relative h-full overflow-hidden p-4 sm:p-5'>
               <SetupGuideBackdrop />
               <div className='relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]'>
@@ -646,6 +634,7 @@ export function OverviewDashboard() {
                         variant='outline'
                         size='sm'
                         onClick={handleSetupGuideToggle}
+                        aria-expanded={setupGuideExpanded}
                       >
                         <ChevronUp data-icon='inline-start' />
                         {t('Hide setup guide')}
@@ -657,7 +646,7 @@ export function OverviewDashboard() {
                     </div>
                   </div>
 
-                  <ol className='bg-background/45 rounded-2xl border p-2 backdrop-blur'>
+                  <ol className='signal-dashboard-steps bg-background/45 rounded-2xl border p-2 backdrop-blur'>
                     {startSteps.map((step, index) => (
                       <StartStepItem
                         key={step.title}
@@ -677,7 +666,7 @@ export function OverviewDashboard() {
             </div>
           </CardStaggerItem>
 
-          <CardStaggerItem className='bg-card h-full rounded-2xl border p-4 shadow-xs sm:p-5'>
+          <CardStaggerItem className='signal-dashboard-quick-actions bg-card h-full rounded-2xl border p-4 shadow-xs sm:p-5'>
             <div className='flex h-full flex-col gap-4'>
               <div className='flex flex-col gap-1'>
                 <div className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
@@ -697,16 +686,26 @@ export function OverviewDashboard() {
         </CardStaggerContainer>
       ) : (
         <CardStaggerContainer>
-          <CardStaggerItem className='bg-card overflow-hidden rounded-2xl border shadow-xs'>
+          <CardStaggerItem className='signal-dashboard-setup-collapsed bg-card overflow-hidden rounded-2xl border shadow-xs'>
             <div className='relative overflow-hidden px-4 py-3 sm:px-5'>
               <SetupGuideBackdrop compact />
               <div className='relative flex flex-wrap items-center justify-between gap-3'>
                 <div className='flex min-w-0 items-center gap-3'>
                   <span className='bg-background/70 flex size-9 shrink-0 items-center justify-center rounded-xl border shadow-xs'>
-                    <Check className='text-success size-4' aria-hidden='true' />
+                    {setupComplete ? (
+                      <Check
+                        className='text-success size-4'
+                        aria-hidden='true'
+                      />
+                    ) : (
+                      <ListChecks
+                        className='text-muted-foreground size-4'
+                        aria-hidden='true'
+                      />
+                    )}
                   </span>
                   <div className='min-w-0'>
-                    <div className='flex items-center gap-2'>
+                    <div className='flex flex-wrap items-center gap-2'>
                       <h3 className='truncate text-sm font-semibold'>
                         {setupComplete
                           ? t('Setup guide complete')
@@ -719,7 +718,7 @@ export function OverviewDashboard() {
                         })}
                       </span>
                     </div>
-                    <p className='text-muted-foreground line-clamp-1 text-xs'>
+                    <p className='text-muted-foreground text-xs'>
                       {setupComplete
                         ? t(
                             'Your setup guide is collapsed so usage stays in focus.'
@@ -730,14 +729,12 @@ export function OverviewDashboard() {
                 </div>
 
                 <div className='flex flex-wrap items-center gap-2'>
-                  {visibleQuickActions.map((action) => (
-                    <CompactQuickAction key={action.title} action={action} />
-                  ))}
                   <Button
                     variant='outline'
                     size='sm'
                     className='bg-background/70 h-8 min-w-28'
                     onClick={handleSetupGuideToggle}
+                    aria-expanded={setupGuideExpanded}
                   >
                     <ChevronDown data-icon='inline-start' />
                     {t('Show setup guide')}
@@ -750,6 +747,10 @@ export function OverviewDashboard() {
       )}
 
       <SummaryCards />
+
+      <Suspense fallback={<Skeleton className='h-80 w-full' />}>
+        <OverviewActivity showApiInfo={showApiInfoPanel} />
+      </Suspense>
 
       {showContentPanels && (
         <CardStaggerContainer
@@ -764,18 +765,12 @@ export function OverviewDashboard() {
             <div
               className={cn(
                 'grid min-w-0 grid-cols-1 gap-4',
-                (showApiInfoPanel || showAnnouncementsPanel || showFAQPanel) &&
-                  'lg:grid-cols-2'
+                (showAnnouncementsPanel || showFAQPanel) && 'lg:grid-cols-2'
               )}
             >
               {isAdmin && (
                 <CardStaggerItem className='lg:col-span-2'>
                   <PerformanceHealthPanel />
-                </CardStaggerItem>
-              )}
-              {showApiInfoPanel && (
-                <CardStaggerItem>
-                  <ApiInfoPanel />
                 </CardStaggerItem>
               )}
               {showAnnouncementsPanel && (

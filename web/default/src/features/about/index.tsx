@@ -32,7 +32,7 @@ function EmptyAboutState() {
   const currentYear = new Date().getFullYear()
 
   return (
-    <div className='flex min-h-[60vh] items-center justify-center p-8'>
+    <div className='signal-about-empty flex items-center justify-center'>
       <div className='max-w-2xl space-y-6 text-center'>
         <div className='flex justify-center'>
           <Construction className='text-muted-foreground h-24 w-24' />
@@ -126,7 +126,7 @@ export function About() {
 
   if (isLoading) {
     return (
-      <PublicLayout>
+      <PublicLayout className='signal-public-shell signal-public-legacy-colors'>
         <div className='mx-auto flex max-w-4xl flex-col gap-4 py-12'>
           <Skeleton className='h-8 w-[45%]' />
           <Skeleton className='h-4 w-full' />
@@ -139,7 +139,7 @@ export function About() {
 
   if (!hasContent) {
     return (
-      <PublicLayout>
+      <PublicLayout className='signal-public-shell signal-public-legacy-colors'>
         <EmptyAboutState />
       </PublicLayout>
     )
@@ -147,7 +147,10 @@ export function About() {
 
   if (isUrl) {
     return (
-      <PublicLayout showMainContainer={false}>
+      <PublicLayout
+        className='signal-public-shell signal-public-legacy-colors'
+        showMainContainer={false}
+      >
         <iframe
           src={rawContent}
           className='h-[calc(100vh-3.5rem)] w-full border-0'
@@ -160,7 +163,10 @@ export function About() {
 
   if (contentIsHtml) {
     return (
-      <PublicLayout showMainContainer={false}>
+      <PublicLayout
+        className='signal-public-shell signal-public-legacy-colors'
+        showMainContainer={false}
+      >
         <RichContent
           mode='html'
           htmlVariant='isolated'
@@ -172,8 +178,8 @@ export function About() {
   }
 
   return (
-    <PublicLayout>
-      <div className='mx-auto max-w-6xl px-4 py-8'>
+    <PublicLayout className='signal-public-shell signal-public-legacy-colors'>
+      <div className='signal-about-content mx-auto px-4'>
         <RichContent
           mode='markdown'
           content={rawContent}

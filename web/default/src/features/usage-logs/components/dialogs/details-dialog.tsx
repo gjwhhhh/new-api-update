@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -31,7 +32,6 @@ import {
   Info,
   LogIn,
 } from 'lucide-react'
-import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -79,7 +79,7 @@ const CHANNEL_FIELD_LABELS: Record<string, string> = {
 function timingTextColorClass(
   variant: 'success' | 'warning' | 'danger'
 ): string {
-  if (variant === 'success') return 'text-emerald-600'
+  if (variant === 'success') return 'text-success'
   if (variant === 'warning') return 'text-amber-600'
   return 'text-rose-600'
 }
@@ -179,7 +179,9 @@ function getUsageBillingPathLabel(
   }
 }
 
-function isUsageBillingPathLocal(adminInfo: LogOtherData['admin_info']): boolean {
+function isUsageBillingPathLocal(
+  adminInfo: LogOtherData['admin_info']
+): boolean {
   if (adminInfo?.usage_billing_path) {
     return adminInfo.usage_billing_path === USAGE_BILLING_PATH.LOCAL
   }
@@ -733,7 +735,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 aria-label={t('Copy to clipboard')}
               >
                 {copiedText === conversionLabel ? (
-                  <Check className='size-3 text-green-600' />
+                  <Check className='text-success size-3' />
                 ) : (
                   <Copy className='size-3' />
                 )}
@@ -1077,7 +1079,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
                   {isUsageBillingPathLocal(other.admin_info) ? (
                     <Monitor className='size-3 text-blue-500' />
                   ) : (
-                    <Cloud className='size-3 text-emerald-500' />
+                    <Cloud className='text-primary size-3' />
                   )}
                   <span className='text-xs'>
                     {getUsageBillingPathLabel(t, other.admin_info)}
@@ -1222,7 +1224,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 aria-label={t('Copy to clipboard')}
               >
                 {copiedText === details ? (
-                  <Check className='size-3 text-green-600' />
+                  <Check className='text-success size-3' />
                 ) : (
                   <Copy className='size-3' />
                 )}

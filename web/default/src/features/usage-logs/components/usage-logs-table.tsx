@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -48,13 +48,13 @@ import { useLogsViewScope } from './usage-logs-provider'
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
 const logTypeRowTint: Record<number, string> = {
-  [LOG_TYPE_ENUM.ERROR]: 'bg-rose-50/40 dark:bg-rose-950/20',
-  [LOG_TYPE_ENUM.REFUND]: 'bg-blue-50/30 dark:bg-blue-950/15',
+  [LOG_TYPE_ENUM.ERROR]: 'bg-destructive/[0.06]',
+  [LOG_TYPE_ENUM.REFUND]: 'bg-info/[0.06]',
 }
 
 // Warning tint for logs where a quota conversion saturated (admin-only marker).
 // Takes precedence over the per-type tint since it flags a billing anomaly.
-const quotaSaturationRowTint = 'bg-amber-50/60 dark:bg-amber-950/25'
+const quotaSaturationRowTint = 'bg-warning/10'
 
 function getColumnVisibilityStorageKey(
   logCategory: LogCategory,
@@ -64,7 +64,12 @@ function getColumnVisibilityStorageKey(
 }
 
 function deserializeLogTypeFilter(value: unknown): unknown[] {
-  const values = Array.isArray(value) ? value : value ? [value] : []
+  let values: unknown[] = []
+  if (Array.isArray(value)) {
+    values = value
+  } else if (value) {
+    values = [value]
+  }
   return values.filter((item) => String(item) !== LOG_TYPE_ALL_VALUE)
 }
 

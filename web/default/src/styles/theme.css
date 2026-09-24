@@ -159,9 +159,19 @@ For commercial licensing, please contact support@quantumnous.com
     var(--foreground) 3%,
     var(--background)
   );
+  --table-selected: color-mix(in oklch, var(--foreground) 4%, var(--table-row));
+  --table-selected-hover: color-mix(
+    in oklch,
+    var(--foreground) 6%,
+    var(--table-row)
+  );
   /* Disabled rows: kept subtle so they read as "quiet", not as a colored
      alert state. */
-  --table-disabled: color-mix(in oklch, var(--foreground) 3%, var(--background));
+  --table-disabled: color-mix(
+    in oklch,
+    var(--foreground) 3%,
+    var(--background)
+  );
   --table-disabled-hover: color-mix(
     in oklch,
     var(--foreground) 4.5%,
@@ -225,7 +235,17 @@ For commercial licensing, please contact support@quantumnous.com
     var(--foreground) 9%,
     var(--background)
   );
-  --table-disabled: color-mix(in oklch, var(--foreground) 7%, var(--background));
+  --table-selected: color-mix(in oklch, var(--foreground) 8%, var(--table-row));
+  --table-selected-hover: color-mix(
+    in oklch,
+    var(--foreground) 11%,
+    var(--table-row)
+  );
+  --table-disabled: color-mix(
+    in oklch,
+    var(--foreground) 7%,
+    var(--background)
+  );
   --table-disabled-hover: color-mix(
     in oklch,
     var(--foreground) 9.5%,

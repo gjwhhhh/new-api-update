@@ -37,6 +37,8 @@ interface FooterColumnProps {
 interface FooterProps {
   logo?: string
   name?: string
+  /** Optional page-level brand fallback; system settings still take priority. */
+  brandVariant?: 'home'
   columns?: FooterColumnProps[]
   copyright?: string
   className?: string
@@ -158,8 +160,16 @@ export function Footer(props: FooterProps) {
     demoSiteEnabled,
   } = useSystemConfig()
 
-  const displayLogo = systemLogo || props.logo || '/logo.png'
-  const displayName = systemName || props.name || 'New API'
+  const displayLogo =
+    systemLogo ||
+    props.logo ||
+    (props.brandVariant === 'home'
+      ? '/brand/tokenflyapi-mark-v2.png'
+      : '/logo.png')
+  const displayName =
+    systemName ||
+    props.name ||
+    (props.brandVariant === 'home' ? 'Tokenflyapi' : 'New API')
   const isDemoSiteMode = Boolean(demoSiteEnabled)
   const currentYear = new Date().getFullYear()
 

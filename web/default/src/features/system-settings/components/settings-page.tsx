@@ -66,7 +66,7 @@ function SettingsPageFrame(props: SettingsPageFrameProps) {
       actionsContainer={actionsContainer}
       titleStatusContainer={titleStatusContainer}
     >
-      <SectionPageLayout>
+      <SectionPageLayout className='signal-system-settings-page'>
         <SectionPageLayout.Title>
           <span className='inline-flex max-w-full min-w-0 items-center gap-2 align-middle'>
             <span className='truncate'>{props.title}</span>
@@ -83,7 +83,7 @@ function SettingsPageFrame(props: SettingsPageFrameProps) {
           />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <div className='flex h-full min-h-0 w-full flex-col gap-4'>
+          <div className='mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col gap-4'>
             {props.children}
           </div>
         </SectionPageLayout.Content>

@@ -262,7 +262,7 @@ export function StatCard(props: StatCardProps) {
         </div>
         <p
           className={cn(
-            'text-muted-foreground/60 line-clamp-1 text-[11px] sm:text-xs',
+            'text-muted-foreground line-clamp-1 text-[11px] sm:text-xs',
             props.compactMobile && 'hidden sm:block'
           )}
         >
@@ -273,12 +273,12 @@ export function StatCard(props: StatCardProps) {
   } else {
     valueContent = (
       <div className='flex flex-col gap-1'>
-        <div className='text-foreground font-mono text-base font-semibold tracking-tight break-all tabular-nums sm:text-2xl'>
+        <div className='text-foreground text-base font-semibold tracking-tight break-all tabular-nums sm:text-2xl'>
           {props.value}
         </div>
         <p
           className={cn(
-            'text-muted-foreground/60 line-clamp-1 text-[11px] leading-relaxed sm:text-xs',
+            'text-muted-foreground line-clamp-1 text-[11px] leading-relaxed sm:text-xs',
             props.compactMobile && 'hidden sm:block'
           )}
         >

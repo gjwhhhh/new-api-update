@@ -23,6 +23,7 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
 import { ErrorState } from '@/components/error-state'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { LoadingState } from '@/components/loading-state'
@@ -77,7 +78,7 @@ export function SetupWizard() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { systemName, logo, loading: systemConfigLoading } = useSystemConfig()
+  const { systemName, loading: systemConfigLoading } = useSystemConfig()
 
   const [currentStep, setCurrentStep] = useState(0)
   const [setupStatus, setSetupStatus] = useState<SetupStatus | undefined>()
@@ -278,8 +279,31 @@ export function SetupWizard() {
     mutation.mutate(payload)
   }
 
+  let setupContent: React.ReactNode
+  if (isLoading) {
+    setupContent = <LoadingState message={t('Loading setup status…')} />
+  } else if (isError) {
+    setupContent = (
+      <ErrorState
+        title={t('We could not load the setup status.')}
+        onRetry={() => refetch()}
+      />
+    )
+  } else {
+    setupContent = (
+      <Form {...form}>
+        <form
+          className='space-y-6'
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {currentStepComponent}
+        </form>
+      </Form>
+    )
+  }
+
   return (
-    <div className='bg-muted/40 relative min-h-svh py-10'>
+    <div className='signal-setup-shell bg-muted/40 relative min-h-svh py-10'>
       <div className='absolute top-4 right-4 sm:top-6 sm:right-6'>
         <LanguageSwitcher />
       </div>
@@ -289,10 +313,9 @@ export function SetupWizard() {
             {systemConfigLoading ? (
               <Skeleton className='absolute inset-0 rounded-full' />
             ) : (
-              <img
-                src={logo}
-                alt={t('System logo')}
-                className='h-12 w-12 rounded-full object-cover shadow-sm'
+              <TokenflyBrandMark
+                aria-hidden='true'
+                className='text-foreground size-12'
               />
             )}
           </div>
@@ -310,7 +333,7 @@ export function SetupWizard() {
           </p>
         </div>
 
-        <Card className='shadow-lg'>
+        <Card>
           <CardHeader className='space-y-2'>
             <CardTitle className='text-xl font-semibold'>
               {t('System setup wizard')}
@@ -325,27 +348,27 @@ export function SetupWizard() {
               {STEPS.map((step, index) => {
                 const isActive = currentStep === index
                 const isCompleted = currentStep > index
+                let stepClassName = 'border-muted bg-card'
+                if (isActive) {
+                  stepClassName = 'border-primary ring-primary/20 ring-2'
+                } else if (isCompleted) {
+                  stepClassName = 'border-primary/40 bg-primary/5'
+                }
+
+                const indicatorClassName =
+                  isActive || isCompleted
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-muted-foreground/40 text-muted-foreground'
                 return (
                   <li
                     key={step.titleKey}
-                    className={cn(
-                      'rounded-xl border p-3',
-                      isActive
-                        ? 'border-primary ring-primary/20 ring-2'
-                        : isCompleted
-                          ? 'border-primary/40 bg-primary/5'
-                          : 'border-muted bg-card'
-                    )}
+                    className={cn('rounded-xl border p-3', stepClassName)}
                   >
                     <div className='flex items-start gap-3'>
                       <span
                         className={cn(
                           'flex size-6 items-center justify-center rounded-md border text-xs font-semibold',
-                          isActive
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : isCompleted
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-muted-foreground/40 text-muted-foreground'
+                          indicatorClassName
                         )}
                       >
                         {index + 1}
@@ -364,23 +387,7 @@ export function SetupWizard() {
               })}
             </ol>
 
-            {isLoading ? (
-              <LoadingState message={t('Loading setup status…')} />
-            ) : isError ? (
-              <ErrorState
-                title={t('We could not load the setup status.')}
-                onRetry={() => refetch()}
-              />
-            ) : (
-              <Form {...form}>
-                <form
-                  className='space-y-6'
-                  onSubmit={(event) => event.preventDefault()}
-                >
-                  {currentStepComponent}
-                </form>
-              </Form>
-            )}
+            {setupContent}
           </CardContent>
 
           {!isLoading && !isError && (

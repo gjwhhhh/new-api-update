@@ -167,9 +167,7 @@ export function OpenAIStatusPanel(props: {
         title={
           openGroup ? (
             <span className='flex flex-wrap items-center gap-2'>
-              <span>
-                {openGroup.name}
-              </span>
+              <span>{openGroup.name}</span>
               <StatusBadge
                 label={t(CHANNEL_HEALTH_LABEL[openHealth])}
                 variant={HEALTH_VARIANT[openHealth]}
@@ -190,7 +188,9 @@ export function OpenAIStatusPanel(props: {
             {(openGroup.hourly_series?.length ?? 0) > 0 ? (
               <div>
                 <div className='mb-2 flex items-center justify-between gap-3'>
-                  <h3 className='text-sm font-semibold'>{t('Last 24 hours')}</h3>
+                  <h3 className='text-sm font-semibold'>
+                    {t('Last 24 hours')}
+                  </h3>
                   <span className='text-foreground text-xs tabular-nums'>
                     {openGroup.uptime_percent != null &&
                     Number.isFinite(openGroup.uptime_percent)
@@ -205,10 +205,7 @@ export function OpenAIStatusPanel(props: {
                   uptimePercent={openGroup.uptime_percent}
                 />
                 <div className='text-foreground mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]'>
-                  <LegendDot
-                    className='bg-emerald-500'
-                    label={t('Operational')}
-                  />
+                  <LegendDot className='bg-success' label={t('Operational')} />
                   <LegendDot className='bg-amber-400' label={t('Degraded')} />
                   <LegendDot
                     className='bg-orange-500'
@@ -286,7 +283,7 @@ export function OpenAIStatusPanel(props: {
                                 <span
                                   className={cn(
                                     'size-1.5 rounded-full',
-                                    health === 'running' && 'bg-emerald-500',
+                                    health === 'running' && 'bg-success',
                                     health === 'fluctuating' && 'bg-amber-500',
                                     health === 'abnormal' && 'bg-red-500',
                                     health === 'no_data' &&
@@ -431,8 +428,7 @@ function ComponentUptimeBar(props: {
 
 function IncidentListItem(props: { incident: OpenAIStatusIncident }) {
   const { t } = useTranslation()
-  const impactLabel =
-    OPENAI_COMPONENT_STATUS_LABEL[props.incident.impact]
+  const impactLabel = OPENAI_COMPONENT_STATUS_LABEL[props.incident.impact]
   const components = props.incident.affected_components ?? []
   const details = [
     props.incident.status,

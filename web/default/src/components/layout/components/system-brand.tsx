@@ -29,6 +29,8 @@ import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
 
 type SystemBrandProps = {
+  brandMark?: React.ReactNode
+  brandName?: string
   defaultName?: string
   defaultVersion?: string
   /**
@@ -51,7 +53,8 @@ export function SystemBrand(props: SystemBrandProps) {
   const { logo } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
-  const name = status?.system_name || props.defaultName || 'New API'
+  const name =
+    props.brandName || status?.system_name || props.defaultName || 'New API'
   const version =
     status?.version || props.defaultVersion || t('Unknown version')
 
@@ -59,6 +62,7 @@ export function SystemBrand(props: SystemBrandProps) {
     return (
       <Link
         to='/'
+        data-slot='system-brand'
         aria-label={t('Go to home')}
         className={cn(
           'text-foreground inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium transition-colors outline-none select-none',
@@ -66,11 +70,13 @@ export function SystemBrand(props: SystemBrandProps) {
         )}
       >
         <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
-          <img
-            src={logo}
-            alt={t('Logo')}
-            className='size-full rounded-md object-cover'
-          />
+          {props.brandMark ?? (
+            <img
+              src={logo}
+              alt={t('Logo')}
+              className='size-full rounded-md object-cover'
+            />
+          )}
         </div>
         <span className='max-w-[12rem] truncate'>{name}</span>
       </Link>
@@ -86,11 +92,13 @@ export function SystemBrand(props: SystemBrandProps) {
           render={<div />}
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
-            <img
-              src={logo}
-              alt={t('Logo')}
-              className='size-full rounded-lg object-cover'
-            />
+            {props.brandMark ?? (
+              <img
+                src={logo}
+                alt={t('Logo')}
+                className='size-full rounded-lg object-cover'
+              />
+            )}
           </div>
           <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
             <span className='truncate font-semibold'>{name}</span>

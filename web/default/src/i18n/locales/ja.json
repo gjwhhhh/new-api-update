@@ -1107,6 +1107,7 @@
     "Continue": "続行",
     "Continue with {{name}}": "{{name}} で続行",
     "Continue with Discord": "Discord で続行",
+    "Continue with embedded workspace": "埋め込みワークスペースを続ける",
     "Continue with GitHub": "GitHub で続行",
     "Continue with LinuxDO": "LinuxDO で続行",
     "Continue with OIDC": "OIDC で続行",

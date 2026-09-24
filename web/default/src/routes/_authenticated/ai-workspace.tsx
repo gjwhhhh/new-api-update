@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { ExternalLink, Loader2, PanelsTopLeft } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { createFileRoute, redirect } from '@tanstack/react-router'
+import { ExternalLink, Loader2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Dialog } from '@/components/dialog'
 import { Main } from '@/components/layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,7 @@ import { useActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import {
   chatLinkRequiresApiKey,
+  isAIWorkspacePreset,
   resolveChatUrl,
 } from '@/features/chat/lib/chat-links'
 import { isSidebarModuleEnabled } from '@/lib/nav-modules'
@@ -43,15 +45,10 @@ export const Route = createFileRoute('/_authenticated/ai-workspace')({
 
 function AIWorkspacePage() {
   const { t } = useTranslation()
+  const [isReminderOpen, setIsReminderOpen] = useState(true)
   const { chatPresets, serverAddress } = useChatPresets()
-  const [isOpening, setIsOpening] = useState(false)
   const preset = useMemo(
-    () =>
-      chatPresets.find(
-        (item) =>
-          /ai\s*as\s*workspace/i.test(item.name) ||
-          item.url.toLowerCase().includes('aiaw.app')
-      ),
+    () => chatPresets.find(isAIWorkspacePreset),
     [chatPresets]
   )
   const requiresActiveKey = Boolean(
@@ -63,17 +60,13 @@ function AIWorkspacePage() {
     error: keyError,
   } = useActiveChatKey(requiresActiveKey)
 
-  const openWorkspace = useCallback(() => {
-    if (!preset) return
-    const url = resolveChatUrl({
+  const iframeSrc = useMemo(() => {
+    if (!preset || (requiresActiveKey && !activeKey)) return ''
+    return resolveChatUrl({
       template: preset.url,
       apiKey: requiresActiveKey ? activeKey : undefined,
       serverAddress,
     })
-    if (!url) return
-    setIsOpening(true)
-    window.open(url, '_blank', 'noopener')
-    setIsOpening(false)
   }, [activeKey, preset, requiresActiveKey, serverAddress])
 
   if (!preset) {
@@ -122,36 +115,45 @@ function AIWorkspacePage() {
   }
 
   return (
-    <Main className='flex items-center justify-center p-6'>
-      <div className='bg-card flex w-full max-w-2xl flex-col gap-6 rounded-xl border p-6 shadow-xs'>
-        <div className='flex items-start gap-4'>
-          <div className='bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-lg'>
-            <PanelsTopLeft className='size-5' />
-          </div>
-          <div className='min-w-0 space-y-1'>
-            <h1 className='text-xl font-semibold'>{t('AI Workspace')}</h1>
-            <p className='text-muted-foreground text-sm'>
-              {t(
-                'Use the external AI workspace with the models provided by this service.'
-              )}
-            </p>
-          </div>
-        </div>
-        <div className='bg-muted/50 text-muted-foreground rounded-lg p-4 text-sm'>
-          {t(
-            'After opening, go to Provider settings, click Get Model List, select the models you need, and save.'
-          )}
-        </div>
-        <div className='flex flex-wrap items-center gap-3'>
-          <Button onClick={openWorkspace} disabled={isOpening}>
-            <ExternalLink data-icon='inline-start' />
-            {t('Open AI Workspace')}
-          </Button>
-          <Button variant='outline' render={<Link to='/playground' />}>
-            {t('Back to Playground')}
-          </Button>
-        </div>
-      </div>
+    <Main className='flex flex-col overflow-hidden p-0'>
+      <Dialog
+        open={isReminderOpen}
+        onOpenChange={setIsReminderOpen}
+        title={t('AI Workspace')}
+        description={t(
+          'After opening, go to Provider settings, click Get Model List, select the models you need, and save.'
+        )}
+        contentClassName='sm:max-w-md'
+        footer={
+          <>
+            <Button
+              variant='outline'
+              render={
+                <a href={iframeSrc} target='_blank' rel='noopener noreferrer' />
+              }
+            >
+              <ExternalLink />
+              {t('Open in new tab')}
+            </Button>
+            <Button onClick={() => setIsReminderOpen(false)}>
+              {t('Continue with embedded workspace')}
+            </Button>
+          </>
+        }
+      >
+        <span className='sr-only'>{t('AI Workspace')}</span>
+      </Dialog>
+      {/* This administrator-configured workspace needs storage access to keep
+          its provider and model settings, which an iframe sandbox blocks. */}
+      {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
+      <iframe
+        src={iframeSrc}
+        key={iframeSrc}
+        className='min-h-0 flex-1 border-0'
+        allow='camera; microphone'
+        referrerPolicy='strict-origin-when-cross-origin'
+        title={t('AI Workspace')}
+      />
     </Main>
   )
 }

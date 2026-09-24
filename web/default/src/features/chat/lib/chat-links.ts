@@ -93,6 +93,13 @@ export function chatLinkRequiresApiKey(url: string): boolean {
   )
 }
 
+export function isAIWorkspacePreset(preset: ChatPreset): boolean {
+  return (
+    /ai\s*as\s*workspace/i.test(preset.name) ||
+    preset.url.toLowerCase().includes('aiaw.app')
+  )
+}
+
 export function parseChatConfig(raw: RawChatConfig): ChatPreset[] {
   let parsed: unknown = raw
 

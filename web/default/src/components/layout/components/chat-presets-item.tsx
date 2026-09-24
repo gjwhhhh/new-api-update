@@ -45,6 +45,7 @@ import { fetchActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import {
   chatLinkRequiresApiKey,
+  isAIWorkspacePreset,
   resolveChatUrl,
   type ChatPreset,
 } from '@/features/chat/lib/chat-links'
@@ -163,7 +164,10 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
   const loadingPresetIdRef = useRef<string | null>(null)
 
   const visiblePresets = useMemo(
-    () => chatPresets.filter((preset) => preset.type !== 'fluent'),
+    () =>
+      chatPresets.filter(
+        (preset) => preset.type !== 'fluent' && !isAIWorkspacePreset(preset)
+      ),
     [chatPresets]
   )
 

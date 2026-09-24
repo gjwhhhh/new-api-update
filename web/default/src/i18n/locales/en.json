@@ -1107,6 +1107,7 @@
     "Continue": "Continue",
     "Continue with {{name}}": "Continue with {{name}}",
     "Continue with Discord": "Continue with Discord",
+    "Continue with embedded workspace": "Continue with embedded workspace",
     "Continue with GitHub": "Continue with GitHub",
     "Continue with LinuxDO": "Continue with LinuxDO",
     "Continue with OIDC": "Continue with OIDC",

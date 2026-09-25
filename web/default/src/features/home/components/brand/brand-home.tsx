@@ -24,13 +24,11 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
-import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
 import modelNetwork from '@/assets/tokenfly-model-network.jpg'
 import { Footer } from '@/components/layout/components/footer'
 import { PublicLayout } from '@/components/layout/components/public-layout'
 import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
-import { useSystemConfig } from '@/hooks/use-system-config'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
 
 import '@/styles/brand-home.css'
@@ -45,7 +43,6 @@ import { SignalHero } from './signal-hero'
 export function BrandHome(props: { isAuthenticated: boolean }) {
   const { t } = useTranslation()
   const { status } = useStatus()
-  const { systemName } = useSystemConfig()
   const links = useTopNavLinks()
   const pricingLink = links.find((link) => link.href === '/pricing')
   let startUrl: '/dashboard' | '/sign-in' | '/sign-up' = '/sign-up'
@@ -58,10 +55,6 @@ export function BrandHome(props: { isAuthenticated: boolean }) {
         showMainContainer={false}
         headerProps={{
           className: 'brand-home-header',
-          brandName: systemName,
-          brandMark: (
-            <TokenflyBrandMark className='brand-name-mark' aria-hidden='true' />
-          ),
         }}
       >
         <HomeAnnouncementPopup />

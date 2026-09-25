@@ -35,35 +35,6 @@ For commercial licensing, please contact support@quantumnous.com
   background: var(--background);
   border-bottom: 1px solid var(--border);
 }
-.brand-home-header > div {
-  max-width: 1280px;
-  padding: 0 40px;
-}
-.brand-home-header > div > nav {
-  height: 76px;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  --tw-ring-shadow: 0 0 #0000;
-  backdrop-filter: none;
-}
-.brand-home-header > div > nav > a {
-  gap: 12px;
-}
-.brand-home-header .brand-name-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 19px;
-}
-.brand-home-header .brand-name-mark {
-  display: block;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  object-fit: contain;
-}
 .brand-hero {
   padding-block: 158px 80px;
   display: grid;
@@ -432,15 +403,6 @@ For commercial licensing, please contact support@quantumnous.com
   .brand-hero {
     gap: 30px;
   }
-  .brand-home-header > div {
-    padding-inline: 24px;
-  }
-  .brand-home-header .brand-name-row {
-    font-size: 15px;
-  }
-  .brand-home-header nav a {
-    padding-inline: 7px;
-  }
 }
 @media (max-width: 900px) {
   .brand-container {
@@ -477,15 +439,6 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 @media (max-width: 639px) {
-  .brand-home-header > div {
-    padding-inline: 24px;
-  }
-  .brand-home-header > div > nav {
-    height: 68px;
-  }
-  .brand-home-header .brand-name-row {
-    font-size: 18px;
-  }
   .brand-hero {
     padding-top: 116px;
     padding-bottom: 44px;

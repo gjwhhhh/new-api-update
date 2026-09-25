@@ -20,13 +20,12 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
-import { Footer } from '@/components/layout/components/footer'
 import { RichContent } from '@/components/rich-content'
 import { useTheme } from '@/context/theme-provider'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import { BrandHome } from './components/brand/brand-home'
 import { HomeAnnouncementPopup } from './components/home-announcement-popup'
 import { useHomePageContent } from './hooks'
 
@@ -125,15 +124,5 @@ export function Home() {
     )
   }
 
-  return (
-    <PublicLayout showMainContainer={false}>
-      <HomeAnnouncementPopup />
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
-    </PublicLayout>
-  )
+  return <BrandHome isAuthenticated={isAuthenticated} />
 }

@@ -16,8 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
+import { cn } from '@/lib/utils'
+
 import type { TopNavLink } from '../types'
 import { PublicHeader, type PublicHeaderProps } from './public-header'
+
+const publicBrandMark = (
+  <TokenflyBrandMark aria-hidden='true' className='brand-name-mark' />
+)
 
 type PublicLayoutProps = {
   children: React.ReactNode
@@ -30,11 +37,19 @@ type PublicLayoutProps = {
   showNotifications?: boolean
   logo?: React.ReactNode
   siteName?: string
+  className?: string
 }
 
 export function PublicLayout(props: PublicLayoutProps) {
+  const headerProps = props.headerProps
+
   return (
-    <div className='bg-background text-foreground relative min-h-svh overflow-x-clip'>
+    <div
+      className={cn(
+        'signal-public-shell bg-background text-foreground relative min-h-svh overflow-x-clip',
+        props.className
+      )}
+    >
       <PublicHeader
         navContent={props.navContent}
         navLinks={props.navLinks}
@@ -43,7 +58,12 @@ export function PublicLayout(props: PublicLayoutProps) {
         showNotifications={props.showNotifications}
         logo={props.logo}
         siteName={props.siteName}
-        {...props.headerProps}
+        {...headerProps}
+        className={cn('signal-public-header', headerProps?.className)}
+        brandMark={
+          headerProps?.brandMark ??
+          (props.logo || headerProps?.logo ? undefined : publicBrandMark)
+        }
       />
 
       {props.showMainContainer !== false ? (

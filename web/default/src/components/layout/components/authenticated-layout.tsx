@@ -38,7 +38,10 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
   return (
     <LayoutProvider>
       <SearchProvider>
-        <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
+        <SidebarProvider
+          defaultOpen={defaultOpen}
+          className='signal-console-shell flex-col'
+        >
           <SkipToMain />
           <AppHeader />
           <EmailBindingReminder />

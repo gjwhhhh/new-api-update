@@ -24,7 +24,6 @@ import { RichContent } from '@/components/rich-content'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAnnouncements } from '@/features/dashboard/hooks/use-status-data'
-import type { AnnouncementItem } from '@/features/dashboard/types'
 import { formatDateTimeObject } from '@/lib/time'
 import { useHomeAnnouncementPopupStore } from '@/stores/home-announcement-popup-store'
 
@@ -37,13 +36,13 @@ export function HomeAnnouncementPopup() {
   const suppressUntilToday = useHomeAnnouncementPopupStore(
     (state) => state.suppressUntilToday
   )
-  const [announcement, setAnnouncement] = useState<AnnouncementItem | null>(
+  const [open, setOpen] = useState(false)
+  const [currentAnnouncementIndex, setCurrentAnnouncementIndex] = useState(0)
+  const [shownQueueSignature, setShownQueueSignature] = useState<string | null>(
     null
   )
-  const [open, setOpen] = useState(false)
-  const [hasAutoOpened, setHasAutoOpened] = useState(false)
 
-  const popupAnnouncement = useMemo(() => {
+  const popupAnnouncements = useMemo(() => {
     if (loading || suppressedUntilDate === new Date().toDateString()) {
       return null
     }
@@ -52,30 +51,80 @@ export function HomeAnnouncementPopup() {
       .filter((item) => item.popup)
       .sort(
         (left, right) =>
+          (left.popupOrder ?? Number.MAX_SAFE_INTEGER) -
+            (right.popupOrder ?? Number.MAX_SAFE_INTEGER) ||
           new Date(right.publishDate || 0).getTime() -
-          new Date(left.publishDate || 0).getTime()
-      )[0]
+            new Date(left.publishDate || 0).getTime() ||
+          String(left.id ?? '').localeCompare(String(right.id ?? ''))
+      )
   }, [items, loading, suppressedUntilDate])
 
+  const popupQueueSignature = useMemo(
+    () =>
+      popupAnnouncements?.length
+        ? JSON.stringify(
+            popupAnnouncements.map((item) => ({
+              id: item.id,
+              popupOrder: item.popupOrder,
+              publishDate: item.publishDate,
+              title: item.title,
+              content: item.content,
+              extra: item.extra,
+            }))
+          )
+        : '',
+    [popupAnnouncements]
+  )
+  const announcement = popupAnnouncements?.[currentAnnouncementIndex] ?? null
+
   useEffect(() => {
-    if (hasAutoOpened || !popupAnnouncement) {
+    if (!popupQueueSignature) {
+      setOpen(false)
+      setCurrentAnnouncementIndex(0)
+      setShownQueueSignature(null)
+      return
+    }
+    if (shownQueueSignature === popupQueueSignature) {
       return
     }
 
-    setAnnouncement(popupAnnouncement)
+    setCurrentAnnouncementIndex(0)
     setOpen(true)
-    setHasAutoOpened(true)
-  }, [hasAutoOpened, popupAnnouncement])
+    setShownQueueSignature(popupQueueSignature)
+  }, [popupQueueSignature, shownQueueSignature])
+
+  const showNextAnnouncement = () => {
+    if (
+      popupAnnouncements &&
+      currentAnnouncementIndex + 1 < popupAnnouncements.length
+    ) {
+      setCurrentAnnouncementIndex((index) => index + 1)
+      return
+    }
+    setOpen(false)
+  }
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
+      setOpen(true)
+      return
+    }
+    showNextAnnouncement()
+  }
 
   const handleSuppressUntilToday = () => {
     suppressUntilToday()
     setOpen(false)
   }
 
+  if (!announcement) {
+    return null
+  }
+
   return (
     <Dialog
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={handleOpenChange}
       title={announcement?.title?.trim() || t('Announcement')}
       description={
         announcement?.publishDate
@@ -87,8 +136,11 @@ export function HomeAnnouncementPopup() {
       bodyClassName='space-y-4'
       footer={
         <>
-          <Button variant='outline' onClick={() => setOpen(false)}>
-            {t('Close')}
+          <Button variant='outline' onClick={showNextAnnouncement}>
+            {popupAnnouncements &&
+            currentAnnouncementIndex + 1 < popupAnnouncements.length
+              ? t('Next announcement')
+              : t('Close')}
           </Button>
           <Button variant='outline' onClick={handleSuppressUntilToday}>
             {t('Do not show again today')}

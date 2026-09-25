@@ -665,7 +665,13 @@ body:where(:not([data-theme-preset])) .signal-console-shell {
   object-fit: contain;
 }
 
+.signal-public-header > div > nav > a:first-child > span {
+  font-size: 1rem;
+  line-height: 1.25rem;
+}
+
 .signal-public-header nav a:is(.text-muted-foreground, .text-foreground) {
+  font-size: 0.875rem;
   transition-property: color, font-weight;
   transition-duration: 180ms;
 }

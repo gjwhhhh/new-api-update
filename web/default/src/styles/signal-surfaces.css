@@ -356,8 +356,16 @@ body:where(:not([data-theme-preset])) .signal-console-shell {
   border-color: color-mix(in srgb, var(--border) 82%, transparent);
 }
 
-.signal-console-shell [data-slot='table-row']:hover {
+.signal-console-shell [data-slot='table-row']:not(.data-table-disabled):hover {
   background: color-mix(in oklch, var(--muted) 50%, var(--background));
+}
+
+.signal-console-shell [data-slot='table-row'].data-table-disabled {
+  background: var(--table-disabled);
+}
+
+.signal-console-shell [data-slot='table-row'].data-table-disabled:hover {
+  background: var(--table-disabled-hover);
 }
 
 .signal-console-shell [data-slot='data-table-page'] {
@@ -389,7 +397,7 @@ body:where(:not([data-theme-preset])) .signal-console-shell {
 .signal-console-shell [data-slot='data-table-card'] {
   border-color: var(--border);
   border-radius: 1rem;
-  background: var(--table-row);
+  background: var(--data-table-card-bg, var(--table-row));
   box-shadow: none;
 }
 
@@ -1550,10 +1558,16 @@ body[data-console-active='true'],
   padding-top: 1rem;
 }
 
-.signal-console-shell :is([data-slot='card'], [data-slot='data-table-card']) {
+.signal-console-shell [data-slot='card'] {
   border-color: var(--app-border);
   border-radius: 0.75rem;
   background: var(--app-surface);
+}
+
+.signal-console-shell [data-slot='data-table-card'] {
+  border-color: var(--app-border);
+  border-radius: 0.75rem;
+  background: var(--data-table-card-bg, var(--app-surface));
 }
 
 .signal-console-shell [data-slot='card-footer'] {
@@ -1570,7 +1584,7 @@ body[data-console-active='true'],
   border-color: var(--app-border);
 }
 
-.signal-console-shell [data-slot='table-row']:hover {
+.signal-console-shell [data-slot='table-row']:not(.data-table-disabled):hover {
   background: color-mix(in srgb, var(--app-surface-raised) 72%, transparent);
 }
 

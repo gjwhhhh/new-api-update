@@ -75,7 +75,7 @@
     </main>
     <dialog id="detail"><div class="dialog-head"><h2>会话详情</h2><button class="secondary" id="close" type="button">关闭</button></div><p id="meta"></p><h3>请求</h3><pre id="request"></pre><h3>回复</h3><pre id="response"></pre></dialog>
     <script>
-      const state = { page: 1, total: 0, pageSize: 20 };
+      const state = { page: 1, total: 0, pageSize: 20, accessToken: '' };
       const rows = document.getElementById('rows');
       const message = document.getElementById('message');
       const detail = document.getElementById('detail');
@@ -104,8 +104,20 @@
         const uid = window.localStorage.getItem('uid');
         const headers = new Headers(options.headers || {});
         if (uid) headers.set('New-Api-User', uid);
+        if (state.accessToken) headers.set('Authorization', `Bearer ${state.accessToken}`);
         return fetch(url, { ...options, headers, credentials: 'same-origin' });
       };
+
+      async function bootstrapAuth() {
+        const response = await fetch('/api/user/auth/refresh', { method: 'POST', credentials: 'same-origin' });
+        const payload = await response.json().catch(() => ({}));
+        const user = payload?.data?.user;
+        if (!response.ok || !payload.success || !payload?.data?.access_token || !user || Number(user.role) < 10) {
+          throw new Error('管理员登录已失效，请返回控制台重新登录。');
+        }
+        state.accessToken = payload.data.access_token;
+        window.localStorage.setItem('uid', String(user.id));
+      }
 
       function syncFullPayloadToggle() {
         captureFullPayload.disabled = !auditEnabled.checked;
@@ -187,7 +199,9 @@
         const clickedOutside = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
         if (clickedOutside) detail.close();
       });
-      loadSettings().finally(load);
+      bootstrapAuth()
+        .then(() => loadSettings().finally(load))
+        .catch(error => { message.textContent = error.message || '无法验证管理员身份。'; });
     </script>
   </body>
 </html>

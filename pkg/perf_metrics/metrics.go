@@ -1,6 +1,7 @@
 package perfmetrics
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -12,7 +13,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
+
+	"github.com/bytedance/gopkg/util/gopool"
 )
 
 var hotBuckets sync.Map
@@ -26,26 +30,29 @@ func Init() {
 	go flushLoop()
 }
 
+// RecordRelayResult samples one finished relay exactly once, at the request
+// boundary, regardless of how many channel attempts it took.
+func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) {
+	if info == nil {
+		return
+	}
+	outcome := ClassifyRelayOutcome(ctx, info, apiErr)
+	if outcome == OutcomeIgnored {
+		return
+	}
+	RecordRelaySampleAt(info, outcome == OutcomeSuccess, info.PerformanceOutputTokens, time.Now())
+}
+
 func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
 	RecordRelaySampleAt(info, success, outputTokens, time.Now())
 }
 
-// RecordRelaySampleAt records a final request with an end time captured on the
-// request goroutine. Channel samples still use the completed upstream attempt
-// time when available, so background metric work cannot inflate its latency.
 func RecordRelaySampleAt(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) {
 	if info == nil {
 		return
 	}
 	RecordGroupRelaySampleAt(info, success, outputTokens, endedAt)
 	RecordChannelRelaySample(info, success, outputTokens)
-}
-
-// RecordGroupRelaySample retains the existing final-request group metric
-// semantics. It is separate so the relay retry loop can record each failed
-// channel attempt without inflating a user's group-level failure count.
-func RecordGroupRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
-	RecordGroupRelaySampleAt(info, success, outputTokens, time.Now())
 }
 
 func RecordGroupRelaySampleAt(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) {
@@ -55,14 +62,10 @@ func RecordGroupRelaySampleAt(info *relaycommon.RelayInfo, success bool, outputT
 	RecordRelaySampleToGroupsAt(info, []string{info.UsingGroup}, success, outputTokens, endedAt)
 }
 
-// RecordRelaySampleToGroups records the same relay timing sample once per model group.
-// Empty or blank group names are skipped; if none remain, the sample is recorded under "default".
 func RecordRelaySampleToGroups(info *relaycommon.RelayInfo, groups []string, success bool, outputTokens int64) {
 	RecordRelaySampleToGroupsAt(info, groups, success, outputTokens, time.Now())
 }
 
-// RecordRelaySampleToGroupsAt is like RecordRelaySampleToGroups but uses a fixed end time
-// so callers can snapshot timing before scheduling async work.
 func RecordRelaySampleToGroupsAt(info *relaycommon.RelayInfo, groups []string, success bool, outputTokens int64, endedAt time.Time) {
 	if info == nil {
 		return
@@ -70,7 +73,7 @@ func RecordRelaySampleToGroupsAt(info *relaycommon.RelayInfo, groups []string, s
 	if info.ChannelMeta != nil && info.ChannelOtherSettings.IsModelExcludedFromSampling(info.OriginModelName) {
 		return
 	}
-	base := relaySampleFromInfo(info, success, outputTokens, endedAt)
+	base := relaySampleFromTiming(info, success, outputTokens, endedAt, info.StartTime, info.FirstResponseTime)
 	for _, group := range normalizeSampleGroups(groups) {
 		sample := base
 		sample.Group = group
@@ -78,10 +81,6 @@ func RecordRelaySampleToGroupsAt(info *relaycommon.RelayInfo, groups []string, s
 	}
 }
 
-// RecordChannelRelaySample records one sample for the channel selected by a
-// normal relay request. Group samples intentionally retain their existing
-// final-request semantics; channel-test callers use RecordChannelSampleAt so
-// their multi-group fan-out still produces exactly one channel sample.
 func RecordChannelRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
 	endedAt := time.Now()
 	if info != nil && !info.ChannelAttemptFinishedAt.IsZero() {
@@ -90,19 +89,21 @@ func RecordChannelRelaySample(info *relaycommon.RelayInfo, success bool, outputT
 	RecordChannelRelaySampleAt(info, success, outputTokens, endedAt)
 }
 
-// RecordChannelRelaySampleAt records one normal relay attempt using its own
-// timing fields. It must not reuse the overall request start when a fallback
-// channel was selected after an earlier failure.
 func RecordChannelRelaySampleAt(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) {
-	channelID := channelIDFromInfo(info)
-	if info == nil || channelID <= 0 {
+	if info == nil || info.ChannelMeta == nil || info.ChannelId <= 0 {
 		return
 	}
-	if info.ChannelMeta != nil && info.ChannelOtherSettings.IsModelExcludedFromSampling(info.OriginModelName) {
+	if info.ChannelOtherSettings.IsModelExcludedFromSampling(info.OriginModelName) {
 		return
 	}
-	sample := channelRelaySampleFromInfo(info, success, outputTokens, endedAt)
-	sample.ChannelID = channelID
+	startedAt := info.ChannelAttemptStartedAt
+	firstResponseAt := info.ChannelAttemptFirstResponseAt
+	if startedAt.IsZero() {
+		startedAt = info.StartTime
+		firstResponseAt = info.FirstResponseTime
+	}
+	sample := relaySampleFromTiming(info, success, outputTokens, endedAt, startedAt, firstResponseAt)
+	sample.ChannelID = info.ChannelId
 	RecordChannel(sample)
 }
 
@@ -113,44 +114,12 @@ func RecordChannelSampleAt(info *relaycommon.RelayInfo, channelID int, success b
 	if info.ChannelMeta != nil && info.ChannelOtherSettings.IsModelExcludedFromSampling(info.OriginModelName) {
 		return
 	}
-	sample := relaySampleFromInfo(info, success, outputTokens, endedAt)
+	sample := relaySampleFromTiming(info, success, outputTokens, endedAt, info.StartTime, info.FirstResponseTime)
 	sample.ChannelID = channelID
 	RecordChannel(sample)
 }
 
-func channelIDFromInfo(info *relaycommon.RelayInfo) int {
-	if info == nil || info.ChannelMeta == nil {
-		return 0
-	}
-	return info.ChannelId
-}
-
-func relaySampleFromInfo(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) Sample {
-	return relaySampleFromTiming(info, success, outputTokens, endedAt, info.StartTime, info.FirstResponseTime)
-}
-
-func channelRelaySampleFromInfo(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt time.Time) Sample {
-	if info.ChannelAttemptStartedAt.IsZero() {
-		return relaySampleFromInfo(info, success, outputTokens, endedAt)
-	}
-	return relaySampleFromTiming(
-		info,
-		success,
-		outputTokens,
-		endedAt,
-		info.ChannelAttemptStartedAt,
-		info.ChannelAttemptFirstResponseAt,
-	)
-}
-
-func relaySampleFromTiming(
-	info *relaycommon.RelayInfo,
-	success bool,
-	outputTokens int64,
-	endedAt time.Time,
-	startedAt time.Time,
-	firstResponseAt time.Time,
-) Sample {
+func relaySampleFromTiming(info *relaycommon.RelayInfo, success bool, outputTokens int64, endedAt, startedAt, firstResponseAt time.Time) Sample {
 	if startedAt.IsZero() {
 		startedAt = endedAt
 	}
@@ -172,6 +141,7 @@ func relaySampleFromTiming(
 	}
 	return Sample{
 		Model:        info.OriginModelName,
+		Group:        info.UsingGroup,
 		LatencyMs:    latencyMs,
 		TtftMs:       ttftMs,
 		HasTtft:      hasTtft,
@@ -201,8 +171,44 @@ func normalizeSampleGroups(groups []string) []string {
 	return out
 }
 
+// RecordTaskResult samples one async task exactly once, at its terminal
+// transition, after the polling status CAS is won. Latency is the end-to-end
+// task duration (second resolution, unlike the ms-resolution relay samples);
+// throughput is only present when the provider reports tokens.
+func RecordTaskResult(task *model.Task, result *relaycommon.TaskInfo) {
+	if task == nil {
+		return
+	}
+	modelName := task.Properties.OriginModelName
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
+		modelName = bc.OriginModelName
+	}
+	endTs := task.FinishTime
+	if endTs <= 0 {
+		endTs = time.Now().Unix()
+	}
+	sample := Sample{
+		Model:   modelName,
+		Group:   task.Group,
+		Success: task.Status == model.TaskStatusSuccess,
+	}
+	if task.SubmitTime > 0 && endTs > task.SubmitTime {
+		sample.LatencyMs = (endTs - task.SubmitTime) * 1000
+	}
+	if sample.Success && result != nil {
+		tokens := int64(cmp.Or(result.TotalTokens, result.CompletionTokens))
+		genStart := cmp.Or(task.StartTime, task.SubmitTime)
+		if tokens > 0 && genStart > 0 && endTs > genStart {
+			sample.OutputTokens = tokens
+			sample.GenerationMs = (endTs - genStart) * 1000
+		}
+	}
+	Record(sample)
+}
+
 func Record(sample Sample) {
-	if !perf_metrics_setting.IsEnabled() || sample.Model == "" {
+	setting := perf_metrics_setting.GetSetting()
+	if !setting.Enabled || sample.Model == "" {
 		return
 	}
 	if sample.Group == "" {
@@ -212,27 +218,24 @@ func Record(sample Sample) {
 		sample.LatencyMs = 0
 	}
 
-	gen := perf_metrics_setting.GetGroupSampleGeneration(sample.Group)
+	generation := perf_metrics_setting.GetGroupSampleGeneration(sample.Group)
 	key := bucketKey{
 		model:    sample.Model,
 		group:    sample.Group,
 		bucketTs: bucketStart(time.Now().Unix()),
 	}
-	actual, loaded := hotBuckets.LoadOrStore(key, newAtomicBucket(gen))
+	actual, loaded := hotBuckets.LoadOrStore(key, newAtomicBucket(generation))
 	bucket := actual.(*atomicBucket)
-	if loaded && bucket.sampleGeneration() < gen {
-		replacement := newAtomicBucket(gen)
-		replacement.add(sample)
-		hotBuckets.Store(key, replacement)
-		recordRedis(key, sample)
-		return
+	if loaded && bucket.sampleGeneration() < generation {
+		bucket = newAtomicBucket(generation)
+		hotBuckets.Store(key, bucket)
 	}
 	bucket.add(sample)
-	recordRedis(key, sample)
+	gopool.Go(func() {
+		recordRedis(key, sample)
+	})
 }
 
-// RecordChannel accumulates one channel-model time bucket. It deliberately
-// does not fan out by group, because a channel can belong to multiple groups.
 func RecordChannel(sample Sample) {
 	if !perf_metrics_setting.IsEnabled() || sample.ChannelID <= 0 || sample.Model == "" {
 		return
@@ -240,100 +243,83 @@ func RecordChannel(sample Sample) {
 	if sample.LatencyMs < 0 {
 		sample.LatencyMs = 0
 	}
-
-	key := channelBucketKey{
-		channelID: sample.ChannelID,
-		model:     sample.Model,
-		bucketTs:  bucketStart(time.Now().Unix()),
-	}
+	key := channelBucketKey{channelID: sample.ChannelID, model: sample.Model, bucketTs: bucketStart(time.Now().Unix())}
 	generation := perf_metrics_setting.GetChannelSampleGeneration(sample.ChannelID)
 	actual, loaded := channelHotBuckets.LoadOrStore(key, newAtomicBucket(generation))
 	bucket := actual.(*atomicBucket)
 	if loaded && bucket.sampleGeneration() < generation {
-		replacement := newAtomicBucket(generation)
-		replacement.add(sample)
-		channelHotBuckets.Store(key, replacement)
-		return
+		bucket = newAtomicBucket(generation)
+		channelHotBuckets.Store(key, bucket)
 	}
 	bucket.add(sample)
 }
 
 func isCurrentHotBucket(group string, bucket *atomicBucket) bool {
-	if bucket == nil {
-		return false
-	}
-	return bucket.sampleGeneration() >= perf_metrics_setting.GetGroupSampleGeneration(group)
+	return bucket != nil && bucket.sampleGeneration() >= perf_metrics_setting.GetGroupSampleGeneration(group)
 }
 
 func isCurrentHotChannelBucket(channelID int, bucket *atomicBucket) bool {
-	if bucket == nil {
-		return false
-	}
-	return bucket.sampleGeneration() >= perf_metrics_setting.GetChannelSampleGeneration(channelID)
+	return bucket != nil && bucket.sampleGeneration() >= perf_metrics_setting.GetChannelSampleGeneration(channelID)
 }
 
 func matchesAuthoritativeGeneration(group string, bucket *atomicBucket, generations map[string]int64) bool {
-	if bucket == nil {
-		return false
-	}
-	return bucket.sampleGeneration() == generations[group]
+	return bucket != nil && bucket.sampleGeneration() == generations[group]
 }
 
 func matchesAuthoritativeChannelGeneration(channelID int, bucket *atomicBucket, generations map[int]int64) bool {
-	if bucket == nil {
-		return false
-	}
-	return bucket.sampleGeneration() == generations[channelID]
+	return bucket != nil && bucket.sampleGeneration() == generations[channelID]
 }
 
-// HotCountersForTest returns in-memory hot-bucket counters for tests.
 func HotCountersForTest(modelName, group string) (requestCount, successCount int64) {
 	hotBuckets.Range(func(key, value any) bool {
-		k := key.(bucketKey)
-		if k.model != modelName || k.group != group {
+		current := key.(bucketKey)
+		if current.model != modelName || current.group != group {
 			return true
 		}
 		bucket := value.(*atomicBucket)
-		if !isCurrentHotBucket(k.group, bucket) {
+		if !isCurrentHotBucket(current.group, bucket) {
 			return true
 		}
-		snap := bucket.snapshot()
-		requestCount += snap.requestCount
-		successCount += snap.successCount
+		snapshot := bucket.snapshot()
+		requestCount += snapshot.requestCount
+		successCount += snapshot.successCount
 		return true
 	})
 	return requestCount, successCount
 }
 
-// HotChannelCountersForTest returns local channel counters for deterministic
-// sampling tests.
 func HotChannelCountersForTest(channelID int, modelName string) (requestCount, successCount int64) {
 	channelHotBuckets.Range(func(key, value any) bool {
-		k := key.(channelBucketKey)
-		if k.channelID != channelID || k.model != modelName {
+		current := key.(channelBucketKey)
+		if current.channelID != channelID || current.model != modelName {
 			return true
 		}
 		bucket := value.(*atomicBucket)
-		if !isCurrentHotChannelBucket(k.channelID, bucket) {
+		if !isCurrentHotChannelBucket(current.channelID, bucket) {
 			return true
 		}
-		snap := bucket.snapshot()
-		requestCount += snap.requestCount
-		successCount += snap.successCount
+		snapshot := bucket.snapshot()
+		requestCount += snapshot.requestCount
+		successCount += snapshot.successCount
 		return true
 	})
 	return requestCount, successCount
+}
+
+// queryWindow covers the current partial hour plus the preceding complete
+// hours, so every reader shares the same hourly buckets.
+func queryWindow(now time.Time, hours int) (int64, int64) {
+	if hours <= 0 {
+		hours = 24
+	}
+	hours = min(hours, 24*30)
+	endTs := now.Unix()
+	return endTs - endTs%3600 - int64(hours-1)*3600, endTs
 }
 
 func Query(params QueryParams) (QueryResult, error) {
-	if params.Hours <= 0 {
-		params.Hours = 24
-	}
-	if params.Hours > 24*30 {
-		params.Hours = 24 * 30
-	}
-	endTs := time.Now().Unix()
-	startTs := endTs - int64(params.Hours)*3600
+	startTs, endTs := queryWindow(time.Now(), params.Hours)
+	allowedGroups := allowedGroupSet(params.AllowedGroups)
 
 	merged := map[bucketKey]counters{}
 	rows, err := model.GetPerfMetrics(params.Model, params.Group, startTs, endTs)
@@ -341,6 +327,11 @@ func Query(params QueryParams) (QueryResult, error) {
 		return QueryResult{}, err
 	}
 	for _, row := range rows {
+		if allowedGroups != nil {
+			if _, ok := allowedGroups[row.Group]; !ok {
+				continue
+			}
+		}
 		mergeCounters(merged, bucketKey{
 			model:    row.ModelName,
 			group:    row.Group,
@@ -372,6 +363,11 @@ func Query(params QueryParams) (QueryResult, error) {
 		if params.Group != "" && k.group != params.Group {
 			return true
 		}
+		if allowedGroups != nil {
+			if _, ok := allowedGroups[k.group]; !ok {
+				return true
+			}
+		}
 		bucket := value.(*atomicBucket)
 		if !matchesAuthoritativeGeneration(k.group, bucket, generations) {
 			return true
@@ -380,18 +376,13 @@ func Query(params QueryParams) (QueryResult, error) {
 		return true
 	})
 
-	return buildQueryResult(params.Model, merged), nil
+	result := buildQueryResult(params.Model, merged)
+	result.WindowStart, result.WindowEnd = startTs, endTs
+	return result, nil
 }
 
 func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
-	if hours <= 0 {
-		hours = 24
-	}
-	if hours > 24*30 {
-		hours = 24 * 30
-	}
-	endTs := time.Now().Unix()
-	startTs := endTs - int64(hours)*3600
+	startTs, endTs := queryWindow(time.Now(), hours)
 	allowedGroups := allowedGroupSet(groups)
 
 	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups)
@@ -440,11 +431,17 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 		return true
 	})
 
+	all := counters{}
 	models := make([]ModelSummary, 0, len(totals))
 	for name, total := range totals {
 		if total.requestCount == 0 {
 			continue
 		}
+		all.requestCount += total.requestCount
+		all.successCount += total.successCount
+		all.totalLatencyMs += total.totalLatencyMs
+		all.outputTokens += total.outputTokens
+		all.generationMs += total.generationMs
 		avgLatency := total.totalLatencyMs / total.requestCount
 		successRate := float64(total.successCount) / float64(total.requestCount) * 100
 		avgTps := 0.0
@@ -452,19 +449,19 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 			avgTps = float64(total.outputTokens) / (float64(total.generationMs) / 1000.0)
 		}
 		models = append(models, ModelSummary{
-			ModelName:          name,
-			AvgLatencyMs:       avgLatency,
-			SuccessRate:        math.Round(successRate*100) / 100,
-			AvgTps:             math.Round(avgTps*100) / 100,
-			RecentSuccessRates: recentSuccessRates(modelBuckets[name], 3),
-			RequestCount:       total.requestCount,
+			ModelName:           name,
+			AvgLatencyMs:        avgLatency,
+			SuccessRate:         math.Round(successRate*100) / 100,
+			AvgTps:              math.Round(avgTps*100) / 100,
+			RecentSuccessSeries: recentSuccessSeries(modelBuckets[name]),
+			RequestCount:        total.requestCount,
 		})
 	}
 	sort.Slice(models, func(i, j int) bool {
 		return models[i].RequestCount > models[j].RequestCount
 	})
 
-	return SummaryAllResult{Models: models}, nil
+	return SummaryAllResult{Summary: summarize(all), WindowStart: startTs, WindowEnd: endTs, Models: models}, nil
 }
 
 func mergeModelTotals(totals map[string]counters, modelName string, value counters) {
@@ -500,25 +497,39 @@ func mergeModelBucket(modelBuckets map[string]map[int64]counters, modelName stri
 	modelBuckets[modelName][bucketTs] = current
 }
 
-func recentSuccessRates(buckets map[int64]counters, limit int) []float64 {
-	if len(buckets) == 0 || limit <= 0 {
+func recentSuccessSeries(buckets map[int64]counters) []SuccessRatePoint {
+	if len(buckets) == 0 {
 		return nil
 	}
-	timestamps := make([]int64, 0, len(buckets))
-	for ts := range buckets {
-		timestamps = append(timestamps, ts)
+	hourly := map[int64]counters{}
+	for ts, value := range buckets {
+		hourTs := ts - ts%3600
+		merged := hourly[hourTs]
+		merged.requestCount += value.requestCount
+		merged.successCount += value.successCount
+		hourly[hourTs] = merged
+	}
+	timestamps := make([]int64, 0, len(hourly))
+	for hourTs, value := range hourly {
+		if value.requestCount == 0 {
+			continue
+		}
+		timestamps = append(timestamps, hourTs)
+	}
+	if len(timestamps) == 0 {
+		return nil
 	}
 	sort.Slice(timestamps, func(i, j int) bool {
 		return timestamps[i] < timestamps[j]
 	})
-	if len(timestamps) > limit {
-		timestamps = timestamps[len(timestamps)-limit:]
+	points := make([]SuccessRatePoint, 0, len(timestamps))
+	for _, hourTs := range timestamps {
+		points = append(points, SuccessRatePoint{
+			Ts:          hourTs,
+			SuccessRate: math.Round(successRate(hourly[hourTs])*100) / 100,
+		})
 	}
-	rates := make([]float64, 0, len(timestamps))
-	for _, ts := range timestamps {
-		rates = append(rates, math.Round(successRate(buckets[ts])*100)/100)
-	}
-	return rates
+	return points
 }
 
 func allowedGroupSet(groups []string) map[string]struct{} {
@@ -557,6 +568,7 @@ func mergeCounters(merged map[bucketKey]counters, key bucketKey, value counters)
 
 func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResult {
 	groupBuckets := map[string]map[int64]counters{}
+	modelBuckets := map[string]map[int64]counters{}
 	for key, value := range merged {
 		if value.requestCount == 0 {
 			continue
@@ -565,6 +577,7 @@ func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResu
 			groupBuckets[key.group] = map[int64]counters{}
 		}
 		groupBuckets[key.group][key.bucketTs] = value
+		mergeModelBucket(modelBuckets, modelName, key.bucketTs, value)
 	}
 
 	groups := make([]string, 0, len(groupBuckets))
@@ -573,6 +586,7 @@ func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResu
 	}
 	sort.Strings(groups)
 
+	all := counters{}
 	results := make([]GroupResult, 0, len(groups))
 	for _, group := range groups {
 		buckets := groupBuckets[group]
@@ -597,6 +611,11 @@ func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResu
 			total.generationMs += value.generationMs
 			series = append(series, bucketPoint(ts, value))
 		}
+		all.requestCount += total.requestCount
+		all.successCount += total.successCount
+		all.totalLatencyMs += total.totalLatencyMs
+		all.outputTokens += total.outputTokens
+		all.generationMs += total.generationMs
 
 		results = append(results, GroupResult{
 			Group:        group,
@@ -608,10 +627,33 @@ func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResu
 		})
 	}
 
+	modelSeries := make([]BucketPoint, 0, len(modelBuckets[modelName]))
+	for ts, value := range modelBuckets[modelName] {
+		modelSeries = append(modelSeries, bucketPoint(ts, value))
+	}
+	sort.Slice(modelSeries, func(i, j int) bool {
+		return modelSeries[i].Ts < modelSeries[j].Ts
+	})
+
 	return QueryResult{
 		ModelName:    modelName,
 		SeriesSchema: seriesSchema,
+		Summary:      summarize(all),
+		Series:       modelSeries,
 		Groups:       results,
+	}
+}
+
+// summarize returns nil when nothing was sampled, so clients can show
+// "no data" instead of a fabricated 0% success rate.
+func summarize(total counters) *Summary {
+	if total.requestCount <= 0 {
+		return nil
+	}
+	return &Summary{
+		AvgLatencyMs: avg(total.totalLatencyMs, total.requestCount),
+		SuccessRate:  math.Round(successRate(total)*100) / 100,
+		AvgTps:       math.Round(avgTps(total)*100) / 100,
 	}
 }
 

@@ -6,52 +6,26 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/QuantumNous/new-api/common"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestAuditConsoleRequiresAdminSession(t *testing.T) {
+func TestAuditConsoleBootstrapsCurrentDashboardSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("conversation-audit-web-test"))))
-	router.GET("/test-login", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Set("role", common.RoleAdminUser)
-		session.Set("status", common.UserStatusEnabled)
-		if err := session.Save(); err != nil {
-			t.Fatalf("save session: %v", err)
-		}
-		c.Status(http.StatusNoContent)
-	})
 	RegisterWebRoutes(router)
 
-	unauthorized := httptest.NewRecorder()
-	router.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/conversation-audit/", nil))
-	if unauthorized.Code != http.StatusForbidden {
-		t.Fatalf("unauthorized status = %d, want %d", unauthorized.Code, http.StatusForbidden)
-	}
-
-	login := httptest.NewRecorder()
-	router.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/test-login", nil))
-
-	authorizedRequest := httptest.NewRequest(http.MethodGet, "/conversation-audit/", nil)
-	for _, sessionCookie := range login.Result().Cookies() {
-		authorizedRequest.AddCookie(sessionCookie)
-	}
-	authorized := httptest.NewRecorder()
-	router.ServeHTTP(authorized, authorizedRequest)
-	if authorized.Code != http.StatusOK {
-		t.Fatalf("authorized status = %d, want %d", authorized.Code, http.StatusOK)
-	}
-	if !strings.Contains(authorized.Body.String(), "加密会话审计") {
-		t.Fatal("audit console page content is missing")
-	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/conversation-audit/", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Body.String(), "加密会话审计")
+	assert.Contains(t, response.Body.String(), "/api/user/auth/refresh")
+	assert.Contains(t, response.Body.String(), "Authorization")
+	assert.True(t, strings.Contains(response.Header().Get("Cache-Control"), "no-store"))
 
 	redirect := httptest.NewRecorder()
 	router.ServeHTTP(redirect, httptest.NewRequest(http.MethodGet, "/conversation-audit", nil))
-	if redirect.Code != http.StatusPermanentRedirect || redirect.Header().Get("Location") != "/conversation-audit/" {
-		t.Fatalf("redirect = %d %q, want %d %q", redirect.Code, redirect.Header().Get("Location"), http.StatusPermanentRedirect, "/conversation-audit/")
-	}
+	require.Equal(t, http.StatusPermanentRedirect, redirect.Code)
+	assert.Equal(t, "/conversation-audit/", redirect.Header().Get("Location"))
 }

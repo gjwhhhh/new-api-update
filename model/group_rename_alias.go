@@ -82,6 +82,9 @@ func ResolveGroupRenameAlias(group string) (string, bool, error) {
 }
 
 func GetActiveGroupRenameAliases() ([]GroupRenameAlias, error) {
+	if DB == nil {
+		return nil, nil
+	}
 	var aliases []GroupRenameAlias
 	err := DB.Where("expires_at > ?", common.GetTimestamp()).Order("old_name asc").Find(&aliases).Error
 	return aliases, err

@@ -14,7 +14,9 @@ import (
 )
 
 func Register(apiRouter *gin.RouterGroup) {
-	initOnce.Do(initialize)
+	if model.DB != nil {
+		initOnce.Do(initialize)
+	}
 	registerRoutes(apiRouter)
 }
 
@@ -285,14 +287,25 @@ func decryptAuditResponseSegments(audit *ConversationAudit) ([]string, error) {
 
 func recordAdminAudit(c *gin.Context, action, requestID string) {
 	c.Set(string(constant.ContextKeyAuditLogged), true)
-	params := map[string]interface{}{}
+	params := map[string]any{}
 	if requestID != "" {
 		params["request_id"] = requestID
 	}
-	model.RecordOperationAuditLog(c.GetInt("id"), "Conversation audit operation", c.ClientIP(), action, params, map[string]interface{}{
-		"operator_id":       c.GetInt("id"),
-		"operator_username": c.GetString("username"),
-	}, nil)
+	model.RecordOperationAuditLog(
+		c.GetInt("id"),
+		c.GetInt("role"),
+		"Conversation audit operation",
+		c.ClientIP(),
+		action,
+		params,
+		&model.AuditAdminInfo{
+			AdminID:       c.GetInt("id"),
+			AdminUsername: c.GetString("username"),
+			AdminRole:     c.GetInt("role"),
+		},
+		nil,
+		c,
+	)
 }
 
 func respondError(c *gin.Context, status int, message string) {

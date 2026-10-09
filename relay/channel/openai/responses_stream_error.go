@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 // isResponsesStreamPreCommitEvent reports events that have no model output or
@@ -27,8 +28,8 @@ func responsesStreamEventError(event *dto.ResponsesStreamResponse) *types.OpenAI
 		return nil
 	}
 
-	if event.Error != nil && (event.Error.Type != "" || event.Error.Message != "" || event.Error.Code != nil) {
-		return event.Error
+	if event.Type == "error" && (event.Code != "" || event.Message != "" || event.Param != "") {
+		return &types.OpenAIError{Type: "upstream_error", Message: event.Message, Code: event.Code, Param: event.Param}
 	}
 
 	switch event.Type {
@@ -63,6 +64,33 @@ func newResponsesStreamChannelError(eventType string, skipRetry bool) *types.New
 	)
 }
 
+func isResponsesStreamBusinessRejection(upstreamError *types.OpenAIError) bool {
+	if upstreamError == nil {
+		return false
+	}
+	code := strings.ToLower(fmt.Sprint(upstreamError.Code))
+	switch code {
+	case "context_length_exceeded", "invalid_request", "invalid_argument",
+		"sensitive_words_detected", "prompt_blocked", "content_filter",
+		"content_policy_violation", "safety":
+		return true
+	case "invalid_api_key", "api_key_invalid", "api_key_expired",
+		"authentication_error", "unauthenticated", "permission_denied",
+		"rate_limit_exceeded", "server_error", "internal_error":
+		return false
+	}
+	if code != "" {
+		return false
+	}
+	switch strings.ToLower(upstreamError.Type) {
+	case "invalid_request", "invalid_request_error", "invalid_argument",
+		"content_filter", "content_policy_violation", "safety":
+		return true
+	default:
+		return false
+	}
+}
+
 func responsesStreamPreCommitFallbackReason(err error) string {
 	switch {
 	case errors.Is(err, errResponsesStreamPreCommitEventLimit):
@@ -92,8 +120,10 @@ func responsesStreamTerminalEvent(eventType string, streamErr *types.NewAPIError
 	openAIError := streamErr.ToOpenAIError()
 	if eventType == "error" {
 		return dto.ResponsesStreamResponse{
-			Type:  "error",
-			Error: &openAIError,
+			Type:    "error",
+			Code:    fmt.Sprint(openAIError.Code),
+			Message: openAIError.Message,
+			Param:   openAIError.Param,
 		}
 	}
 

@@ -11,9 +11,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -161,6 +161,23 @@ func TestOaiResponsesStreamHandlerPreCommitFailureLeavesJSONErrorAvailable(t *te
 	assert.NotContains(t, recorder.Body.String(), "text/event-stream")
 }
 
+func TestOaiResponsesStreamHandlerDoesNotRetryPreCommitBusinessRejection(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+		`data: {"type":"error","code":"context_length_exceeded","message":"too long"}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesStreamTestContext(t, body)
+
+	usage, err := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Error(t, err)
+	assert.Nil(t, usage)
+	assert.True(t, types.IsSkipRetryError(err))
+	assert.Empty(t, recorder.Body.String())
+	assert.Equal(t, "failed", info.StreamStatus.ResponseOutcome())
+}
+
 func TestOaiResponsesStreamHandlerRetriesAfterRealSizedPreCommitPreamble(t *testing.T) {
 	setResponsesStreamPreCommitTestConfig(t, 64, 4096, 512, defaultResponsesStreamPreCommitMaxEvents)
 	prelude := []string{
@@ -209,9 +226,9 @@ func TestOaiResponsesStreamHandlerStopsWithoutRetryAfterCommittedEvent(t *testin
 
 	usage, err := OaiResponsesStreamHandler(c, info, resp)
 
-	require.Error(t, err)
-	assert.Nil(t, usage)
-	assert.True(t, types.IsSkipRetryError(err))
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	assert.Positive(t, usage.CompletionTokens)
 	assert.True(t, c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)))
 	responseBody := recorder.Body.String()
 	assert.Contains(t, responseBody, "event: codex.rate_limits")
@@ -257,9 +274,8 @@ func TestOaiResponsesStreamHandlerTreatsUnknownEventAsCommitted(t *testing.T) {
 
 	usage, err := OaiResponsesStreamHandler(c, info, resp)
 
-	require.Error(t, err)
-	assert.Nil(t, usage)
-	assert.True(t, types.IsSkipRetryError(err))
+	require.Nil(t, err)
+	require.NotNil(t, usage)
 	assert.True(t, c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)))
 	assert.Contains(t, recorder.Body.String(), "event: response.future_extension")
 }
@@ -278,9 +294,8 @@ func TestOaiResponsesStreamHandlerCommitsWhenPreCommitBufferIsFull(t *testing.T)
 
 	usage, err := OaiResponsesStreamHandler(c, info, resp)
 
-	require.Error(t, err)
-	assert.Nil(t, usage)
-	assert.True(t, types.IsSkipRetryError(err))
+	require.Nil(t, err)
+	require.NotNil(t, usage)
 	assert.True(t, c.GetBool(string(constant.ContextKeyStreamTerminalErrorSent)))
 	assert.Contains(t, recorder.Body.String(), "event: response.in_progress")
 }
@@ -366,14 +381,9 @@ func TestResponsesStreamEventErrorSupportsRootAndResponseErrors(t *testing.T) {
 		{
 			name: "root error",
 			event: dto.ResponsesStreamResponse{
-				Type:  "error",
-				Error: &types.OpenAIError{Type: "server_error", Message: "failed"},
-			},
-		},
-		{
-			name: "root error without an event type",
-			event: dto.ResponsesStreamResponse{
-				Error: &types.OpenAIError{Type: "server_error", Message: "failed"},
+				Type:    "error",
+				Code:    "server_error",
+				Message: "failed",
 			},
 		},
 		{
@@ -405,12 +415,12 @@ func TestResponsesStreamEventErrorSupportsRootAndResponseErrors(t *testing.T) {
 func TestResponsesStreamTerminalEventUsesMatchingProtocolShape(t *testing.T) {
 	streamErr := newResponsesStreamChannelError("error", true)
 	rootEvent := responsesStreamTerminalEvent("error", streamErr)
-	require.NotNil(t, rootEvent.Error)
+	assert.NotEmpty(t, rootEvent.Message)
+	assert.NotEmpty(t, rootEvent.Code)
 	assert.Nil(t, rootEvent.Response)
 	assert.Equal(t, "error", rootEvent.Type)
 
 	responseEvent := responsesStreamTerminalEvent("response.failed", streamErr)
-	assert.Nil(t, responseEvent.Error)
 	require.NotNil(t, responseEvent.Response)
 	assert.Equal(t, "response.failed", responseEvent.Type)
 }

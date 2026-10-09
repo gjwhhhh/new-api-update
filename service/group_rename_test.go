@@ -19,6 +19,7 @@ func TestRenamedGroupConfigRewritesEveryReference(t *testing.T) {
 		},
 		AutoGroups:          []string{"vip", "default"},
 		DefaultUseAutoGroup: true,
+		MaxTokenAutoGroups:  5,
 		GroupSpecialUsableGroup: map[string]map[string]string{
 			"vip": {"+:vip": "VIP", "-:default": "remove"},
 		},
@@ -51,6 +52,7 @@ func TestValidateGroupConfigAllowsAutoInUserUsableGroupsWithoutDefault(t *testin
 		UserUsableGroups:        map[string]string{"auto": "Auto group description", "vip": "VIP"},
 		GroupGroupRatio:         map[string]map[string]float64{},
 		AutoGroups:              []string{"vip"},
+		MaxTokenAutoGroups:      5,
 		GroupSpecialUsableGroup: map[string]map[string]string{},
 		ModelRequestRateLimit:   map[string][2]int{},
 	}
@@ -59,14 +61,15 @@ func TestValidateGroupConfigAllowsAutoInUserUsableGroupsWithoutDefault(t *testin
 
 func TestNormalizeGroupConfigStripsAutoFromBillingMaps(t *testing.T) {
 	config := dto.GroupConfig{
-		GroupRatio:              map[string]float64{"vip": 1, "auto": 0},
-		TopupGroupRatio:         map[string]float64{"auto": 1},
-		UserUsableGroups:        map[string]string{"auto": "Auto group description"},
+		GroupRatio:       map[string]float64{"vip": 1, "auto": 0},
+		TopupGroupRatio:  map[string]float64{"auto": 1},
+		UserUsableGroups: map[string]string{"auto": "Auto group description"},
 		GroupGroupRatio: map[string]map[string]float64{
 			"vip":  {"auto": 0.5},
 			"auto": {"vip": 0.5},
 		},
 		AutoGroups:              []string{"vip", "auto"},
+		MaxTokenAutoGroups:      5,
 		GroupSpecialUsableGroup: map[string]map[string]string{"auto": {"+:vip": "VIP"}},
 		ModelRequestRateLimit:   map[string][2]int{"auto": {10, 20}},
 	}
@@ -88,4 +91,19 @@ func TestCurrentGroupsPreservedIgnoresAutoCleanup(t *testing.T) {
 	current := map[string]float64{"vip": 1, "auto": 0}
 	proposed := map[string]float64{"vip": 1}
 	assert.True(t, currentGroupsPreserved(current, proposed))
+}
+
+func TestGroupConfigOptionValuesIncludeMaxTokenAutoGroups(t *testing.T) {
+	values, err := groupConfigOptionValues(dto.GroupConfig{
+		GroupRatio:              map[string]float64{},
+		TopupGroupRatio:         map[string]float64{},
+		UserUsableGroups:        map[string]string{},
+		GroupGroupRatio:         map[string]map[string]float64{},
+		AutoGroups:              []string{},
+		MaxTokenAutoGroups:      7,
+		GroupSpecialUsableGroup: map[string]map[string]string{},
+		ModelRequestRateLimit:   map[string][2]int{},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "7", values["MaxTokenAutoGroups"])
 }

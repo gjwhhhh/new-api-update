@@ -10,6 +10,7 @@ type GroupConfig struct {
 	GroupGroupRatio         map[string]map[string]float64 `json:"group_group_ratio"`
 	AutoGroups              []string                      `json:"auto_groups"`
 	DefaultUseAutoGroup     bool                          `json:"default_use_auto_group"`
+	MaxTokenAutoGroups      int                           `json:"max_token_auto_groups"`
 	GroupSpecialUsableGroup map[string]map[string]string  `json:"group_special_usable_group"`
 	ModelRequestRateLimit   map[string][2]int             `json:"model_request_rate_limit"`
 }

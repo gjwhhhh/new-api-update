@@ -1,0 +1,94 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { Link } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
+
+import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
+import { useStatus } from '@/hooks/use-status'
+import { cn } from '@/lib/utils'
+
+type SystemBrandProps = {
+  defaultName?: string
+  defaultVersion?: string
+  /**
+   * Visual layout:
+   * - 'sidebar': stacked card style (used inside the sidebar header).
+   * - 'inline': compact horizontal pill (used inside the top app bar).
+   */
+  variant?: 'sidebar' | 'inline'
+}
+
+/**
+ * System brand component
+ * Displays the shared Tokenfly brand mark + current system name.
+ * - inline: compact pill in the top app bar; clicking navigates to home (/)
+ * - sidebar: stacked card in the sidebar header (display only)
+ */
+export function SystemBrand(props: SystemBrandProps) {
+  const { t } = useTranslation()
+  const { status } = useStatus()
+
+  const variant = props.variant ?? 'sidebar'
+  const name = status?.system_name || props.defaultName || 'New API'
+  const version =
+    status?.version || props.defaultVersion || t('Unknown version')
+
+  if (variant === 'inline') {
+    return (
+      <Link
+        to='/'
+        aria-label={t('Go to home')}
+        className={cn(
+          'text-foreground inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium transition-colors outline-none select-none',
+          'hover:bg-accent focus-visible:ring-ring/40 focus-visible:ring-2'
+        )}
+      >
+        <div className='flex size-5 shrink-0 items-center justify-center'>
+          <TokenflyBrandMark className='size-5' aria-hidden='true' />
+        </div>
+        <span className='max-w-[12rem] truncate'>{name}</span>
+      </Link>
+    )
+  }
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          size='lg'
+          className='hover:text-sidebar-foreground active:text-sidebar-foreground cursor-default hover:bg-transparent active:bg-transparent'
+          render={<div />}
+        >
+          <div className='flex aspect-square size-8 items-center justify-center'>
+            <TokenflyBrandMark className='size-8' aria-hidden='true' />
+          </div>
+          <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
+            <span className='truncate font-semibold'>{name}</span>
+            <span className='truncate text-xs'>{version}</span>
+          </div>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  )
+}

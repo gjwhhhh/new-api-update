@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -62,6 +63,7 @@ func CurrentGroupConfig() (dto.GroupConfig, error) {
 		UserUsableGroups:        setting.GetUserUsableGroupsCopy(),
 		AutoGroups:              append([]string(nil), setting.GetAutoGroups()...),
 		DefaultUseAutoGroup:     setting.DefaultUseAutoGroup,
+		MaxTokenAutoGroups:      setting.GetMaxTokenAutoGroups(),
 		GroupSpecialUsableGroup: ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.ReadAll(),
 	}
 	if err := common.UnmarshalJsonStr(common.TopupGroupRatio2JSONString(), &config.TopupGroupRatio); err != nil {
@@ -142,6 +144,9 @@ func validateGroupConfig(config dto.GroupConfig) error {
 	if config.GroupRatio == nil || config.TopupGroupRatio == nil || config.UserUsableGroups == nil ||
 		config.GroupGroupRatio == nil || config.AutoGroups == nil || config.GroupSpecialUsableGroup == nil || config.ModelRequestRateLimit == nil {
 		return errors.New("分组配置必须包含完整的配置快照")
+	}
+	if config.MaxTokenAutoGroups <= 0 {
+		return errors.New("MaxTokenAutoGroups must be a positive integer")
 	}
 	for name, ratio := range config.GroupRatio {
 		if err := validateGroupName(name, true); err != nil {
@@ -236,6 +241,7 @@ func groupConfigOptionValues(config dto.GroupConfig) (map[string]string, error) 
 		}
 		values[key] = string(data)
 	}
+	values["MaxTokenAutoGroups"] = strconv.Itoa(config.MaxTokenAutoGroups)
 	if config.DefaultUseAutoGroup {
 		values["DefaultUseAutoGroup"] = "true"
 	} else {
@@ -270,6 +276,9 @@ func UpdateGroupConfig(request dto.GroupConfigUpdateRequest) (string, error) {
 	}
 	if request.Revision != revision {
 		return "", errors.New("分组配置已被其他操作修改，请刷新后重试")
+	}
+	if request.Config.MaxTokenAutoGroups == 0 {
+		request.Config.MaxTokenAutoGroups = current.MaxTokenAutoGroups
 	}
 	normalizeGroupConfig(&request.Config)
 	if err := validateGroupConfig(request.Config); err != nil {
@@ -556,6 +565,7 @@ func SortedGroupConfigOptionKeys() []string {
 		"GroupGroupRatio",
 		"AutoGroups",
 		"DefaultUseAutoGroup",
+		"MaxTokenAutoGroups",
 		groupSpecialUsableGroupOptionKey,
 		"ModelRequestRateLimitGroup",
 	}
@@ -569,7 +579,7 @@ func IsGroupManagedOption(key string) bool {
 	// request-rate limits) remain independently editable because they neither
 	// grant access nor select channels; a rename still rewrites them atomically.
 	switch key {
-	case "GroupRatio", "UserUsableGroups", "GroupGroupRatio", "AutoGroups", groupSpecialUsableGroupOptionKey:
+	case "GroupRatio", "UserUsableGroups", "GroupGroupRatio", "AutoGroups", "MaxTokenAutoGroups", groupSpecialUsableGroupOptionKey:
 		return true
 	default:
 		return false

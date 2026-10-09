@@ -11,9 +11,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -60,6 +60,11 @@ type Channel struct {
 	Keys []string `json:"-" gorm:"-"`
 }
 
+const (
+	ChannelStatusReasonAllKeysDisabled         = "All keys are disabled"
+	channelStatusReasonAllKeysManuallyDisabled = "All keys are manually disabled"
+)
+
 type ChannelInfo struct {
 	IsMultiKey                   bool                  `json:"is_multi_key"`                        // 是否多Key模式
 	MultiKeySize                 int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
@@ -72,17 +77,14 @@ type ChannelInfo struct {
 	MultiKeyMode                 constant.MultiKeyMode `json:"multi_key_mode"`
 }
 
-// ChannelKeySelection describes the exact key selected for a relay or health
-// check. The index and original status keep later state changes independent of
-// duplicate key values and concurrent edits.
+// ChannelKeySelection identifies the exact key selected for a relay or health
+// check, including its state when selection occurred.
 type ChannelKeySelection struct {
 	Key            string
 	Index          int
 	OriginalStatus int
 }
 
-// ChannelHealthCheckResult describes the state transition caused by one
-// completed multi-key health check.
 type ChannelHealthCheckResult struct {
 	Changed       bool
 	StatusChanged bool
@@ -91,8 +93,8 @@ type ChannelHealthCheckResult struct {
 	Stale         bool
 }
 
-// ApplySingleKeyHealthCheckResult applies a completed health check while
-// verifying that the channel state has not changed since the probe started.
+// ApplySingleKeyHealthCheckResult commits a health transition only when the
+// channel still has the state observed by the completed probe.
 func ApplySingleKeyHealthCheckResult(channelId, originalStatus int, success, shouldDisable, shouldEnable bool, reason string) (ChannelHealthCheckResult, error) {
 	result := ChannelHealthCheckResult{}
 	channelStatusLock.Lock()
@@ -262,14 +264,19 @@ func applyChannelGroupFilter(query *gorm.DB, group string, groupColumn string) *
 }
 
 // Value implements driver.Valuer interface
+// 必须返回 string 而非 []byte:PG simple protocol 下 []byte 参数按 bytea
+// 编码,写 json 列会触发 SQLSTATE 22P02。
 func (c ChannelInfo) Value() (driver.Value, error) {
-	return common.Marshal(&c)
+	b, err := common.Marshal(&c)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
 }
 
 // Scan implements sql.Scanner interface
-func (c *ChannelInfo) Scan(value interface{}) error {
-	bytesValue, _ := value.([]byte)
-	return common.Unmarshal(bytesValue, c)
+func (c *ChannelInfo) Scan(value any) error {
+	return common.Unmarshal(jsonScanBytes(value), c)
 }
 
 func (channel *Channel) GetKeys() []string {
@@ -484,7 +491,7 @@ func (channel *Channel) getNextKey(allowAutoDisabled bool, prioritizeAutoDisable
 		if start < 0 || start >= len(keys) {
 			start = 0
 		}
-		for i := 0; i < len(keys); i++ {
+		for i := range keys {
 			idx := (start + i) % len(keys)
 			if getStatus(idx) == selectedStatus {
 				// update polling index for next call (point to the next position)
@@ -492,11 +499,11 @@ func (channel *Channel) getNextKey(allowAutoDisabled bool, prioritizeAutoDisable
 				return ChannelKeySelection{Key: keys[idx], Index: idx, OriginalStatus: selectedStatus}, nil
 			}
 		}
-		// Fallback – should not happen, but return first enabled key
-		return ChannelKeySelection{Key: keys[selectedIndexes[0]], Index: selectedIndexes[0], OriginalStatus: selectedStatus}, nil
+		selectedIdx := selectedIndexes[0]
+		return ChannelKeySelection{Key: keys[selectedIdx], Index: selectedIdx, OriginalStatus: selectedStatus}, nil
 	default:
-		// Unknown mode, default to first enabled key (or original key string)
-		return ChannelKeySelection{Key: keys[selectedIndexes[0]], Index: selectedIndexes[0], OriginalStatus: selectedStatus}, nil
+		selectedIdx := selectedIndexes[0]
+		return ChannelKeySelection{Key: keys[selectedIdx], Index: selectedIdx, OriginalStatus: selectedStatus}, nil
 	}
 }
 
@@ -522,8 +529,8 @@ func (channel *Channel) GetGroups() []string {
 	return groups
 }
 
-func (channel *Channel) GetOtherInfo() map[string]interface{} {
-	otherInfo := make(map[string]interface{})
+func (channel *Channel) GetOtherInfo() map[string]any {
+	otherInfo := make(map[string]any)
 	if channel.OtherInfo != "" {
 		err := common.Unmarshal([]byte(channel.OtherInfo), &otherInfo)
 		if err != nil {
@@ -533,7 +540,7 @@ func (channel *Channel) GetOtherInfo() map[string]interface{} {
 	return otherInfo
 }
 
-func (channel *Channel) SetOtherInfo(otherInfo map[string]interface{}) {
+func (channel *Channel) SetOtherInfo(otherInfo map[string]any) {
 	otherInfoBytes, err := json.Marshal(otherInfo)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal other info: channel_id=%d, tag=%s, name=%s, error=%v", channel.Id, channel.GetTag(), channel.Name, err))
@@ -564,11 +571,21 @@ func (channel *Channel) Save() error {
 	return DB.Save(channel).Error
 }
 
-func (channel *Channel) SaveWithoutKey() error {
+// saveStatusState persists only the fields owned by the channel status flow.
+// Keeping this allowlist here prevents a stale channel snapshot from
+// overwriting credentials, accounting counters, or channel configuration.
+func (channel *Channel) saveStatusState() error {
 	if channel.Id == 0 {
 		return errors.New("channel ID is 0")
 	}
-	return DB.Omit("key").Save(channel).Error
+	updates := map[string]any{
+		"status":     channel.Status,
+		"other_info": channel.OtherInfo,
+	}
+	if channel.ChannelInfo.IsMultiKey {
+		updates["channel_info"] = channel.ChannelInfo
+	}
+	return DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
 }
 
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
@@ -627,6 +644,15 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	return channels, nil
 }
 
+// GetChannelById loads a channel directly from the database, bypassing the
+// in-memory channel cache.
+//
+// WARNING: do NOT call this on request hot paths (middleware, distribution,
+// relay submit/retry, polling). Every call is a synchronous DB query and will
+// not see cache-only state. Use CacheGetChannel instead: it serves from the
+// in-memory cache and falls back to this function automatically when
+// MemoryCacheEnabled is false. Direct use is appropriate only where fresh DB
+// state is required, e.g. admin CRUD, channel testing, or cache (re)building.
 func GetChannelById(id int, selectAll bool) (*Channel, error) {
 	channel := &Channel{Id: id}
 	var err error = nil
@@ -670,26 +696,32 @@ func BatchInsertChannels(channels []Channel) error {
 	return tx.Commit().Error
 }
 
-func BatchDeleteChannels(ids []int) error {
+func BatchDeleteChannels(ids []int) (int64, error) {
 	if len(ids) == 0 {
-		return nil
+		return 0, nil
 	}
 	// 使用事务 分批删除channel表和abilities表
 	tx := DB.Begin()
 	if tx.Error != nil {
-		return tx.Error
+		return 0, tx.Error
 	}
+	var deletedCount int64
 	for _, chunk := range lo.Chunk(ids, 200) {
-		if err := tx.Where("id in (?)", chunk).Delete(&Channel{}).Error; err != nil {
+		result := tx.Where("id in (?)", chunk).Delete(&Channel{})
+		if result.Error != nil {
 			tx.Rollback()
-			return err
+			return 0, result.Error
 		}
+		deletedCount += result.RowsAffected
 		if err := tx.Where("channel_id in (?)", chunk).Delete(&Ability{}).Error; err != nil {
 			tx.Rollback()
-			return err
+			return 0, err
 		}
 	}
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return 0, err
+	}
+	return deletedCount, nil
 }
 
 func (channel *Channel) GetPriority() int64 {
@@ -712,7 +744,7 @@ func (channel *Channel) GetBaseURL() string {
 	}
 	url := *channel.BaseURL
 	if url == "" {
-		url = constant.ChannelBaseURLs[channel.Type]
+		url = constant.GetChannelBaseURL(channel.Type)
 	}
 	return url
 }
@@ -840,7 +872,7 @@ func CleanupChannelPollingLocks() {
 		activeChannelSet[id] = true
 	}
 
-	channelPollingLocks.Range(func(key, value interface{}) bool {
+	channelPollingLocks.Range(func(key, value any) bool {
 		channelId := key.(int)
 		if !activeChannelSet[channelId] {
 			channelPollingLocks.Delete(channelId)
@@ -856,8 +888,6 @@ func (channel *Channel) multiKeyStatus(index int) int {
 	return common.ChannelStatusEnabled
 }
 
-// HasAutoDisabledKey reports whether a multi-key channel still has a key that
-// should be probed by passive recovery.
 func (channel *Channel) HasAutoDisabledKey() bool {
 	if channel == nil || !channel.ChannelInfo.IsMultiKey {
 		return false
@@ -882,11 +912,14 @@ func (channel *Channel) setChannelStatusReason(reason string) {
 	channel.SetOtherInfo(info)
 }
 
-// ReconcileMultiKeyChannelStatus derives the channel availability from the
-// channel-level manual switch and all current key states.
 func (channel *Channel) ReconcileMultiKeyChannelStatus() {
 	keys := channel.GetKeys()
 	channel.normalizeMultiKeyState(len(keys))
+	if channel.Status == common.ChannelStatusManuallyDisabled &&
+		!channel.ChannelInfo.ManuallyDisabled &&
+		channel.GetOtherInfo()["status_reason"] != channelStatusReasonAllKeysManuallyDisabled {
+		channel.ChannelInfo.ManuallyDisabled = true
+	}
 	if channel.ChannelInfo.ManuallyDisabled {
 		channel.Status = common.ChannelStatusManuallyDisabled
 		return
@@ -905,11 +938,11 @@ func (channel *Channel) ReconcileMultiKeyChannelStatus() {
 	}
 	if hasAutoDisabled {
 		channel.Status = common.ChannelStatusAutoDisabled
-		channel.setChannelStatusReason("All keys are disabled")
+		channel.setChannelStatusReason(ChannelStatusReasonAllKeysDisabled)
 		return
 	}
 	channel.Status = common.ChannelStatusManuallyDisabled
-	channel.setChannelStatusReason("All keys are manually disabled")
+	channel.setChannelStatusReason(channelStatusReasonAllKeysManuallyDisabled)
 }
 
 func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason string) {
@@ -975,9 +1008,6 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 	return updateChannelStatus(channelId, usingKey, -1, status, reason)
 }
 
-// UpdateChannelStatusAtKeyIndex updates an exact multi-key slot. Relay errors
-// carry the index selected for the request, so duplicate key values cannot
-// cause the wrong key to be disabled.
 func UpdateChannelStatusAtKeyIndex(channelId, keyIndex, status int, reason string) bool {
 	return updateChannelStatus(channelId, "", keyIndex, status, reason)
 }
@@ -986,22 +1016,27 @@ func updateChannelStatus(channelId int, usingKey string, keyIndex, status int, r
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()
+	}
 
+	// ChannelInfo stores both multi-key status and the polling cursor. Hold the
+	// same per-channel lock from the first read through persistence so neither
+	// writer can save a stale JSON snapshot over the other.
+	pollingLock := GetChannelPollingLock(channelId)
+	pollingLock.Lock()
+	defer pollingLock.Unlock()
+
+	if common.MemoryCacheEnabled {
 		channelCache, _ := CacheGetChannel(channelId)
 		if channelCache == nil {
 			return false
 		}
 		if channelCache.ChannelInfo.IsMultiKey {
-			// Use per-channel lock to prevent concurrent map read/write with GetNextEnabledKey
 			beforeStatus := channelCache.Status
-			pollingLock := GetChannelPollingLock(channelId)
-			pollingLock.Lock()
 			if keyIndex >= 0 {
 				handlerMultiKeyUpdateAtIndex(channelCache, keyIndex, status, reason)
 			} else {
 				handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
 			}
-			pollingLock.Unlock()
 			if beforeStatus != channelCache.Status {
 				CacheUpdateChannelStatus(channelId, channelCache.Status)
 			}
@@ -1029,21 +1064,21 @@ func updateChannelStatus(channelId int, usingKey string, keyIndex, status int, r
 	if err != nil {
 		return false
 	} else {
-		if channel.Status == status && !channel.ChannelInfo.IsMultiKey {
+		// A channel-level manual disable must replace any status derived from
+		// individual key state, even when both use the same numeric status.
+		overridesDerivedStatus := channel.ChannelInfo.IsMultiKey && usingKey == "" && keyIndex < 0 &&
+			status == common.ChannelStatusManuallyDisabled && !channel.ChannelInfo.ManuallyDisabled
+		if channel.Status == status && !overridesDerivedStatus {
 			return false
 		}
 
 		if channel.ChannelInfo.IsMultiKey {
 			beforeStatus := channel.Status
-			// Protect map writes with the same per-channel lock used by readers
-			pollingLock := GetChannelPollingLock(channelId)
-			pollingLock.Lock()
 			if keyIndex >= 0 {
 				handlerMultiKeyUpdateAtIndex(channel, keyIndex, status, reason)
 			} else {
 				handlerMultiKeyUpdate(channel, usingKey, status, reason)
 			}
-			pollingLock.Unlock()
 			if beforeStatus != channel.Status {
 				shouldUpdateAbilities = true
 			}
@@ -1055,7 +1090,7 @@ func updateChannelStatus(channelId int, usingKey string, keyIndex, status int, r
 			channel.Status = status
 			shouldUpdateAbilities = true
 		}
-		err = channel.SaveWithoutKey()
+		err = channel.saveStatusState()
 		if err != nil {
 			common.SysLog(fmt.Sprintf("failed to update channel status: channel_id=%d, status=%d, error=%v", channel.Id, status, err))
 			return false
@@ -1178,6 +1213,19 @@ func EnableChannelByTag(tag string) error {
 }
 
 func DisableChannelByTag(tag string) error {
+	// Explicit tag-level disable also cancels automatic restoration for
+	// channels that were already disabled because all keys were unavailable.
+	var channels []Channel
+	if err := DB.Where("tag = ?", tag).Find(&channels).Error; err != nil {
+		return err
+	}
+	for _, channel := range channels {
+		if channel.ChannelInfo.IsMultiKey && !channel.ChannelInfo.ManuallyDisabled {
+			if !UpdateChannelStatus(channel.Id, "", common.ChannelStatusManuallyDisabled, "manual tag operation") {
+				return fmt.Errorf("failed to disable channel #%d by tag", channel.Id)
+			}
+		}
+	}
 	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusManuallyDisabled).Error
 	if err != nil {
 		return err
@@ -1335,6 +1383,12 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
+	if _, err := common.ParseProxyURLStrict(channelParams.Proxy); err != nil {
+		return fmt.Errorf("invalid channel proxy: %w", err)
+	}
+	if err := channelParams.ValidateHTTPTransport(); err != nil {
+		return err
+	}
 	channelOtherSettings := &dto.ChannelOtherSettings{}
 	if channel.OtherSettings != "" {
 		err := common.UnmarshalJsonStr(channel.OtherSettings, channelOtherSettings)
@@ -1342,7 +1396,13 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
-	if channel.Type == constant.ChannelTypeAdvancedCustom {
+	if err := channelOtherSettings.ValidateToolLossPolicy(); err != nil {
+		return err
+	}
+	if preset := common.GetAdvancedCustomPreset(channel.Type); preset != nil {
+		channelOtherSettings.AdvancedCustom = preset
+	}
+	if constant.IsAdvancedCustomChannel(channel.Type) {
 		if channelOtherSettings.AdvancedCustom == nil {
 			return fmt.Errorf("advanced_custom is required")
 		}
@@ -1350,6 +1410,11 @@ func (channel *Channel) ValidateSettings() error {
 	if channelOtherSettings.AdvancedCustom != nil {
 		if err := channelOtherSettings.AdvancedCustom.Validate(); err != nil {
 			return err
+		}
+	}
+	if constant.IsAdvancedCustomChannel(channel.Type) && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
+		if _, ok := channelOtherSettings.AdvancedCustom.ModelListRoute(); !ok {
+			return fmt.Errorf("advanced custom channels require a %s route when upstream model update checks are enabled", dto.AdvancedCustomModelListPath)
 		}
 	}
 	if err := channelOtherSettings.HealthCheck.Validate(); err != nil {
@@ -1390,6 +1455,9 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 			_ = channel.Save()           // 保存修改
 		}
 	}
+	if preset := common.GetAdvancedCustomPreset(channel.Type); preset != nil {
+		setting.AdvancedCustom = preset
+	}
 	return setting
 }
 
@@ -1402,8 +1470,8 @@ func (channel *Channel) SetOtherSettings(setting dto.ChannelOtherSettings) {
 	channel.OtherSettings = string(settingBytes)
 }
 
-func (channel *Channel) GetParamOverride() map[string]interface{} {
-	paramOverride := make(map[string]interface{})
+func (channel *Channel) GetParamOverride() map[string]any {
+	paramOverride := make(map[string]any)
 	if channel.ParamOverride != nil && *channel.ParamOverride != "" {
 		err := common.Unmarshal([]byte(*channel.ParamOverride), &paramOverride)
 		if err != nil {
@@ -1413,8 +1481,8 @@ func (channel *Channel) GetParamOverride() map[string]interface{} {
 	return paramOverride
 }
 
-func (channel *Channel) GetHeaderOverride() map[string]interface{} {
-	headerOverride := make(map[string]interface{})
+func (channel *Channel) GetHeaderOverride() map[string]any {
+	headerOverride := make(map[string]any)
 	if channel.HeaderOverride != nil && *channel.HeaderOverride != "" {
 		err := common.Unmarshal([]byte(*channel.HeaderOverride), &headerOverride)
 		if err != nil {

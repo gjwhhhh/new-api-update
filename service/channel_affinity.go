@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,10 +16,11 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -81,7 +83,7 @@ type channelAffinityMeta struct {
 	TTLSeconds     int
 	RuleName       string
 	SkipRetry      bool
-	ParamTemplate  map[string]interface{}
+	ParamTemplate  map[string]any
 	KeySourceType  string
 	KeySourceKey   string
 	KeySourcePath  string
@@ -930,20 +932,18 @@ func buildChannelAffinityKeyHint(s string) string {
 	return s[:4] + "..." + s[len(s)-4:]
 }
 
-func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
+func cloneStringAnyMap(src map[string]any) map[string]any {
 	if len(src) == 0 {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
-	dst := make(map[string]interface{}, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
+	dst := make(map[string]any, len(src))
+	maps.Copy(dst, src)
 	return dst
 }
 
-func mergeChannelOverride(base map[string]interface{}, tpl map[string]interface{}) map[string]interface{} {
+func mergeChannelOverride(base map[string]any, tpl map[string]any) map[string]any {
 	if len(base) == 0 && len(tpl) == 0 {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 	if len(tpl) == 0 {
 		return base
@@ -970,17 +970,17 @@ func mergeChannelOverride(base map[string]interface{}, tpl map[string]interface{
 	return out
 }
 
-func extractParamOperations(value interface{}) ([]interface{}, bool) {
+func extractParamOperations(value any) ([]any, bool) {
 	switch ops := value.(type) {
-	case []interface{}:
+	case []any:
 		if len(ops) == 0 {
-			return []interface{}{}, true
+			return []any{}, true
 		}
-		cloned := make([]interface{}, 0, len(ops))
+		cloned := make([]any, 0, len(ops))
 		cloned = append(cloned, ops...)
 		return cloned, true
-	case []map[string]interface{}:
-		cloned := make([]interface{}, 0, len(ops))
+	case []map[string]any:
+		cloned := make([]any, 0, len(ops))
 		for _, op := range ops {
 			cloned = append(cloned, op)
 		}
@@ -998,19 +998,19 @@ func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinity
 		return
 	}
 
-	templateInfo := map[string]interface{}{
+	templateInfo := map[string]any{
 		"applied":             true,
 		"rule_name":           meta.RuleName,
 		"param_override_keys": len(meta.ParamTemplate),
 	}
 	if anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo); ok {
-		if info, ok := anyInfo.(map[string]interface{}); ok {
+		if info, ok := anyInfo.(map[string]any); ok {
 			info["override_template"] = templateInfo
 			c.Set(ginKeyChannelAffinityLogInfo, info)
 			return
 		}
 	}
-	c.Set(ginKeyChannelAffinityLogInfo, map[string]interface{}{
+	c.Set(ginKeyChannelAffinityLogInfo, map[string]any{
 		"reason":            meta.RuleName,
 		"rule_name":         meta.RuleName,
 		"using_group":       meta.UsingGroup,
@@ -1026,7 +1026,7 @@ func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinity
 }
 
 // ApplyChannelAffinityOverrideTemplate merges per-rule channel override templates onto the selected channel override config.
-func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[string]interface{}) (map[string]interface{}, bool) {
+func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[string]any) (map[string]any, bool) {
 	if c == nil {
 		return paramOverride, false
 	}
@@ -1045,6 +1045,7 @@ func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[stri
 
 func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
 	setting := operation_setting.GetChannelAffinitySetting()
+	state := RequestPolicy(c)
 	if setting == nil || !setting.Enabled {
 		return 0, false
 	}
@@ -1098,11 +1099,13 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		}
 		cacheKeySuffix := buildChannelAffinityCacheKeySuffixWithVersion(rule, modelName, usingGroup, affinityValue, cacheVersion)
 		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
+		state.SessionMode, state.SessionModeSource = EffectiveSessionMode(setting, rule)
+		state.RuleName = rule.Name
 		meta := channelAffinityMeta{
 			CacheKey:       cacheKeyFull,
 			TTLSeconds:     ttlSeconds,
 			RuleName:       rule.Name,
-			SkipRetry:      rule.SkipRetryOnFailure,
+			SkipRetry:      state.SessionMode == "strict",
 			ParamTemplate:  cloneStringAnyMap(rule.ParamOverrideTemplate),
 			KeySourceType:  strings.TrimSpace(usedSource.Type),
 			KeySourceKey:   strings.TrimSpace(usedSource.Key),
@@ -1113,14 +1116,18 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			ModelName:      modelName,
 			RequestPath:    path,
 		}
+		setChannelAffinityContext(c, meta)
 
+		state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "match", Reason: "session_rule_matched", Source: "session_rule"}})
+		if state.SessionMode == "off" {
+			return 0, false
+		}
 		cache := getChannelAffinityCache()
 		channelID, found, err := cache.Get(cacheKeySuffix)
 		if err != nil {
 			common.SysError(fmt.Sprintf("channel affinity cache get failed: rule=%q, err=%v", rule.Name, err))
 			return 0, false
 		}
-		setChannelAffinityContext(c, meta)
 		if found {
 			return channelID, true
 		}
@@ -1188,7 +1195,7 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 		return
 	}
 	c.Set(ginKeyChannelAffinitySkipRetry, meta.SkipRetry)
-	info := map[string]interface{}{
+	info := map[string]any{
 		"reason":         meta.RuleName,
 		"rule_name":      meta.RuleName,
 		"using_group":    meta.UsingGroup,
@@ -1205,15 +1212,22 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 	c.Set(ginKeyChannelAffinityLogInfo, info)
 }
 
-func AppendChannelAffinityAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {
-	if c == nil || adminInfo == nil {
+func AppendChannelAffinityAdminInfo(c *gin.Context, other *model.LogOther) {
+	if c == nil || other == nil {
 		return
 	}
 	anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo)
 	if !ok || anyInfo == nil {
 		return
 	}
-	adminInfo["channel_affinity"] = anyInfo
+	// The hint can be the whole session value for short keys; logs keep only
+	// the fingerprint.
+	if info, ok := anyInfo.(map[string]any); ok {
+		sanitized := cloneStringAnyMap(info)
+		delete(sanitized, "key_hint")
+		anyInfo = sanitized
+	}
+	other.SetAdmin("channel_affinity", anyInfo)
 }
 
 func RecordChannelAffinity(c *gin.Context, channelID int) {
@@ -1221,6 +1235,9 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 		return
 	}
 	setting := operation_setting.GetChannelAffinitySetting()
+	if RequestPolicy(c).SessionMode == "off" {
+		return
+	}
 	if setting == nil || !setting.Enabled {
 		return
 	}

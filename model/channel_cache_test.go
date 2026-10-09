@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +28,7 @@ func TestGetRandomSatisfiedChannelExcludingSkipsPreviouslyTriedChannel(t *testin
 		101: {Id: 101, Priority: &priority, Weight: &weight},
 		102: {Id: 102, Priority: &priority, Weight: &weight},
 	}
-	channel2advancedCustomConfig = map[int]*dto.AdvancedCustomConfig{}
+	channel2advancedCustomConfig = map[int]*kitdto.AdvancedCustomConfig{}
 	common.MemoryCacheEnabled = true
 	channelSyncLock.Unlock()
 
@@ -40,7 +41,10 @@ func TestGetRandomSatisfiedChannelExcludingSkipsPreviouslyTriedChannel(t *testin
 		channelSyncLock.Unlock()
 	})
 
-	channel, err := GetRandomSatisfiedChannelExcluding("test-group", "test-model", 0, "", map[int]struct{}{101: {}})
+	channel, err := GetRandomSatisfiedChannel("test-group", "test-model", 0, []dto.ChannelFilter{{
+		Kind:               dto.FilterExcludedChannelIDs,
+		ExcludedChannelIDs: map[int]struct{}{101: {}},
+	}})
 
 	require.NoError(t, err)
 	require.NotNil(t, channel)

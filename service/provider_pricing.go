@@ -18,6 +18,11 @@ import (
 
 const claudeCacheCreation1hMultiplier = 6.0 / 3.75
 
+// Provider pricing follows the recharge display rate: one CNY represents one USD.
+// This fallback is intentionally local to the provider pricing endpoint and must
+// not reuse operation_setting.Price, which is still used by the model plaza.
+const defaultProviderPricingCNYPerUSD = 1.0
+
 var lastSkippedDynamicProviderModels atomic.Value
 
 func init() {
@@ -42,7 +47,7 @@ func GetProviderPricingModels() ([]dto.ProviderPricingModel, error) {
 
 	cnyPerUSD := providerSetting.CNYPerUSD
 	if cnyPerUSD == 0 {
-		cnyPerUSD = operation_setting.Price
+		cnyPerUSD = defaultProviderPricingCNYPerUSD
 	}
 	if cnyPerUSD <= 0 || math.IsNaN(cnyPerUSD) || math.IsInf(cnyPerUSD, 0) {
 		return nil, fmt.Errorf("provider pricing CNY per USD must be a finite positive number")

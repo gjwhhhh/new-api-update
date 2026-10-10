@@ -62,7 +62,7 @@ func TestGetProviderPricingModelsReturnsFinalCNYPrices(t *testing.T) {
 	})
 
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-		"provider_pricing_setting.cny_per_usd": "5",
+		"provider_pricing_setting.cny_per_usd": "0",
 		"provider_pricing_setting.groups":      `["default","vip"]`,
 		"billing_setting.billing_mode":         `{"dynamic-model":"tiered_expr"}`,
 		"billing_setting.billing_expr":         `{"dynamic-model":"tier(\"base\", p * 1 + c * 2)"}`,
@@ -99,19 +99,19 @@ func TestGetProviderPricingModelsReturnsFinalCNYPrices(t *testing.T) {
 	assert.False(t, disabled.Enabled)
 	require.NotNil(t, disabled.InputPrice)
 	require.NotNil(t, disabled.OutputPrice)
-	assert.Equal(t, 10.0, *disabled.InputPrice)
-	assert.Equal(t, 20.0, *disabled.OutputPrice)
+	assert.Equal(t, 2.0, *disabled.InputPrice)
+	assert.Equal(t, 4.0, *disabled.OutputPrice)
 
 	fixed := prices[1]
 	assert.Equal(t, "fixed-model", fixed.ModelName)
 	assert.Equal(t, "per_call", fixed.PriceUnit)
 	assert.True(t, fixed.Enabled)
 	require.NotNil(t, fixed.UnitPrice)
-	assert.Equal(t, 1.0, *fixed.UnitPrice)
+	assert.Equal(t, 0.2, *fixed.UnitPrice)
 	assert.Nil(t, fixed.InputPrice)
 	fixedJSON, err := common.Marshal(fixed)
 	require.NoError(t, err)
-	assert.Contains(t, string(fixedJSON), `"unit_price":1`)
+	assert.Contains(t, string(fixedJSON), `"unit_price":0.2`)
 	assert.NotContains(t, string(fixedJSON), `"input_price"`)
 
 	token := prices[2]
@@ -122,11 +122,11 @@ func TestGetProviderPricingModelsReturnsFinalCNYPrices(t *testing.T) {
 	require.NotNil(t, token.CacheInputPrice)
 	require.NotNil(t, token.CacheCreatePrice)
 	require.NotNil(t, token.CacheCreatePrice1h)
-	assert.Equal(t, 10.0, *token.InputPrice)
-	assert.Equal(t, 30.0, *token.OutputPrice)
-	assert.Equal(t, 1.0, *token.CacheInputPrice)
-	assert.Equal(t, 12.5, *token.CacheCreatePrice)
-	assert.Equal(t, 20.0, *token.CacheCreatePrice1h)
+	assert.Equal(t, 2.0, *token.InputPrice)
+	assert.Equal(t, 6.0, *token.OutputPrice)
+	assert.Equal(t, 0.2, *token.CacheInputPrice)
+	assert.Equal(t, 2.5, *token.CacheCreatePrice)
+	assert.Equal(t, 4.0, *token.CacheCreatePrice1h)
 }
 
 func TestCalculateProviderPriceRejectsInvalidAndRounds(t *testing.T) {

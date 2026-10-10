@@ -91,7 +91,7 @@ func TestGetProviderPricingModelsReturnsFinalCNYPrices(t *testing.T) {
 
 	prices, err := GetProviderPricingModels()
 	require.NoError(t, err)
-	require.Len(t, prices, 3)
+	require.Len(t, prices, 4)
 
 	disabled := prices[0]
 	assert.Equal(t, "disabled-model", disabled.ModelName)
@@ -102,7 +102,16 @@ func TestGetProviderPricingModelsReturnsFinalCNYPrices(t *testing.T) {
 	assert.Equal(t, 2.0, *disabled.InputPrice)
 	assert.Equal(t, 4.0, *disabled.OutputPrice)
 
-	fixed := prices[1]
+	dynamic := prices[1]
+	assert.Equal(t, "dynamic-model", dynamic.ModelName)
+	assert.Equal(t, "default", dynamic.GroupName)
+	assert.True(t, dynamic.Enabled)
+	assert.NotNil(t, dynamic.InputPrice)
+	assert.NotNil(t, dynamic.OutputPrice)
+	assert.Equal(t, 1.0, *dynamic.InputPrice)
+	assert.Equal(t, 2.0, *dynamic.OutputPrice)
+
+	fixed := prices[2]
 	assert.Equal(t, "fixed-model", fixed.ModelName)
 	assert.Equal(t, "per_call", fixed.PriceUnit)
 	assert.True(t, fixed.Enabled)
@@ -114,7 +123,7 @@ func TestGetProviderPricingModelsReturnsFinalCNYPrices(t *testing.T) {
 	assert.Contains(t, string(fixedJSON), `"unit_price":0.2`)
 	assert.NotContains(t, string(fixedJSON), `"input_price"`)
 
-	token := prices[2]
+	token := prices[3]
 	assert.Equal(t, "token-model", token.ModelName)
 	assert.True(t, token.Enabled)
 	require.NotNil(t, token.InputPrice)
@@ -138,5 +147,33 @@ func TestCalculateProviderPriceRejectsInvalidAndRounds(t *testing.T) {
 	assert.False(t, ok)
 
 	_, ok = calculateProviderPrice(-1, 1)
+	assert.False(t, ok)
+}
+
+func TestProviderPricingFromExpressionUsesFirstTier(t *testing.T) {
+	pricing, ok := providerPricingFromExpression(`len < 272000 ? tier("standard", p * 5 + c * 30 + cr * 0.5 + cc * 6.25 + cc1h * 10) : tier("long", p * 10 + c * 45)`)
+	require.True(t, ok)
+	require.NotNil(t, pricing.InputPrice)
+	require.NotNil(t, pricing.OutputPrice)
+	require.NotNil(t, pricing.CacheInputPrice)
+	require.NotNil(t, pricing.CacheCreatePrice)
+	require.NotNil(t, pricing.CacheCreatePrice1h)
+	assert.Equal(t, 5.0, *pricing.InputPrice)
+	assert.Equal(t, 30.0, *pricing.OutputPrice)
+	assert.Equal(t, 0.5, *pricing.CacheInputPrice)
+	assert.Equal(t, 6.25, *pricing.CacheCreatePrice)
+	assert.Equal(t, 10.0, *pricing.CacheCreatePrice1h)
+}
+
+func TestProviderPricingFromExpressionSupportsFixedFirstTier(t *testing.T) {
+	pricing, ok := providerPricingFromExpression(`len < 1000 ? tier("short", fixed(0.01)) : tier("long", p * 2 + c * 8)`)
+	require.True(t, ok)
+	require.NotNil(t, pricing.FixedPrice)
+	assert.Equal(t, 0.01, *pricing.FixedPrice)
+	assert.Nil(t, pricing.InputPrice)
+}
+
+func TestProviderPricingFromExpressionRejectsUnsupportedVariables(t *testing.T) {
+	_, ok := providerPricingFromExpression(`tier("base", p * 5 + c * 30 + img * 8)`)
 	assert.False(t, ok)
 }

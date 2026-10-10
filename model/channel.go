@@ -588,6 +588,45 @@ func (channel *Channel) saveStatusState() error {
 	return DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
 }
 
+// UpdateMultiKeyStatus applies a status-only mutation to a freshly locked
+// multi-key channel and updates its abilities in the same transaction.
+func UpdateMultiKeyStatus(channelID int, mutate func(*Channel) error) (*Channel, error) {
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	channel := &Channel{}
+	if err := lockForUpdate(tx).Where("id = ?", channelID).First(channel).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if !channel.ChannelInfo.IsMultiKey {
+		tx.Rollback()
+		return nil, errors.New("channel is not multi-key")
+	}
+	if err := mutate(channel); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	updates := map[string]any{
+		"status":       channel.Status,
+		"other_info":   channel.OtherInfo,
+		"channel_info": channel.ChannelInfo,
+	}
+	if err := tx.Model(&Channel{}).Where("id = ?", channelID).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Model(&Ability{}).Where("channel_id = ?", channelID).Select("enabled").Update("enabled", channel.Status == common.ChannelStatusEnabled).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	return channel, nil
+}
+
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
 	var channels []*Channel
 	var err error
@@ -915,11 +954,6 @@ func (channel *Channel) setChannelStatusReason(reason string) {
 func (channel *Channel) ReconcileMultiKeyChannelStatus() {
 	keys := channel.GetKeys()
 	channel.normalizeMultiKeyState(len(keys))
-	if channel.Status == common.ChannelStatusManuallyDisabled &&
-		!channel.ChannelInfo.ManuallyDisabled &&
-		channel.GetOtherInfo()["status_reason"] != channelStatusReasonAllKeysManuallyDisabled {
-		channel.ChannelInfo.ManuallyDisabled = true
-	}
 	if channel.ChannelInfo.ManuallyDisabled {
 		channel.Status = common.ChannelStatusManuallyDisabled
 		return

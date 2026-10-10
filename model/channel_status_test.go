@@ -51,6 +51,58 @@ func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 	assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
 }
 
+func TestUpdateChannelStatusClearsExplicitMultiKeyManualDisable(t *testing.T) {
+	setupChannelStatusTest(t)
+
+	channel := Channel{
+		Name:   "multi-key-manual-status",
+		Key:    "key-a\nkey-b",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	require.NoError(t, channel.Insert())
+
+	require.True(t, UpdateChannelStatus(channel.Id, "", common.ChannelStatusManuallyDisabled, "manual operation"))
+	require.True(t, UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "manual operation"))
+
+	stored, err := GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+	assert.False(t, stored.ChannelInfo.ManuallyDisabled)
+	assert.Empty(t, stored.GetOtherInfo())
+
+	var ability Ability
+	require.NoError(t, DB.Where("channel_id = ?", channel.Id).First(&ability).Error)
+	assert.True(t, ability.Enabled)
+}
+
+func TestReconcileMultiKeyStatusDoesNotPromoteKeyDisableToChannelDisable(t *testing.T) {
+	channel := Channel{
+		Status:    common.ChannelStatusManuallyDisabled,
+		Key:       "key-a\nkey-b",
+		OtherInfo: `{"status_reason":"All keys are manually disabled"}`,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyStatusList: map[int]int{
+				0: common.ChannelStatusManuallyDisabled,
+				1: common.ChannelStatusManuallyDisabled,
+			},
+		},
+	}
+
+	channel.ReconcileMultiKeyChannelStatus()
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, channel.Status)
+	assert.False(t, channel.ChannelInfo.ManuallyDisabled)
+
+	channel.ChannelInfo.MultiKeyStatusList = map[int]int{}
+	channel.ReconcileMultiKeyChannelStatus()
+	assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
+	assert.False(t, channel.ChannelInfo.ManuallyDisabled)
+}
+
 func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.T) {
 	setupChannelStatusTest(t)
 

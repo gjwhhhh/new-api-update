@@ -19,14 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
-import { TokenflyBrandMark } from '@/assets/tokenfly-brand-mark'
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import { useStatus } from '@/hooks/use-status'
+import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
+
+import { HeaderLogo } from './header-logo'
 
 type SystemBrandProps = {
   defaultName?: string
@@ -48,6 +50,7 @@ type SystemBrandProps = {
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
+  const { logo, loading, logoLoaded } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
   const name = status?.system_name || props.defaultName || 'New API'
@@ -65,7 +68,13 @@ export function SystemBrand(props: SystemBrandProps) {
         )}
       >
         <div className='flex size-5 shrink-0 items-center justify-center'>
-          <TokenflyBrandMark className='size-5' aria-hidden='true' />
+          <HeaderLogo
+            src={logo}
+            alt=''
+            loading={loading}
+            logoLoaded={logoLoaded}
+            className='size-5 rounded-md object-contain'
+          />
         </div>
         <span className='max-w-[12rem] truncate'>{name}</span>
       </Link>
@@ -81,7 +90,13 @@ export function SystemBrand(props: SystemBrandProps) {
           render={<div />}
         >
           <div className='flex aspect-square size-8 items-center justify-center'>
-            <TokenflyBrandMark className='size-8' aria-hidden='true' />
+            <HeaderLogo
+              src={logo}
+              alt=''
+              loading={loading}
+              logoLoaded={logoLoaded}
+              className='size-8 rounded-lg object-contain'
+            />
           </div>
           <div className='grid flex-1 text-start text-sm leading-tight group-data-[collapsible=icon]:hidden'>
             <span className='truncate font-semibold'>{name}</span>

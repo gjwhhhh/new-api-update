@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 
 import { useStatus } from '@/hooks/use-status'
 import { api } from '@/lib/api'
+import { DEFAULT_LOGO } from '@/lib/constants'
 import {
   getModuleAccessForGuard,
   type HeaderNavModule,
@@ -30,6 +31,7 @@ import {
 import {
   STATUS_QUERY_KEY,
   ensureStatus,
+  mapStatusDataToConfig,
   statusQueryOptions,
 } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -87,6 +89,13 @@ afterEach(() => {
   apiClient.get = originalGet
   window.localStorage.clear()
   useSystemConfigStore.setState(useSystemConfigStore.getInitialState(), true)
+})
+
+describe('status branding defaults', () => {
+  test('uses the homepage brand image when the backend has no custom logo', () => {
+    expect(mapStatusDataToConfig({}).logo).toBe(DEFAULT_LOGO)
+    expect(DEFAULT_LOGO).toBe('/brand/tokenflyapi-mark-v2.png')
+  })
 })
 
 describe('shared status query deduplication', () => {

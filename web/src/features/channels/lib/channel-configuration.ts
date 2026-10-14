@@ -45,6 +45,11 @@ export type ChannelConfigurationStatus =
   | 'error'
 
 const CONFIGURATION_BLOCKS = {
+  sampling: { section: 'connection', fields: ['exclude_from_sampling_models'] },
+  healthCheck: {
+    section: 'other',
+    fields: ['health_check_mode', 'health_check_interval_minutes'],
+  },
   modelMapping: { section: 'routing', fields: ['model_mapping'] },
   routingStrategy: {
     section: 'routing',
@@ -138,6 +143,8 @@ export function getChannelConfigurationState(
   const openaiPassthrough = OPENAI_FIELD_PASSTHROUGH_TYPES.has(values.type)
   const claudePassthrough = CLAUDE_FIELD_PASSTHROUGH_TYPES.has(values.type)
   const configured: Record<ChannelConfigurationBlock, boolean> = {
+    sampling: Boolean(values.exclude_from_sampling_models?.trim()),
+    healthCheck: (values.health_check_mode || 'inherit') !== 'inherit',
     modelMapping: hasConfiguredJson(values.model_mapping),
     routingStrategy: Boolean(
       values.priority ||

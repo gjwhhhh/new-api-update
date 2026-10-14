@@ -206,8 +206,10 @@ import {
   nextTaskPluginBaseUrl,
 } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
+import { ChannelHealthCheckSettings } from '../channel-health-check-settings'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelQuickOptions } from '../channel-quick-options'
+import { ChannelSamplingSettings } from '../channel-sampling-settings'
 import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
@@ -315,6 +317,9 @@ const SENSITIVE_FORM_FIELDS = [
   'upstream_model_update_check_enabled',
   'upstream_model_update_auto_sync_enabled',
   'upstream_model_update_ignored_models',
+  'exclude_from_sampling_models',
+  'health_check_mode',
+  'health_check_interval_minutes',
 ] satisfies (keyof ChannelFormValues)[]
 
 function parseSettingsRecord(
@@ -3512,6 +3517,14 @@ export function ChannelMutateDrawer({
             />
           </div>
         </div>
+        <ChannelSamplingSettings
+          models={currentModelsArray}
+          disabled={sensitiveLocked || isSubmitting}
+          status={configuration.blocks.sampling}
+          className={channelConfigurationBlockClassName(
+            configuration.blocks.sampling
+          )}
+        />
       </ChannelModelsSection>
     </div>
   )
@@ -4671,6 +4684,24 @@ export function ChannelMutateDrawer({
           <>
             <div
               role='group'
+              aria-label={t('Channel Health Check')}
+              className={channelConfigurationBlockClassName(
+                configuration.blocks.healthCheck,
+                'space-y-4'
+              )}
+            >
+              <CardHeading
+                title={t('Channel Health Check')}
+                status={configuration.blocks.healthCheck}
+                icon={<Settings className='size-4' />}
+              />
+              <ChannelHealthCheckSettings
+                disabled={sensitiveLocked || isSubmitting}
+                lastAutomaticTestTime={channelData?.data?.last_auto_test_time}
+              />
+            </div>
+            <div
+              role='group'
               aria-label={t('Channel Extra Settings')}
               className={channelConfigurationBlockClassName(
                 configuration.blocks.extraSettings,
@@ -4893,6 +4924,7 @@ export function ChannelMutateDrawer({
           <Form {...form}>
             <form
               id='channel-form'
+              noValidate
               ref={channelFormRef}
               onSubmit={form.handleSubmit(onSubmit, onInvalid)}
               className={sideDrawerFormClassName(

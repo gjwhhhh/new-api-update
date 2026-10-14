@@ -225,6 +225,274 @@ function useWideScreen() {
   } as DOMRect)
 }
 
+test.each([
+  ['inherit', 'Follow global settings', undefined],
+  ['scheduled', 'Scheduled test', 30],
+  ['passive_recovery', 'Passive recovery only', 45],
+  ['excluded', 'Exclude from automatic tests', undefined],
+] as const)(
+  'saved channel monitoring mode %s displays its controls and preserves settings on save',
+  async (mode, label, interval) => {
+    editingChannel.last_auto_test_time = 1700000000
+    editingChannel.settings = JSON.stringify({
+      health_check: { mode, interval_minutes: interval },
+      exclude_from_sampling_models: ['retired-model'],
+      custom_fixture: 'preserved',
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true },
+    })
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    const sampling = screen.getByRole('group', {
+      name: 'Models excluded from status sampling',
+    })
+    expect(within(sampling).getByText('retired-model')).toBeVisible()
+    await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+    const health = screen.getByRole('group', { name: 'Channel Health Check' })
+    expect(
+      within(health).getByRole('combobox', { name: 'Automatic test strategy' })
+    ).toHaveTextContent(label)
+    expect(health).toHaveTextContent('Last automatic test')
+    expect(health).toHaveTextContent(/2023-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)
+    if (interval === undefined) {
+      expect(
+        screen.queryByRole('spinbutton', {
+          name: 'Channel test interval (minutes)',
+        })
+      ).not.toBeInTheDocument()
+    } else {
+      expect(
+        screen.getByRole('spinbutton', {
+          name: 'Channel test interval (minutes)',
+        })
+      ).toHaveValue(interval)
+    }
+    if (mode !== 'inherit') {
+      expect(
+        within(screen.getByRole('tab', { name: /Other Settings/ })).getByRole(
+          'img',
+          { name: 'Configured' }
+        )
+      ).toBeVisible()
+    }
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const payload = put.mock.calls[0]?.[1] as Partial<Channel>
+    expect(JSON.parse(payload.settings || '{}')).toMatchObject({
+      health_check: {
+        mode,
+        ...(interval ? { interval_minutes: interval } : {}),
+      },
+      exclude_from_sampling_models: ['retired-model'],
+      custom_fixture: 'preserved',
+    })
+  }
+)
+
+test.each([
+  ['inherit', 'Follow global settings'],
+  ['excluded', 'Exclude from automatic tests'],
+] as const)(
+  'switching channel monitoring to %s clears the independent interval and allows saving',
+  async (mode, label) => {
+    editingChannel.settings = JSON.stringify({
+      health_check: { mode: 'scheduled', interval_minutes: 30 },
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true },
+    })
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+    const strategy = screen.getByRole('combobox', {
+      name: 'Automatic test strategy',
+    })
+    strategy.focus()
+    await user.keyboard('[Enter]')
+    await user.click(screen.getByRole('option', { name: label }))
+    expect(
+      screen.queryByRole('spinbutton', {
+        name: 'Channel test interval (minutes)',
+      })
+    ).not.toBeInTheDocument()
+    await user.click(strategy)
+    await user.click(
+      screen.getByRole('option', { name: 'Passive recovery only' })
+    )
+    expect(
+      screen.getByRole('spinbutton', {
+        name: 'Channel test interval (minutes)',
+      })
+    ).toHaveValue(null)
+    await user.click(strategy)
+    await user.click(screen.getByRole('option', { name: label }))
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const payload = put.mock.calls[0]?.[1] as Partial<Channel>
+    expect(JSON.parse(payload.settings || '{}').health_check).toEqual({ mode })
+  }
+)
+
+test.each([
+  [0, 'Test interval must be at least 1 minute'],
+  [1.5, 'Test interval must be a whole number of minutes'],
+  [525601, 'Test interval must not exceed 525600 minutes'],
+])(
+  'saving channel monitoring interval %s opens the correct tab and focuses its validation error',
+  async (interval, message) => {
+    editingChannel.settings = JSON.stringify({
+      health_check: { mode: 'scheduled' },
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true },
+    })
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+    const control = screen.getByRole('spinbutton', {
+      name: 'Channel test interval (minutes)',
+    })
+    fireEvent.change(control, { target: { value: String(interval) } })
+    await user.click(screen.getByRole('tab', { name: /Connection & Models/ }))
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(screen.getByRole('tab', { name: /Other Settings/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    await waitFor(() => expect(control).toHaveFocus())
+    expect(control).toHaveAttribute('aria-invalid', 'true')
+    expect(put).not.toHaveBeenCalled()
+  }
+)
+
+test('channel sampling exclusions can search channel models, retain retired models, and save an empty list', async () => {
+  editingChannel.settings = JSON.stringify({
+    exclude_from_sampling_models: ['retired-model'],
+  })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true },
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  const group = screen.getByRole('group', {
+    name: 'Models excluded from status sampling',
+  })
+  const selector = within(group).getByRole('combobox')
+  await user.type(selector, 'custom')
+  await user.click(screen.getByRole('option', { name: 'custom-model' }))
+  expect(within(group).getByText('custom-model')).toBeVisible()
+  expect(within(group).getByText('retired-model')).toBeVisible()
+  await user.click(selector)
+  await user.click(screen.getByRole('option', { name: 'retired-model' }))
+  await user.click(screen.getByRole('option', { name: 'custom-model' }))
+  await user.keyboard('[Escape]')
+  expect(within(group).queryByText('retired-model')).not.toBeInTheDocument()
+  expect(within(group).queryByText('custom-model')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as Partial<Channel>
+  expect(
+    JSON.parse(payload.settings || '{}').exclude_from_sampling_models
+  ).toEqual([])
+})
+
+test('new channel monitoring follows global defaults and saves an explicit schedule', async () => {
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness />)
+  await user.click(screen.getByRole('option', { name: /^OpenAI / }))
+  await user.type(
+    screen.getByRole('textbox', { name: 'Name *' }),
+    'New monitored channel'
+  )
+  await user.type(screen.getByLabelText('API Key *'), 'fixture-key')
+  await user.type(
+    screen.getByRole('combobox', { name: 'Select models or add custom ones' }),
+    'custom-model,'
+  )
+  await user.keyboard('[Escape]')
+  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  const strategy = screen.getByRole('combobox', {
+    name: 'Automatic test strategy',
+  })
+  expect(strategy).toHaveTextContent('Follow global settings')
+  expect(
+    screen.getByRole('group', { name: 'Channel Health Check' })
+  ).toHaveTextContent('Last automatic test: -')
+  await user.click(strategy)
+  await user.click(screen.getByRole('option', { name: 'Scheduled test' }))
+  await user.type(
+    screen.getByRole('spinbutton', { name: 'Channel test interval (minutes)' }),
+    '15'
+  )
+  await user.click(screen.getByRole('button', { name: 'Create Channel' }))
+  await waitFor(() => expect(post).toHaveBeenCalled())
+  const payload = post.mock.calls[0]?.[1] as { channel: Partial<Channel> }
+  expect(JSON.parse(payload.channel.settings || '{}')).toMatchObject({
+    health_check: { mode: 'scheduled', interval_minutes: 15 },
+    exclude_from_sampling_models: [],
+  })
+})
+
+test('clearing the channel monitoring interval saves the system default without restoring its old value', async () => {
+  editingChannel.settings = JSON.stringify({
+    health_check: { mode: 'scheduled', interval_minutes: 30 },
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  const control = screen.getByRole('spinbutton', {
+    name: 'Channel test interval (minutes)',
+  })
+  await user.clear(control)
+  expect(control).toHaveValue(null)
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as Partial<Channel>
+  expect(JSON.parse(payload.settings || '{}').health_check).toEqual({
+    mode: 'scheduled',
+  })
+})
+
+test.each([{ excludedModels: [] }, { excludedModels: ['retired-model'] }])(
+  'channel sampling with an empty model list keeps existing exclusions $excludedModels removable',
+  async ({ excludedModels }) => {
+    editingChannel.models = ''
+    editingChannel.settings = JSON.stringify({
+      exclude_from_sampling_models: excludedModels,
+    })
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    const group = screen.getByRole('group', {
+      name: 'Models excluded from status sampling',
+    })
+    const selector = within(group).getByRole('combobox')
+    if (excludedModels.length === 0) {
+      expect(selector).toBeDisabled()
+    } else {
+      expect(selector).toBeEnabled()
+      await userEvent.click(selector)
+      await userEvent.click(
+        screen.getByRole('option', { name: 'retired-model' })
+      )
+      expect(selector).toBeDisabled()
+    }
+  }
+)
+
 test('changing built-in providers updates server-provided URL placeholders without replacing the draft address', async () => {
   const user = userEvent.setup()
   render(<ConfigurationHarness />)
@@ -1964,6 +2232,13 @@ test('an operator without sensitive write permission can discover saved models a
   await screen.findByDisplayValue('Existing channel')
   expect(screen.getByRole('button', { name: 'Change provider' })).toBeDisabled()
   expect(screen.getByLabelText('API Key *')).toBeDisabled()
+  expect(
+    within(
+      screen.getByRole('group', {
+        name: 'Models excluded from status sampling',
+      })
+    ).getByRole('combobox')
+  ).toBeDisabled()
   const quick = within(screen.getByRole('group', { name: 'Quick options' }))
   for (const name of [
     'Pass Through Body',
@@ -1989,6 +2264,9 @@ test('an operator without sensitive write permission can discover saved models a
   expect(thinking).not.toBeChecked()
   await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
   expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
+  expect(
+    screen.getByRole('combobox', { name: 'Automatic test strategy' })
+  ).toBeDisabled()
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
   fireEvent.change(screen.getByLabelText('Priority'), {
     target: { value: '8' },

@@ -365,6 +365,38 @@ it('returns a proof only after successful verification and clears a rejected pas
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
+it('identifies the current administrator password for administrative actions', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: { ...passwordRequirements, scope: 'admin.user.update' },
+    },
+  })
+  const user = userEvent.setup()
+  render(
+    <Harness
+      onResult={() => undefined}
+      operation={{
+        scope: 'admin.user.update',
+        context: { user_id: 7 },
+      }}
+    />
+  )
+
+  await user.click(screen.getByText('Protected action'))
+
+  expect(
+    await screen.findByLabelText('Current administrator password', {
+      selector: 'input',
+    })
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Enter the password for the administrator account you are currently signed in to, not the password of the user being edited.'
+    )
+  ).toBeVisible()
+})
+
 it('discards a late proof after cancellation and prevents a duplicate submission', async () => {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: { success: true, data: passwordRequirements },

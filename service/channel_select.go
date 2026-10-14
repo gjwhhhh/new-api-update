@@ -131,6 +131,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
 	filters := slices.Clone(GetChannelConstraints(param.Ctx).Filters)
+	priorityOverrides, err := getUserChannelPriorityOverrides(param.Ctx)
+	if err != nil {
+		return nil, selectGroup, err
+	}
 	if len(param.ExcludedChannelIDs) > 0 {
 		filters = append(filters, dto.ChannelFilter{
 			Kind:               dto.FilterExcludedChannelIDs,
@@ -172,6 +176,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				param.ModelName,
 				priorityRetry,
 				filters,
+				priorityOverrides,
 			)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
@@ -215,12 +220,28 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			param.ModelName,
 			param.GetRetry(),
 			filters,
+			priorityOverrides,
 		)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+func getUserChannelPriorityOverrides(c *gin.Context) (map[int]int64, error) {
+	if c == nil {
+		return nil, nil
+	}
+	if existing, ok := common.GetContextKeyType[map[int]int64](c, constant.ContextKeyUserChannelPriorities); ok {
+		return existing, nil
+	}
+	values, err := model.GetUserChannelPriorities(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	if err != nil {
+		return nil, err
+	}
+	common.SetContextKey(c, constant.ContextKeyUserChannelPriorities, values)
+	return values, nil
 }
 
 func pinnedTaskPluginIdentities(c *gin.Context, expected string) ([]int, []string) {
@@ -366,6 +387,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 		}
 	}
 
+	automaticallySelected := false
 	if channel == nil {
 		var err error
 		channel, selectGroup, err = CacheGetRandomSatisfiedChannel(retry)
@@ -384,6 +406,17 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 				StatusCode: http.StatusServiceUnavailable, Code: types.ErrorCodeModelNotFound, MessageID: i18n.MsgDistributorNoAvailableChannel,
 				Params: map[string]any{"Group": usingGroup, "Model": modelName}, NoAvailableChannel: true,
 			}
+		}
+		automaticallySelected = true
+	}
+	common.SetContextKey(c, constant.ContextKeyRoutingPriority, nil)
+	if priorityOverrides, ok := common.GetContextKeyType[map[int]int64](c, constant.ContextKeyUserChannelPriorities); automaticallySelected && ok {
+		if effectivePriority, overridden := priorityOverrides[channel.Id]; overridden {
+			common.SetContextKey(c, constant.ContextKeyRoutingPriority, map[string]any{
+				"source":             "user_override",
+				"global_priority":    channel.GetPriority(),
+				"effective_priority": effectivePriority,
+			})
 		}
 	}
 	if ok, kind := model.ChannelSatisfiesFilters(channel, modelName, constraints.Filters); !ok {

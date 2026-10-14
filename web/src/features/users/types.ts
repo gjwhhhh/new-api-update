@@ -145,6 +145,44 @@ export interface ManageUserQuotaPayload {
   value: number
 }
 
+export interface UserChannelPriority {
+  user_id: number
+  channel_id: number
+  priority: number
+  channel_name: string
+  channel_type: number
+  channel_status: number
+  channel_group: string
+  global_priority: number
+  weight: number
+}
+
+export interface UserChannelPriorityOption {
+  channel_id: number
+  channel_name: string
+  channel_type: number
+  channel_status: number
+  channel_group: string
+  global_priority: number
+  weight: number
+}
+
+export type UserChannelPrioritiesResponse = ApiResponse<{
+  items: UserChannelPriority[] | null
+}>
+
+export type UserChannelPriorityOptionsResponse = ApiResponse<{
+  items: UserChannelPriorityOption[] | null
+  total: number
+  page: number
+  page_size: number
+}>
+
+export interface PatchUserChannelPrioritiesPayload {
+  upserts: Array<{ channel_id: number; priority: number }>
+  deletes: number[]
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

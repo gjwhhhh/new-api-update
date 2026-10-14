@@ -32,6 +32,9 @@ import type {
   ManageUserAction,
   ManageUserQuotaPayload,
   ApiResponse,
+  PatchUserChannelPrioritiesPayload,
+  UserChannelPrioritiesResponse,
+  UserChannelPriorityOptionsResponse,
 } from './types'
 
 // A step-up proof is single-use, so the request carrying it must never be
@@ -170,6 +173,31 @@ export async function adjustUserQuota(
 ): Promise<ApiResponse<Partial<User>>> {
   const res = await api.post('/api/user/manage', payload)
   return res.data
+}
+
+export async function getUserChannelPriorities(
+  userId: number
+): Promise<UserChannelPrioritiesResponse> {
+  const res = await api.get(`/api/user/${userId}/channel-priorities`)
+  return requireServerSuccess(res.data)
+}
+
+export async function getUserChannelPriorityOptions(
+  userId: number,
+  params: { keyword?: string; p?: number; page_size?: number }
+): Promise<UserChannelPriorityOptionsResponse> {
+  const res = await api.get(`/api/user/${userId}/channel-priorities/options`, {
+    params,
+  })
+  return requireServerSuccess(res.data)
+}
+
+export async function patchUserChannelPriorities(
+  userId: number,
+  payload: PatchUserChannelPrioritiesPayload
+): Promise<UserChannelPrioritiesResponse> {
+  const res = await api.patch(`/api/user/${userId}/channel-priorities`, payload)
+  return requireServerSuccess(res.data)
 }
 
 /**

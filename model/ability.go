@@ -110,6 +110,7 @@ func GetChannel(
 	model string,
 	retry int,
 	filters []dto.ChannelFilter,
+	priorityOverrides map[int]int64,
 ) (*Channel, error) {
 	var abilities []Ability
 	err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).Order("priority DESC, weight DESC").Find(&abilities).Error
@@ -125,6 +126,9 @@ func GetChannel(
 			if ability.Priority != nil {
 				priority = *ability.Priority
 			}
+			if override, exists := priorityOverrides[ability.ChannelId]; exists {
+				priority = override
+			}
 			if !seen[priority] {
 				seen[priority] = true
 				priorities = append(priorities, priority)
@@ -136,7 +140,14 @@ func GetChannel(
 		}
 		targetPriority := priorities[retry]
 		abilities = lo.Filter(abilities, func(ability Ability, _ int) bool {
-			return ability.Priority == nil && targetPriority == 0 || ability.Priority != nil && *ability.Priority == targetPriority
+			priority := int64(0)
+			if ability.Priority != nil {
+				priority = *ability.Priority
+			}
+			if override, exists := priorityOverrides[ability.ChannelId]; exists {
+				priority = override
+			}
+			return priority == targetPriority
 		})
 	}
 	channel := Channel{}

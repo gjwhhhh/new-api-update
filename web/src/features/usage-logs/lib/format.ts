@@ -486,6 +486,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'user.passkey_delete': 'Deleted a passkey',
   'user.topup_complete': 'Completed top-up order for the user',
   'user.reset_passkey': 'Reset the user passkey',
+  'user.channel_priorities.update':
+    'Updated channel priority overrides for user ID {{target_user_id}} ({{upserts}} upserted, {{deletes}} removed)',
   'user.oauth_unbind': 'Removed an OAuth binding for the user',
   // System settings
   'option.update': 'Updated system setting {{key}}',

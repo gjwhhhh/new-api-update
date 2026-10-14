@@ -90,6 +90,9 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	if common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens) {
 		other.SetAdmin("local_count_tokens", true)
 	}
+	if priority, ok := common.GetContextKeyType[map[string]any](ctx, constant.ContextKeyRoutingPriority); ok {
+		other.SetAdmin("routing_priority", priority)
+	}
 
 	AppendChannelAffinityAdminInfo(ctx, other)
 	if events := RequestPolicy(ctx).Events(); len(events) > 0 {

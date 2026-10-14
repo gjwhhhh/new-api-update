@@ -28,6 +28,7 @@ import {
   ShieldAlert,
   Link2,
   CreditCard,
+  Route,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -48,8 +49,14 @@ import {
 } from '@/components/ui/tooltip'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
@@ -61,6 +68,7 @@ import {
 import { getUserActionMessage } from '../lib'
 import type { User } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
+import { UserChannelPrioritiesDialog } from './dialogs/user-channel-priorities-dialog'
 import { useUsers } from './users-provider'
 
 const MANAGE_ACTION_TITLES: Record<AdminUserManageAction, string> = {
@@ -88,6 +96,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [channelPrioritiesDialogOpen, setChannelPrioritiesDialogOpen] =
+    useState(false)
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const canEditChannelRouting = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -263,6 +279,20 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuShortcut>
         </DropdownMenuItem>
 
+        {canEditChannelRouting && (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setChannelPrioritiesDialogOpen(true)
+            }}
+          >
+            {t('Channel Priorities')}
+            <DropdownMenuShortcut>
+              <Route size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+
         <DropdownMenuItem
           onSelect={(event) => {
             event.preventDefault()
@@ -353,6 +383,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onOpenChange={setSubscriptionsDialogOpen}
         user={{ id: user.id, username: user.username }}
         onSuccess={triggerRefresh}
+      />
+
+      <UserChannelPrioritiesDialog
+        open={channelPrioritiesDialogOpen}
+        onOpenChange={setChannelPrioritiesDialogOpen}
+        user={{ id: user.id, username: user.username }}
       />
     </div>
   )

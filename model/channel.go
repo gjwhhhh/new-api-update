@@ -745,6 +745,7 @@ func BatchDeleteChannels(ids []int) (int64, error) {
 		return 0, tx.Error
 	}
 	var deletedCount int64
+	var affectedUserIds []int
 	for _, chunk := range lo.Chunk(ids, 200) {
 		result := tx.Where("id in (?)", chunk).Delete(&Channel{})
 		if result.Error != nil {
@@ -756,10 +757,17 @@ func BatchDeleteChannels(ids []int) (int64, error) {
 			tx.Rollback()
 			return 0, err
 		}
+		userIds, err := deleteChannelPrioritiesWithTx(tx, chunk)
+		if err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+		affectedUserIds = append(affectedUserIds, userIds...)
 	}
 	if err := tx.Commit().Error; err != nil {
 		return 0, err
 	}
+	invalidateUserChannelPriorityCaches(affectedUserIds)
 	return deletedCount, nil
 }
 
@@ -875,13 +883,23 @@ func (channel *Channel) UpdateBalance(balance float64) {
 }
 
 func (channel *Channel) Delete() error {
-	var err error
-	err = DB.Delete(channel).Error
+	var userIds []int
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(channel).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error; err != nil {
+			return err
+		}
+		var err error
+		userIds, err = deleteChannelPrioritiesWithTx(tx, []int{channel.Id})
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	err = channel.DeleteAbilities()
-	return err
+	invalidateUserChannelPriorityCaches(userIds)
+	return nil
 }
 
 var channelStatusLock sync.Mutex
@@ -1340,13 +1358,38 @@ func updateChannelUsedQuota(id int, quota int) {
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	return deleteChannelsByStatus([]int64{status})
 }
 
 func DeleteDisabledChannel() (int64, error) {
-	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	return deleteChannelsByStatus([]int64{common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled})
+}
+
+func deleteChannelsByStatus(statuses []int64) (int64, error) {
+	var deletedCount int64
+	var userIds []int
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var channelIds []int
+		if err := tx.Model(&Channel{}).Where("status IN ?", statuses).Pluck("id", &channelIds).Error; err != nil {
+			return err
+		}
+		if len(channelIds) == 0 {
+			return nil
+		}
+		result := tx.Where("id IN ?", channelIds).Delete(&Channel{})
+		if result.Error != nil {
+			return result.Error
+		}
+		deletedCount = result.RowsAffected
+		var err error
+		userIds, err = deleteChannelPrioritiesWithTx(tx, channelIds)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	invalidateUserChannelPriorityCaches(userIds)
+	return deletedCount, nil
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {

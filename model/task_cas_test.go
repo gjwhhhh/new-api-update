@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 		&SystemTaskLock{},
 		&ChannelTestResult{},
 		&UserAccessToken{},
+		&UserChannelPriority{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -83,6 +84,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM two_fas")
 		DB.Exec("DELETE FROM tokens")
 		DB.Exec("DELETE FROM user_access_tokens")
+		DB.Exec("DELETE FROM user_channel_priorities")
 		DB.Exec("DELETE FROM user_oauth_bindings")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM logs")

@@ -24,6 +24,7 @@ import { useEffect } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { User } from '../../types'
 import { DataTableRowActions } from '../data-table-row-actions'
@@ -105,7 +106,34 @@ async function completeTwoFactorVerification() {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
 })
+
+it.each([
+  { allowed: false, visible: false },
+  { allowed: true, visible: true },
+])(
+  'shows channel priorities in the row menu only with channel write permission (allowed=$allowed)',
+  async ({ allowed, visible }) => {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'operator',
+      role: 10,
+      permissions: { admin_permissions: { channel: { write: allowed } } },
+    })
+    renderInProvider(
+      <DataTableRowActions row={{ original: target } as Row<User>} />
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    const item = screen.queryByRole('menuitem', { name: 'Channel Priorities' })
+    if (visible) {
+      expect(item).toBeVisible()
+    } else {
+      expect(item).not.toBeInTheDocument()
+    }
+  }
+)
 
 it('deleting a user sends the request only with a single-use proof for that user', async () => {
   const proof = mockVerification('admin.user.delete', 'delete-proof')

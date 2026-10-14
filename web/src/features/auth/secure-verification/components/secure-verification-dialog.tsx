@@ -61,6 +61,7 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
   const input = ready?.input
   const verifying = state.phase === 'verifying'
   const login = state.request.scope === 'auth.login'
+  const administrativeAction = state.request.scope.startsWith('admin.user.')
   const acceptsBackupCode =
     state.request.scope !== '2fa.backup_codes.regenerate'
   let canVerify = state.phase === 'ready' && Boolean(input)
@@ -182,13 +183,22 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
                 ))}
               </TabsList>
               <TabsContent value='password' className='space-y-2'>
-                <Label htmlFor={inputId}>{t('Password')}</Label>
+                <Label htmlFor={inputId}>
+                  {administrativeAction
+                    ? t('Current administrator password')
+                    : t('Password')}
+                </Label>
                 <Input
                   id={inputId}
                   type='password'
                   autoComplete='current-password'
                   autoFocus
                   disabled={verifying}
+                  aria-describedby={
+                    administrativeAction
+                      ? `${inputId}-administrator-password-help`
+                      : undefined
+                  }
                   value={input.method === 'password' ? input.password : ''}
                   onChange={(event) =>
                     props.onInputChange({
@@ -197,6 +207,16 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
                     })
                   }
                 />
+                {administrativeAction && (
+                  <p
+                    id={`${inputId}-administrator-password-help`}
+                    className='text-muted-foreground text-sm'
+                  >
+                    {t(
+                      'Enter the password for the administrator account you are currently signed in to, not the password of the user being edited.'
+                    )}
+                  </p>
+                )}
               </TabsContent>
               <TabsContent value='2fa' className='space-y-2'>
                 <Label htmlFor={inputId}>

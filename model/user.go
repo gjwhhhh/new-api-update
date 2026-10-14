@@ -980,6 +980,9 @@ func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
 		if err != nil {
 			return err
 		}
+		if err := deleteUserChannelPrioritiesWithTx(tx, user.Id); err != nil {
+			return err
+		}
 		return tx.Delete(user).Error
 	}); err != nil {
 		return 0, err
@@ -990,7 +993,13 @@ func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
 	if _, err := RevokeAllUserSessions(user.Id, "user_deleted"); err != nil {
 		return revokedAccessTokens, err
 	}
-	return revokedAccessTokens, invalidateUserCache(user.Id)
+	if err := invalidateUserCache(user.Id); err != nil {
+		return revokedAccessTokens, err
+	}
+	if err := InvalidateUserChannelPriorityCache(user.Id); err != nil {
+		common.SysError(fmt.Sprintf("failed to invalidate channel priority cache after deleting user %d: %v", user.Id, err))
+	}
+	return revokedAccessTokens, nil
 }
 
 func (user *User) HardDelete() (int64, error) {
@@ -1032,6 +1041,9 @@ func (user *User) HardDelete() (int64, error) {
 	if err := invalidateUserCache(user.Id); err != nil {
 		common.SysError(fmt.Sprintf("failed to invalidate user cache after hard deleting user %d: %v", user.Id, err))
 	}
+	if err := InvalidateUserChannelPriorityCache(user.Id); err != nil {
+		common.SysError(fmt.Sprintf("failed to invalidate channel priority cache after hard deleting user %d: %v", user.Id, err))
+	}
 	return revokedAccessTokens, nil
 }
 
@@ -1051,7 +1063,10 @@ func deleteUserAuthenticationData(tx *gorm.DB, userId int) error {
 			return err
 		}
 	}
-	return deleteUserOAuthBindingsByUserId(tx, userId)
+	if err := deleteUserOAuthBindingsByUserId(tx, userId); err != nil {
+		return err
+	}
+	return deleteUserChannelPrioritiesWithTx(tx, userId)
 }
 
 // ValidateAndFill check password & user status

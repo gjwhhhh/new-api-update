@@ -44,7 +44,7 @@ func TestGetRandomSatisfiedChannelExcludingSkipsPreviouslyTriedChannel(t *testin
 	channel, err := GetRandomSatisfiedChannel("test-group", "test-model", 0, []dto.ChannelFilter{{
 		Kind:               dto.FilterExcludedChannelIDs,
 		ExcludedChannelIDs: map[int]struct{}{101: {}},
-	}})
+	}}, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, channel)

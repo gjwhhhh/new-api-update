@@ -119,10 +119,11 @@ func GetRandomSatisfiedChannel(
 	model string,
 	retry int,
 	filters []dto.ChannelFilter,
+	priorityOverrides map[int]int64,
 ) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, filters)
+		return GetChannel(group, model, retry, filters, priorityOverrides)
 	}
 
 	channelSyncLock.RLock()
@@ -148,31 +149,41 @@ func GetRandomSatisfiedChannel(
 		return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channels[0])
 	}
 
-	uniquePriorities := make(map[int]bool)
+	uniquePriorities := make(map[int64]bool)
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
-			uniquePriorities[int(channel.GetPriority())] = true
+			priority := channel.GetPriority()
+			if override, exists := priorityOverrides[channelId]; exists {
+				priority = override
+			}
+			uniquePriorities[priority] = true
 		} else {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 		}
 	}
-	var sortedUniquePriorities []int
+	var sortedUniquePriorities []int64
 	for priority := range uniquePriorities {
 		sortedUniquePriorities = append(sortedUniquePriorities, priority)
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sortedUniquePriorities)))
+	sort.Slice(sortedUniquePriorities, func(i, j int) bool {
+		return sortedUniquePriorities[i] > sortedUniquePriorities[j]
+	})
 
 	if retry >= len(uniquePriorities) {
 		retry = len(uniquePriorities) - 1
 	}
-	targetPriority := int64(sortedUniquePriorities[retry])
+	targetPriority := sortedUniquePriorities[retry]
 
 	// get the priority for the given retry number
 	var sumWeight = 0
 	var targetChannels []*Channel
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
-			if channel.GetPriority() == targetPriority {
+			priority := channel.GetPriority()
+			if override, exists := priorityOverrides[channelId]; exists {
+				priority = override
+			}
+			if priority == targetPriority {
 				sumWeight += channel.GetWeight()
 				targetChannels = append(targetChannels, channel)
 			}

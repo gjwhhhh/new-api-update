@@ -211,3 +211,22 @@ func TestRequestPolicyEventsReachLogAdminInfo(t *testing.T) {
 	AppendRelayLogAdminInfo(untouched, nil, other)
 	assert.NotContains(t, other.Snapshot()["admin_info"], "request_policy", "requests without decisions do not carry an empty record")
 }
+
+func TestUserChannelPriorityDiagnosticReachesAdminLogInfo(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(c, constant.ContextKeyRoutingPriority, map[string]any{
+		"source":             "user_override",
+		"global_priority":    int64(10),
+		"effective_priority": int64(100),
+	})
+
+	other := model.NewLogOther()
+	AppendRelayLogAdminInfo(c, nil, other)
+	adminInfo, ok := other.Snapshot()["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{
+		"source":             "user_override",
+		"global_priority":    int64(10),
+		"effective_priority": int64(100),
+	}, adminInfo["routing_priority"])
+}

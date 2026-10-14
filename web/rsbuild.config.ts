@@ -64,7 +64,7 @@ export default defineConfig(({ envMode }) => {
     },
     html: {
       template: './index.html',
-      favicon: './public/brand/tokenflyapi-mark-v2.png',
+      favicon: './public/brand/tokenflyapi-mark.svg',
     },
     server: {
       host: '0.0.0.0',

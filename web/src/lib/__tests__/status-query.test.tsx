@@ -94,7 +94,7 @@ afterEach(() => {
 describe('status branding defaults', () => {
   test('uses the homepage brand image when the backend has no custom logo', () => {
     expect(mapStatusDataToConfig({}).logo).toBe(DEFAULT_LOGO)
-    expect(DEFAULT_LOGO).toBe('/brand/tokenflyapi-mark-v2.png')
+    expect(DEFAULT_LOGO).toBe('/brand/tokenflyapi-mark.svg')
   })
 })
 

@@ -164,7 +164,7 @@ export function Footer(props: FooterProps) {
     systemLogo ||
     props.logo ||
     (props.brandVariant === 'home'
-      ? '/brand/tokenflyapi-mark-v2.png'
+      ? '/brand/tokenflyapi-mark.svg'
       : '/logo.png')
   const displayName =
     systemName ||

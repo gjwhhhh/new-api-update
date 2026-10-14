@@ -23,7 +23,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { PublicLayout } from '@/components/layout/components/public-layout'
 import { SystemBrand } from '@/components/layout/components/system-brand'
 
-const logo = '/brand/tokenflyapi-mark-v2.png'
+const logo = '/brand/tokenflyapi-mark.svg'
 
 vi.mock('@tanstack/react-router', () => ({
   Link: (

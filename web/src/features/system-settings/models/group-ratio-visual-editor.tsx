@@ -83,12 +83,14 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
 import { safeJsonParse } from '../utils/json-parser'
+import { GroupDisplayEditor } from './group-display-editor'
 import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
 export type GroupSettingsSection =
   | 'pricing'
   | 'overrides'
   | 'visibility'
+  | 'display'
   | 'auto'
 
 type GroupRatioVisualEditorProps = {
@@ -102,6 +104,7 @@ type GroupRatioVisualEditorProps = {
   autoGroups: string
   maxTokenAutoGroupsField: ReactNode
   groupSpecialUsableGroup: string
+  groupDisplayConfig: string
   persistedGroupNames: string[]
   onChange: (field: string, value: string) => void
   onRename: (groupName: string) => void
@@ -290,6 +293,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   autoGroups,
   maxTokenAutoGroupsField,
   groupSpecialUsableGroup,
+  groupDisplayConfig,
   persistedGroupNames,
   onChange,
   onRename,
@@ -375,6 +379,9 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
           <TabsTrigger value='visibility' className='px-3'>
             {t('Group visibility')}
           </TabsTrigger>
+          <TabsTrigger value='display' className='px-3'>
+            {t('Group display')}
+          </TabsTrigger>
           <TabsTrigger value='auto' className='px-3'>
             {t('Auto group order')}
           </TabsTrigger>
@@ -403,6 +410,13 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
           value={groupSpecialUsableGroup}
           groupOptions={registryNames}
           onChange={(value) => onChange('GroupSpecialUsableGroup', value)}
+        />
+      </TabsContent>
+      <TabsContent value='display' keepMounted>
+        <GroupDisplayEditor
+          value={groupDisplayConfig}
+          groupOptions={registryNames}
+          onChange={(value) => onChange('GroupDisplayConfig', value)}
         />
       </TabsContent>
       <TabsContent value='auto' keepMounted>

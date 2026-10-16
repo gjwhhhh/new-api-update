@@ -42,6 +42,7 @@ function PricingFixture() {
         autoGroups='[]'
         maxTokenAutoGroupsField={null}
         groupSpecialUsableGroup='{}'
+        groupDisplayConfig='{"categories":[],"assignments":{}}'
         persistedGroupNames={[]}
         onChange={(field, value) =>
           setSettings((current) => ({ ...current, [field]: value }))

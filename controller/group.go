@@ -27,6 +27,11 @@ func GetGroups(c *gin.Context) {
 
 func GetUserGroups(c *gin.Context) {
 	usableGroups := make(map[string]map[string]any)
+	displayConfig := service.GetGroupDisplayConfig()
+	displayCategories := make(map[string]dto.GroupDisplayCategory, len(displayConfig.Categories))
+	for _, category := range displayConfig.Categories {
+		displayCategories[category.ID] = category
+	}
 	userGroup := ""
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
@@ -37,6 +42,12 @@ func GetUserGroups(c *gin.Context) {
 			usableGroups[groupName] = map[string]any{
 				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,
+			}
+			if assignment, exists := displayConfig.Assignments[groupName]; exists {
+				if category, categoryExists := displayCategories[assignment.CategoryID]; categoryExists {
+					usableGroups[groupName]["display_group"] = category
+					usableGroups[groupName]["display_order"] = assignment.Order
+				}
 			}
 		}
 	}

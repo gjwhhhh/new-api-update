@@ -30,6 +30,7 @@ export function LobeIconField(props: {
   allowInheritance?: boolean
   inheritedIcon?: string
   inheritedName?: string
+  allowEmpty?: boolean
 }) {
   const { t } = useTranslation()
   const [custom, setCustom] = useState(false)
@@ -97,12 +98,13 @@ export function LobeIconField(props: {
       )}
       <div className='bg-muted/40 flex items-center gap-3 rounded-lg border p-3'>
         <span className='flex size-9 shrink-0 items-center justify-center'>
-          {getLobeIcon(effectiveIcon, 28)}
+          {effectiveIcon ? getLobeIcon(effectiveIcon, 28) : null}
         </span>
         <div className='min-w-0 text-xs'>
           <p className='font-medium'>{t('Effective icon')}</p>
           <p className='text-muted-foreground break-all'>
-            {effectiveIcon || t('Default placeholder')}
+            {effectiveIcon ||
+              (props.allowEmpty ? t('No icon') : t('Default placeholder'))}
           </p>
           {props.allowInheritance && !props.value && (
             <p className='text-muted-foreground'>

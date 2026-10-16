@@ -1,3 +1,4 @@
+import type { GroupDisplayCategory } from '@/lib/group-display'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -60,7 +61,15 @@ export async function getUserModels(): Promise<{
 export async function getUserGroups(): Promise<{
   success: boolean
   message?: string
-  data?: Record<string, { desc: string; ratio: number | string }>
+  data?: Record<
+    string,
+    {
+      desc: string
+      ratio: number | string
+      display_group?: GroupDisplayCategory
+      display_order?: number
+    }
+  >
 }> {
   const res = await api.get('/api/user/self/groups')
   return res.data

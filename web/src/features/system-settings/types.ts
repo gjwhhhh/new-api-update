@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { GroupDisplayConfig } from '@/lib/group-display'
+
 export type SystemOption = {
   key: string
   value: string
@@ -49,6 +51,7 @@ export type GroupConfig = {
   max_token_auto_groups: number
   group_special_usable_group: Record<string, Record<string, string>>
   model_request_rate_limit: Record<string, [number, number]>
+  group_display: GroupDisplayConfig
 }
 
 export type GroupConfigResponse = {
@@ -305,6 +308,7 @@ export type ModelSettings = {
   GroupRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
+  GroupDisplayConfig: string
   AutoGroups: string
   MaxTokenAutoGroups: number
   DefaultUseAutoGroup: boolean
@@ -345,6 +349,7 @@ export type BillingSettings = {
   GroupRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
+  GroupDisplayConfig: string
   AutoGroups: string
   MaxTokenAutoGroups: number
   DefaultUseAutoGroup: boolean

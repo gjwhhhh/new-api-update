@@ -75,6 +75,7 @@ type GroupFormValues = {
   MaxTokenAutoGroups: number
   DefaultUseAutoGroup: boolean
   GroupSpecialUsableGroup: string
+  GroupDisplayConfig: string
 }
 
 type GroupRatioFormProps = {
@@ -237,6 +238,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               />
             }
             groupSpecialUsableGroup={values.GroupSpecialUsableGroup ?? ''}
+            groupDisplayConfig={values.GroupDisplayConfig ?? ''}
             persistedGroupNames={persistedGroupNames}
             onChange={(field, value) =>
               handleFieldChange(field as keyof GroupFormValues, value)
@@ -343,6 +345,31 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                     {`{ targetGroup: ratio }`}{' '}
                     {t(
                       'to override billing when a user in one group uses a token of another group.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='GroupDisplayConfig'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Group display categories')}</FormLabel>
+                  <FormControl>
+                    <JsonCodeEditor
+                      value={field.value}
+                      onChange={field.onChange}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      textareaRef={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Optional display-only categories and model-group assignments used by the API key group selector.'
                     )}
                   </FormDescription>
                   <FormMessage />

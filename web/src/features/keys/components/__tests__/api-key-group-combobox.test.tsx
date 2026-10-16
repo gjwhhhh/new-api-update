@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 
+import type { ApiKeyGroupOption } from '../api-key-group-combobox'
+
 let shouldReduceMotion = false
 const reducedMotionMediaQuery = window.matchMedia('(prefers-reduced-motion)')
 Object.defineProperty(reducedMotionMediaQuery, 'matches', {
@@ -51,12 +53,17 @@ await i18n.use(initReactI18next).init({
         'Search...': 'Search...',
         'No group found.': 'No group found.',
         'Select a group': 'Select a group',
+        'All groups': 'All groups',
+        'Provider categories': 'Provider categories',
+        '{{count}} groups': '{{count}} groups',
+        'Other groups': 'Other groups',
+        'Domestic models': 'Domestic models',
       },
     },
   },
 })
 
-const options = [
+const options: ApiKeyGroupOption[] = [
   {
     value: 'auto',
     label: 'auto',
@@ -67,13 +74,16 @@ const options = [
   { value: 'vip', label: 'vip', desc: 'Priority group', ratio: 3 },
 ]
 
-function Harness(props: { initialValue: string }) {
+function Harness(props: {
+  initialValue: string
+  options?: ApiKeyGroupOption[]
+}) {
   const [value, setValue] = useState(props.initialValue)
 
   return (
     <I18nextProvider i18n={i18n}>
       <ApiKeyGroupCombobox
-        options={options}
+        options={props.options ?? options}
         value={value}
         onValueChange={setValue}
       />
@@ -139,7 +149,7 @@ describe('API key group combobox Auto effect', () => {
 
     const autoOption = getCommandItem('Global automatic routing')
     expect(autoOption).toHaveAttribute('data-auto-group-effect', 'option')
-    expect(autoOption).toHaveAttribute('aria-selected', 'true')
+    expect(autoOption).toHaveAttribute('aria-selected', 'false')
     expect(autoOption).not.toHaveClass('bg-linear-to-r')
     expect(autoOption).toHaveClass('overflow-visible')
     expect(
@@ -220,5 +230,163 @@ describe('API key group combobox Auto effect', () => {
     expect(autoOption.querySelector('[data-auto-group-flow-border]')).toBe(null)
     expect(within(autoOption).getByText('Auto')).toBeInTheDocument()
     setReducedMotion(false)
+  })
+
+  test('groups model groups under horizontal provider tabs and collapsible sections', () => {
+    setReducedMotion(false)
+    render(
+      <Harness
+        initialValue='gpt-pro'
+        options={[
+          {
+            value: 'gpt-pro',
+            label: 'gpt-pro',
+            desc: 'Stable GPT pool',
+            ratio: 0.22,
+          },
+          {
+            value: 'claude-official',
+            label: 'claude-official',
+            desc: 'Claude pool',
+            ratio: 0.45,
+          },
+          {
+            value: 'image-video',
+            label: 'image-video',
+            desc: 'Media models',
+            ratio: 0.3,
+            displayGroup: {
+              id: 'media',
+              name: 'Image and video',
+              icon: '',
+              order: 50,
+            },
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(getTrigger())
+    const categoryTabs = screen.getByRole('tablist', {
+      name: 'Provider categories',
+    })
+    expect(
+      within(categoryTabs).getByRole('tab', { name: /GPT.*1 group/ })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      within(categoryTabs).getByRole('tab', { name: /Claude.*1 group/ })
+    ).toBeInTheDocument()
+    expect(
+      within(categoryTabs).getByRole('tab', {
+        name: /Image and video.*1 group/,
+      })
+    ).toBeInTheDocument()
+    expect(getCommandItem('Stable GPT pool')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Claude.*1 groups/ })
+    ).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(screen.getByRole('button', { name: /Claude.*1 groups/ }))
+    expect(getCommandItem('Claude pool')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /GPT.*1 groups/ })
+    ).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('searches across provider categories and expands matching results', () => {
+    setReducedMotion(false)
+    render(
+      <Harness
+        initialValue='gpt-pro'
+        options={[
+          {
+            value: 'gpt-pro',
+            label: 'gpt-pro',
+            desc: 'Stable GPT pool',
+            ratio: 0.22,
+          },
+          {
+            value: 'claude-official',
+            label: 'claude-official',
+            desc: 'Claude pool',
+            ratio: 0.45,
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(getTrigger())
+    fireEvent.input(screen.getByPlaceholderText('Search...'), {
+      target: { value: 'claude' },
+    })
+    expect(getCommandItem('Claude pool')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /GPT.*1 groups/ })).toBeNull()
+  })
+
+  test('clears a grouped option highlight after the pointer leaves', () => {
+    setReducedMotion(false)
+    render(
+      <Harness
+        initialValue='default'
+        options={[
+          {
+            value: 'gpt-pro',
+            label: 'gpt-pro',
+            desc: 'Stable GPT pool',
+            ratio: 0.22,
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(getTrigger())
+    const option = getCommandItem('Stable GPT pool')
+    expect(option).toHaveAttribute('aria-selected', 'false')
+
+    fireEvent.pointerMove(option)
+    expect(option).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.pointerLeave(option)
+    expect(option).toHaveAttribute('aria-selected', 'false')
+  })
+
+  test('renders custom category options in their configured display order', () => {
+    setReducedMotion(false)
+    const displayGroup = {
+      id: 'openai',
+      name: 'GPT',
+      icon: '',
+      order: 0,
+    }
+    render(
+      <Harness
+        initialValue='gpt-standard'
+        options={[
+          {
+            value: 'gpt-priority',
+            label: 'gpt-priority',
+            desc: 'Priority pool',
+            ratio: 1,
+            displayGroup,
+            displayOrder: 10,
+          },
+          {
+            value: 'gpt-standard',
+            label: 'gpt-standard',
+            desc: 'Standard pool',
+            ratio: 1,
+            displayGroup,
+            displayOrder: 0,
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(getTrigger())
+    const labels = [
+      ...document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
+    ].map((item) => item.textContent)
+    expect(labels[0]).toContain('Standard pool')
+    expect(labels[1]).toContain('Priority pool')
   })
 })

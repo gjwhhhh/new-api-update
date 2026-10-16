@@ -56,6 +56,7 @@ const defaultBillingSettings: BillingSettings = {
   GroupRatio: '',
   UserUsableGroups: '',
   GroupGroupRatio: '',
+  GroupDisplayConfig: '{"categories":[],"assignments":{}}',
   AutoGroups: '',
   MaxTokenAutoGroups: 5,
   DefaultUseAutoGroup: false,

@@ -65,6 +65,7 @@ func CurrentGroupConfig() (dto.GroupConfig, error) {
 		DefaultUseAutoGroup:     setting.DefaultUseAutoGroup,
 		MaxTokenAutoGroups:      setting.GetMaxTokenAutoGroups(),
 		GroupSpecialUsableGroup: ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.ReadAll(),
+		GroupDisplay:            GetGroupDisplayConfig(),
 	}
 	if err := common.UnmarshalJsonStr(common.TopupGroupRatio2JSONString(), &config.TopupGroupRatio); err != nil {
 		return dto.GroupConfig{}, err
@@ -138,6 +139,16 @@ func normalizeGroupConfig(config *dto.GroupConfig) {
 		}
 		config.GroupSpecialUsableGroup[userGroup] = rules
 	}
+	if config.GroupDisplay == nil {
+		config.GroupDisplay = emptyGroupDisplayConfig()
+	}
+	if config.GroupDisplay.Categories == nil {
+		config.GroupDisplay.Categories = []dto.GroupDisplayCategory{}
+	}
+	if config.GroupDisplay.Assignments == nil {
+		config.GroupDisplay.Assignments = map[string]dto.GroupDisplayAssignment{}
+	}
+	delete(config.GroupDisplay.Assignments, "auto")
 }
 
 func validateGroupConfig(config dto.GroupConfig) error {
@@ -220,19 +231,62 @@ func validateGroupConfig(config dto.GroupConfig) error {
 			return fmt.Errorf("分组 %s 的限流值无效", group)
 		}
 	}
+	if config.GroupDisplay != nil {
+		categoryIDs := make(map[string]struct{}, len(config.GroupDisplay.Categories))
+		for _, category := range config.GroupDisplay.Categories {
+			if category.ID == "" || strings.TrimSpace(category.ID) != category.ID || utf8.RuneCountInString(category.ID) > 64 {
+				return errors.New("展示分组 ID 必须为不超过 64 个字符的非空值")
+			}
+			if category.Name == "" || strings.TrimSpace(category.Name) != category.Name || utf8.RuneCountInString(category.Name) > 64 {
+				return fmt.Errorf("展示分组 %s 的名称无效", category.ID)
+			}
+			if utf8.RuneCountInString(category.Icon) > 128 {
+				return fmt.Errorf("展示分组 %s 的图标标识过长", category.ID)
+			}
+			for _, value := range []string{category.ID, category.Name, category.Icon} {
+				for _, r := range value {
+					if unicode.IsControl(r) {
+						return fmt.Errorf("展示分组 %s 不能包含控制字符", category.ID)
+					}
+				}
+			}
+			if category.Order < 0 {
+				return fmt.Errorf("展示分组 %s 的排序不能为负数", category.ID)
+			}
+			if _, exists := categoryIDs[category.ID]; exists {
+				return fmt.Errorf("展示分组 ID %s 重复", category.ID)
+			}
+			categoryIDs[category.ID] = struct{}{}
+		}
+		for group, assignment := range config.GroupDisplay.Assignments {
+			if err := assertKnownGroup(group); err != nil {
+				return err
+			}
+			if group == "auto" {
+				return errors.New("auto 不能归入展示分组")
+			}
+			if _, exists := categoryIDs[assignment.CategoryID]; !exists {
+				return fmt.Errorf("分组 %s 引用了不存在的展示分组 %s", group, assignment.CategoryID)
+			}
+			if assignment.Order < 0 {
+				return fmt.Errorf("分组 %s 的展示排序不能为负数", group)
+			}
+		}
+	}
 	return nil
 }
 
 func groupConfigOptionValues(config dto.GroupConfig) (map[string]string, error) {
-	values := make(map[string]string, 8)
+	values := make(map[string]string, 10)
 	entries := map[string]any{
-		"GroupRatio":                     config.GroupRatio,
-		"TopupGroupRatio":                config.TopupGroupRatio,
-		"UserUsableGroups":               config.UserUsableGroups,
-		"GroupGroupRatio":                config.GroupGroupRatio,
-		"AutoGroups":                     config.AutoGroups,
-		groupSpecialUsableGroupOptionKey: config.GroupSpecialUsableGroup,
-		"ModelRequestRateLimitGroup":     config.ModelRequestRateLimit,
+		"GroupRatio":                        config.GroupRatio,
+		"TopupGroupRatio":                   config.TopupGroupRatio,
+		"UserUsableGroups":                  config.UserUsableGroups,
+		"GroupGroupRatio":                   config.GroupGroupRatio,
+		"AutoGroups":                        config.AutoGroups,
+		groupSpecialUsableGroupOptionKey:    config.GroupSpecialUsableGroup,
+		"ModelRequestRateLimitGroup":        config.ModelRequestRateLimit,
+		setting.GroupDisplayConfigOptionKey: config.GroupDisplay,
 	}
 	for key, value := range entries {
 		data, err := common.Marshal(value)
@@ -279,6 +333,9 @@ func UpdateGroupConfig(request dto.GroupConfigUpdateRequest) (string, error) {
 	}
 	if request.Config.MaxTokenAutoGroups == 0 {
 		request.Config.MaxTokenAutoGroups = current.MaxTokenAutoGroups
+	}
+	if request.Config.GroupDisplay == nil {
+		request.Config.GroupDisplay = current.GroupDisplay
 	}
 	normalizeGroupConfig(&request.Config)
 	if err := validateGroupConfig(request.Config); err != nil {
@@ -340,6 +397,11 @@ func countGroupConfigReferences(config dto.GroupConfig, oldName string) int {
 	if _, ok := config.ModelRequestRateLimit[oldName]; ok {
 		count++
 	}
+	if config.GroupDisplay != nil {
+		if _, ok := config.GroupDisplay.Assignments[oldName]; ok {
+			count++
+		}
+	}
 	return count
 }
 
@@ -388,6 +450,18 @@ func renamedGroupConfig(config dto.GroupConfig, oldName string, newName string) 
 			group = newName
 		}
 		result.ModelRequestRateLimit[group] = limits
+	}
+	if config.GroupDisplay != nil {
+		result.GroupDisplay = &dto.GroupDisplayConfig{
+			Categories:  append([]dto.GroupDisplayCategory(nil), config.GroupDisplay.Categories...),
+			Assignments: make(map[string]dto.GroupDisplayAssignment, len(config.GroupDisplay.Assignments)),
+		}
+		for group, assignment := range config.GroupDisplay.Assignments {
+			if group == oldName {
+				group = newName
+			}
+			result.GroupDisplay.Assignments[group] = assignment
+		}
 	}
 	return result
 }
@@ -568,6 +642,7 @@ func SortedGroupConfigOptionKeys() []string {
 		"MaxTokenAutoGroups",
 		groupSpecialUsableGroupOptionKey,
 		"ModelRequestRateLimitGroup",
+		setting.GroupDisplayConfigOptionKey,
 	}
 	sort.Strings(keys)
 	return keys
@@ -579,7 +654,7 @@ func IsGroupManagedOption(key string) bool {
 	// request-rate limits) remain independently editable because they neither
 	// grant access nor select channels; a rename still rewrites them atomically.
 	switch key {
-	case "GroupRatio", "UserUsableGroups", "GroupGroupRatio", "AutoGroups", "MaxTokenAutoGroups", groupSpecialUsableGroupOptionKey:
+	case "GroupRatio", "UserUsableGroups", "GroupGroupRatio", "AutoGroups", "MaxTokenAutoGroups", groupSpecialUsableGroupOptionKey, setting.GroupDisplayConfigOptionKey:
 		return true
 	default:
 		return false

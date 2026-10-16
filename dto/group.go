@@ -13,6 +13,24 @@ type GroupConfig struct {
 	MaxTokenAutoGroups      int                           `json:"max_token_auto_groups"`
 	GroupSpecialUsableGroup map[string]map[string]string  `json:"group_special_usable_group"`
 	ModelRequestRateLimit   map[string][2]int             `json:"model_request_rate_limit"`
+	GroupDisplay            *GroupDisplayConfig           `json:"group_display,omitempty"`
+}
+
+type GroupDisplayConfig struct {
+	Categories  []GroupDisplayCategory            `json:"categories"`
+	Assignments map[string]GroupDisplayAssignment `json:"assignments"`
+}
+
+type GroupDisplayCategory struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Icon  string `json:"icon,omitempty"`
+	Order int    `json:"order"`
+}
+
+type GroupDisplayAssignment struct {
+	CategoryID string `json:"category_id"`
+	Order      int    `json:"order"`
 }
 
 type GroupConfigUpdateRequest struct {

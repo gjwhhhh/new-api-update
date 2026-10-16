@@ -163,6 +163,8 @@ export function ApiKeysMutateDrawer({
         label: key,
         desc: info.desc || key,
         ratio: info.ratio,
+        displayGroup: info.display_group,
+        displayOrder: info.display_order,
       })),
     [groupsData]
   )

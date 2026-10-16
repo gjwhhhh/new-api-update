@@ -43,6 +43,7 @@ const defaults = {
   MaxTokenAutoGroups: 5,
   DefaultUseAutoGroup: false,
   GroupSpecialUsableGroup: '{}',
+  GroupDisplayConfig: '{"categories":[],"assignments":{}}',
 }
 
 const schema = z.object({
@@ -54,6 +55,7 @@ const schema = z.object({
   MaxTokenAutoGroups: positiveIntegerSchema('Enter a positive integer'),
   DefaultUseAutoGroup: z.boolean(),
   GroupSpecialUsableGroup: z.string(),
+  GroupDisplayConfig: z.string(),
 })
 
 function Fixture(props: {
@@ -173,6 +175,84 @@ describe('group settings workspace', () => {
         DefaultUseAutoGroup: true,
       })
     )
+  })
+
+  it('edits custom display categories without changing pricing groups', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn(async (_values: typeof defaults) => {})
+    render(
+      <Fixture
+        onSave={onSave}
+        initial={{
+          GroupDisplayConfig: JSON.stringify({
+            categories: [{ id: 'openai', name: 'GPT', icon: '', order: 0 }],
+            assignments: {
+              default: { category_id: 'openai', order: 0 },
+            },
+          }),
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Group display' }))
+    const name = screen.getByRole('textbox', {
+      name: 'Display category name',
+    })
+    expect(name).toHaveValue('GPT')
+    expect(screen.getAllByText('default').length).toBeGreaterThan(0)
+    await user.clear(name)
+    await user.type(name, 'OpenAI models')
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(JSON.parse(onSave.mock.calls[0][0].GroupDisplayConfig)).toEqual({
+      categories: [{ id: 'openai', name: 'OpenAI models', icon: '', order: 0 }],
+      assignments: {
+        default: { category_id: 'openai', order: 0 },
+      },
+    })
+  })
+
+  it('reorders model groups inside a display category and saves their order', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn(async (_values: typeof defaults) => {})
+    render(
+      <Fixture
+        onSave={onSave}
+        initial={{
+          GroupDisplayConfig: JSON.stringify({
+            categories: [{ id: 'openai', name: 'GPT', icon: '', order: 0 }],
+            assignments: {
+              default: { category_id: 'openai', order: 0 },
+              vip: { category_id: 'openai', order: 10 },
+            },
+          }),
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Group display' }))
+    const list = screen.getByRole('list', {
+      name: 'Model groups in this category',
+    })
+    expect(within(list).getAllByRole('listitem')[0]).toHaveTextContent(
+      'default'
+    )
+    await user.click(screen.getByRole('button', { name: 'Move vip up' }))
+    expect(within(list).getAllByRole('listitem')[0]).toHaveTextContent('vip')
+
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(JSON.parse(onSave.mock.calls[0][0].GroupDisplayConfig)).toEqual({
+      categories: [{ id: 'openai', name: 'GPT', icon: '', order: 0 }],
+      assignments: {
+        vip: { category_id: 'openai', order: 0 },
+        default: { category_id: 'openai', order: 10 },
+      },
+    })
   })
 
   it('reorders from the drag handle with arrow keys, preserves unknown groups and saves the new order', async () => {

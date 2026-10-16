@@ -148,6 +148,7 @@ const createGroupSchema = (t: Translate) =>
     MaxTokenAutoGroups: positiveIntegerSchema(t('Enter a positive integer')),
     DefaultUseAutoGroup: z.boolean(),
     GroupSpecialUsableGroup: createJsonStringField(t),
+    GroupDisplayConfig: createJsonStringField(t),
   })
 
 type ModelFormValues = z.infer<ReturnType<typeof createModelSchema>>
@@ -274,6 +275,7 @@ export function RatioSettingsCard({
     GroupSpecialUsableGroup: normalizeJsonString(
       groupDefaults.GroupSpecialUsableGroup
     ),
+    GroupDisplayConfig: normalizeJsonString(groupDefaults.GroupDisplayConfig),
   })
   const modelSchema = useMemo(() => createModelSchema(t), [t])
   const groupSchema = useMemo(() => createGroupSchema(t), [t])
@@ -311,6 +313,9 @@ export function RatioSettingsCard({
       AutoGroups: formatJsonForTextarea(groupDefaults.AutoGroups),
       GroupSpecialUsableGroup: formatJsonForTextarea(
         groupDefaults.GroupSpecialUsableGroup
+      ),
+      GroupDisplayConfig: formatJsonForTextarea(
+        groupDefaults.GroupDisplayConfig
       ),
     },
   })
@@ -364,6 +369,7 @@ export function RatioSettingsCard({
       GroupSpecialUsableGroup: normalizeJsonString(
         groupDefaults.GroupSpecialUsableGroup
       ),
+      GroupDisplayConfig: normalizeJsonString(groupDefaults.GroupDisplayConfig),
     }
 
     groupForm.reset({
@@ -375,6 +381,9 @@ export function RatioSettingsCard({
       AutoGroups: formatJsonForTextarea(groupDefaults.AutoGroups),
       GroupSpecialUsableGroup: formatJsonForTextarea(
         groupDefaults.GroupSpecialUsableGroup
+      ),
+      GroupDisplayConfig: formatJsonForTextarea(
+        groupDefaults.GroupDisplayConfig
       ),
     })
   }, [groupDefaults, groupForm])
@@ -442,6 +451,7 @@ export function RatioSettingsCard({
         GroupSpecialUsableGroup: normalizeJsonString(
           values.GroupSpecialUsableGroup
         ),
+        GroupDisplayConfig: normalizeJsonString(values.GroupDisplayConfig),
       }
 
       const current = groupConfigQuery.data?.data
@@ -464,6 +474,7 @@ export function RatioSettingsCard({
             normalized.GroupSpecialUsableGroup
           ),
           model_request_rate_limit: current.config.model_request_rate_limit,
+          group_display: JSON.parse(normalized.GroupDisplayConfig),
         }
       } catch {
         toast.error(t('Invalid JSON'))
@@ -482,7 +493,7 @@ export function RatioSettingsCard({
       groupNormalizedDefaults.current = normalized
       toast.success(t('Group configuration saved'))
     },
-    [groupConfigMutation, groupConfigQuery.data, t, updateOption]
+    [groupConfigMutation, groupConfigQuery.data, t]
   )
 
   const handleResetRatios = useCallback(() => {

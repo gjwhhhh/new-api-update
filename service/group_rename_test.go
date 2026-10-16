@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,6 +25,12 @@ func TestRenamedGroupConfigRewritesEveryReference(t *testing.T) {
 			"vip": {"+:vip": "VIP", "-:default": "remove"},
 		},
 		ModelRequestRateLimit: map[string][2]int{"vip": {20, 10}},
+		GroupDisplay: &dto.GroupDisplayConfig{
+			Categories: []dto.GroupDisplayCategory{{ID: "premium-models", Name: "Premium", Icon: "OpenAI.Color", Order: 1}},
+			Assignments: map[string]dto.GroupDisplayAssignment{
+				"vip": {CategoryID: "premium-models", Order: 2},
+			},
+		},
 	}
 
 	renamed := renamedGroupConfig(config, "vip", "premium")
@@ -36,7 +43,33 @@ func TestRenamedGroupConfigRewritesEveryReference(t *testing.T) {
 	assert.Equal(t, []string{"premium", "default"}, renamed.AutoGroups)
 	assert.Equal(t, "VIP", renamed.GroupSpecialUsableGroup["premium"]["+:premium"])
 	assert.Equal(t, [2]int{20, 10}, renamed.ModelRequestRateLimit["premium"])
+	require.NotNil(t, renamed.GroupDisplay)
+	assert.Equal(t, dto.GroupDisplayAssignment{CategoryID: "premium-models", Order: 2}, renamed.GroupDisplay.Assignments["premium"])
+	assert.NotContains(t, renamed.GroupDisplay.Assignments, "vip")
 	require.NoError(t, validateGroupConfig(renamed))
+}
+
+func TestValidateGroupConfigRejectsInvalidDisplayAssignments(t *testing.T) {
+	config := dto.GroupConfig{
+		GroupRatio:              map[string]float64{"default": 1},
+		TopupGroupRatio:         map[string]float64{},
+		UserUsableGroups:        map[string]string{"default": "Default"},
+		GroupGroupRatio:         map[string]map[string]float64{},
+		AutoGroups:              []string{},
+		MaxTokenAutoGroups:      5,
+		GroupSpecialUsableGroup: map[string]map[string]string{},
+		ModelRequestRateLimit:   map[string][2]int{},
+		GroupDisplay: &dto.GroupDisplayConfig{
+			Categories: []dto.GroupDisplayCategory{{ID: "openai", Name: "GPT"}},
+			Assignments: map[string]dto.GroupDisplayAssignment{
+				"default": {CategoryID: "missing"},
+			},
+		},
+	}
+
+	err := validateGroupConfig(config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "不存在的展示分组")
 }
 
 func TestValidateGroupConfigRejectsDeletedExistingGroup(t *testing.T) {
@@ -103,7 +136,12 @@ func TestGroupConfigOptionValuesIncludeMaxTokenAutoGroups(t *testing.T) {
 		MaxTokenAutoGroups:      7,
 		GroupSpecialUsableGroup: map[string]map[string]string{},
 		ModelRequestRateLimit:   map[string][2]int{},
+		GroupDisplay: &dto.GroupDisplayConfig{
+			Categories:  []dto.GroupDisplayCategory{},
+			Assignments: map[string]dto.GroupDisplayAssignment{},
+		},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "7", values["MaxTokenAutoGroups"])
+	assert.JSONEq(t, `{"categories":[],"assignments":{}}`, values[setting.GroupDisplayConfigOptionKey])
 }

@@ -66,6 +66,7 @@ import {
   isUserDeleted,
 } from '../constants'
 import { getUserActionMessage } from '../lib'
+import { UserSessionAffinityDialog } from '../session-affinity/user-session-affinity-dialog'
 import type { User } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserChannelPrioritiesDialog } from './dialogs/user-channel-priorities-dialog'
@@ -99,6 +100,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [channelPrioritiesDialogOpen, setChannelPrioritiesDialogOpen] =
     useState(false)
   const currentUser = useAuthStore((state) => state.auth.user)
+  const [sessionAffinityOpen, setSessionAffinityOpen] = useState(false)
   const canEditChannelRouting = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -293,6 +295,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
+        {canEditChannelRouting && (
+          <DropdownMenuItem onSelect={() => setSessionAffinityOpen(true)}>
+            {t('Session affinity')}
+          </DropdownMenuItem>
+        )}
+
         <DropdownMenuItem
           onSelect={(event) => {
             event.preventDefault()
@@ -390,6 +398,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onOpenChange={setChannelPrioritiesDialogOpen}
         user={{ id: user.id, username: user.username }}
       />
+      {sessionAffinityOpen && (
+        <UserSessionAffinityDialog
+          open
+          onOpenChange={setSessionAffinityOpen}
+          user={{ id: user.id, username: user.username }}
+        />
+      )}
     </div>
   )
 }

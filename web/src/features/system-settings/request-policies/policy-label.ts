@@ -52,6 +52,16 @@ export function policyLabel(t: TFunction, value: string): string {
       return t('Status matches the retry rules')
     case 'session_rule_matched':
       return t('Session rule matched')
+    case 'session_disabled_for_user':
+      return t('Session affinity disabled for this user')
+    case 'session_disabled_globally':
+      return t('Disabled globally')
+    case 'session_disabled_by_rule':
+      return t('Session affinity disabled by session policy')
+    case 'session_rule_not_matched':
+      return t('No session rule matched')
+    case 'user_setting':
+      return t('User configuration')
     case 'channel_selected':
       return t('Channel selected')
     case 'request_completed':

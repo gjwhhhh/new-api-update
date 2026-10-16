@@ -389,6 +389,7 @@ func migrateDB() error {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&UserChannelPriority{},
+		&UserSessionAffinity{},
 	)
 	if err != nil {
 		return err

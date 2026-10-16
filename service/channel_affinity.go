@@ -1047,6 +1047,9 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 	setting := operation_setting.GetChannelAffinitySetting()
 	state := RequestPolicy(c)
 	if setting == nil || !setting.Enabled {
+		if !state.UserSessionAffinityDisabled {
+			state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "skip", Reason: "session_disabled_globally", Source: "global"}})
+		}
 		return 0, false
 	}
 	path := ""
@@ -1088,18 +1091,25 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		if ttlSeconds <= 0 {
 			ttlSeconds = setting.DefaultTTLSeconds
 		}
-		versionRuleName := ""
-		if rule.IncludeRuleName {
-			versionRuleName = rule.Name
+		mode, source := EffectiveSessionMode(setting, rule)
+		if state.UserSessionAffinityDisabled {
+			mode, source = "off", "user_setting"
 		}
-		cacheVersion, err := getChannelAffinityCacheVersion(versionRuleName)
-		if err != nil {
-			common.SysError(fmt.Sprintf("channel affinity cache version read failed: rule=%q, err=%v", rule.Name, err))
-			return 0, false
+		cacheKeySuffix, cacheKeyFull := "", ""
+		if mode != "off" {
+			versionRuleName := ""
+			if rule.IncludeRuleName {
+				versionRuleName = rule.Name
+			}
+			cacheVersion, err := getChannelAffinityCacheVersion(versionRuleName)
+			if err != nil {
+				common.SysError(fmt.Sprintf("channel affinity cache version read failed: rule=%q, err=%v", rule.Name, err))
+				return 0, false
+			}
+			cacheKeySuffix = buildChannelAffinityCacheKeySuffixWithVersion(rule, modelName, usingGroup, affinityValue, cacheVersion)
+			cacheKeyFull = channelAffinityCacheNamespace + ":" + cacheKeySuffix
 		}
-		cacheKeySuffix := buildChannelAffinityCacheKeySuffixWithVersion(rule, modelName, usingGroup, affinityValue, cacheVersion)
-		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
-		state.SessionMode, state.SessionModeSource = EffectiveSessionMode(setting, rule)
+		state.SessionMode, state.SessionModeSource = mode, source
 		state.RuleName = rule.Name
 		meta := channelAffinityMeta{
 			CacheKey:       cacheKeyFull,
@@ -1120,6 +1130,9 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 
 		state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "match", Reason: "session_rule_matched", Source: "session_rule"}})
 		if state.SessionMode == "off" {
+			if !state.UserSessionAffinityDisabled {
+				state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "skip", Reason: "session_disabled_by_rule", Source: state.SessionModeSource}})
+			}
 			return 0, false
 		}
 		cache := getChannelAffinityCache()
@@ -1133,11 +1146,17 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		}
 		return 0, false
 	}
+	if !state.UserSessionAffinityDisabled {
+		state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "skip", Reason: "session_rule_not_matched", Source: "session_rule"}})
+	}
 	return 0, false
 }
 
 func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	if c == nil {
+		return false
+	}
+	if RequestPolicy(c).UserSessionAffinityDisabled {
 		return false
 	}
 	v, ok := c.Get(ginKeyChannelAffinitySkipRetry)
@@ -1156,6 +1175,9 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 
 func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	if c == nil {
+		return false
+	}
+	if RequestPolicy(c).UserSessionAffinityDisabled {
 		return false
 	}
 	cacheKey, _, ok := getChannelAffinityContext(c)

@@ -38,6 +38,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { UserSessionAffinitySettings } from '@/features/users/session-affinity/user-session-affinity-settings'
 import { handleServerError } from '@/lib/handle-server-error'
 import { parseHttpStatusCodeRules } from '@/lib/http-status-code-rules'
 
@@ -162,6 +163,13 @@ function RoutingPolicyEditor(props: { config: PolicyConfig }) {
                 <FormMessage />
               </FormItem>
             )}
+          />
+          <UserSessionAffinitySettings
+            globalEnabled={
+              props.config.options['channel_affinity_setting.enabled'] ===
+              'true'
+            }
+            hasGlobalChanges={Object.keys(dirtyFields).length > 0}
           />
           <RetrySection />
           {mutation.isError ? (

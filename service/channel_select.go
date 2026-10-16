@@ -322,6 +322,22 @@ type ChannelSelectError struct {
 // filters. The group the channel was chosen from is returned for auto-group
 // callers. The caller still applies SetupContextForSelectedChannel.
 func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
+	state := RequestPolicy(c)
+	if !state.UserSessionPolicyLoaded {
+		if userId := common.GetContextKeyInt(c, constant.ContextKeyUserId); userId > 0 {
+			policy, err := model.GetUserSessionAffinity(userId)
+			if err != nil {
+				logger.LogError(c, fmt.Sprintf("read user session affinity: user_id=%d error=%v", userId, err))
+				return nil, "", &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: "user_session_policy_unavailable"}
+			}
+			state.UserSessionAffinityDisabled = policy.Disabled
+		}
+		state.UserSessionPolicyLoaded = true
+		if state.UserSessionAffinityDisabled {
+			state.SessionMode, state.SessionModeSource = "off", "user_setting"
+			state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "skip", Reason: "session_disabled_for_user", Source: "user_setting"}})
+		}
+	}
 	constraints := GetChannelConstraints(c)
 	if pin, found, overridden := constraints.ResolvedPin(); found {
 		for _, lost := range overridden {

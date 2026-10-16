@@ -23,6 +23,10 @@ import i18next from 'i18next'
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
+  USER_SESSION_AFFINITY_CONFLICT:
+    'This user configuration changed. Reload before saving again.',
+  INVALID_USER_SESSION_AFFINITY: 'Invalid session affinity settings.',
+  USER_NOT_FOUND: 'This user account no longer exists.',
   TELEGRAM_OAUTH_NOT_CONFIGURED:
     'Telegram OAuth is not configured or enabled. Please contact your administrator.',
   TELEGRAM_OAUTH_CONFLICT:

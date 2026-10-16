@@ -88,7 +88,7 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 		setting.ModelRequestRateLimitMutex.Unlock()
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.UserChannelPriority{}, &model.UserSessionAffinity{}))
 	// The shared in-memory limiter outlives each database fixture. Give every
 	// user a separate quota bucket, including when the tests run with -count.
 	user := &model.User{Id: 5062000 + int(responsesWSTestUserSequence.Add(1)), Username: "responses-ws-user", Status: common.UserStatusEnabled, Group: "default", Quota: 1000, AuthVersion: 1}
@@ -629,7 +629,11 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 		require.NoError(t, common.UnmarshalJsonStr(logs[index].Other, &other))
 		var decisions []string
 		for _, event := range other.AdminInfo.RequestPolicy {
-			assert.Equal(t, fixture.channel.Id, event.ChannelID)
+			if event.Decision.Action == "skip" || event.Decision.Action == "match" {
+				assert.Zero(t, event.ChannelID, "session policy is evaluated before selecting a channel")
+			} else {
+				assert.Equal(t, fixture.channel.Id, event.ChannelID)
+			}
 			decisions = append(decisions, event.Decision.Action+":"+event.Decision.Reason)
 		}
 		assert.Contains(t, decisions, wantDecision, "request %d policy events: %v", index, decisions)

@@ -113,7 +113,7 @@ it.each([
   { allowed: false, visible: false },
   { allowed: true, visible: true },
 ])(
-  'shows channel priorities in the row menu only with channel write permission (allowed=$allowed)',
+  'shows user routing settings in the row menu only with channel write permission (allowed=$allowed)',
   async ({ allowed, visible }) => {
     useAuthStore.getState().auth.setUser({
       id: 1,
@@ -127,10 +127,33 @@ it.each([
 
     await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
     const item = screen.queryByRole('menuitem', { name: 'Channel Priorities' })
+    const sessionAffinity = screen.queryByRole('menuitem', {
+      name: 'Session affinity',
+    })
     if (visible) {
       expect(item).toBeVisible()
+      expect(sessionAffinity).toBeVisible()
+      vi.spyOn(api, 'get').mockResolvedValue({
+        data: {
+          success: true,
+          data: {
+            user_id: target.id,
+            username: target.username,
+            disabled: false,
+            version: 0,
+            global_enabled: true,
+          },
+        },
+      })
+      await userEvent.click(
+        screen.getByRole('menuitem', { name: 'Session affinity' })
+      )
+      expect(
+        await screen.findByRole('radio', { name: 'Follow system policy' })
+      ).toBeChecked()
     } else {
       expect(item).not.toBeInTheDocument()
+      expect(sessionAffinity).not.toBeInTheDocument()
     }
   }
 )

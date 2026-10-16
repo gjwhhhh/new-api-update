@@ -35,21 +35,23 @@ type PolicyEvent struct {
 	Health      string         `json:"health,omitempty"`
 }
 
-// RequestPolicyState records how one request was routed so administrators can
-// read the decision flow in the log details. Channel selection and the retry
-// decision stay in the relay flows; this state only records them.
+// RequestPolicyState snapshots user routing policy and records one request's
+// decisions for administrators to inspect in the log details. Channel selection
+// and retry decisions are made by the relay flows.
 type RequestPolicyState struct {
-	FinalLogged       bool
-	StartedAt         time.Time
-	Attempts          int
-	SelectedGroup     string
-	SessionMode       string
-	SessionModeSource string
-	RuleName          string
-	Successful        bool
-	OutcomeRecorded   bool
-	mu                sync.Mutex
-	events            []PolicyEvent
+	FinalLogged                 bool
+	StartedAt                   time.Time
+	Attempts                    int
+	SelectedGroup               string
+	SessionMode                 string
+	SessionModeSource           string
+	RuleName                    string
+	UserSessionPolicyLoaded     bool
+	UserSessionAffinityDisabled bool
+	Successful                  bool
+	OutcomeRecorded             bool
+	mu                          sync.Mutex
+	events                      []PolicyEvent
 }
 
 func RequestPolicy(c *gin.Context) *RequestPolicyState {

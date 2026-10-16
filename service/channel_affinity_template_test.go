@@ -657,9 +657,15 @@ func TestSessionRulesInheritOrOverrideGlobalDefault(t *testing.T) {
 					assert.Equal(t, "retry", decision.Action)
 				}
 				events := state.Events()
-				require.Len(t, events, 1)
+				require.NotEmpty(t, events)
 				assert.Equal(t, PolicyDecision{Action: "match", Reason: "session_rule_matched", Source: "session_rule"}, events[0].Decision)
 				assert.Equal(t, tc.name, events[0].Rule)
+				if expected == "off" {
+					require.Len(t, events, 2)
+					assert.Equal(t, PolicyDecision{Action: "skip", Reason: "session_disabled_by_rule", Source: source}, events[1].Decision)
+				} else {
+					assert.Len(t, events, 1)
+				}
 				transformed, applied := ApplyChannelAffinityOverrideTemplate(ctx, nil)
 				assert.True(t, applied, "session behavior does not disable request transforms")
 				assert.EqualValues(t, 0, transformed["temperature"])

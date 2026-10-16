@@ -38,6 +38,7 @@ import { useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { RoutingPolicySection } from '../routing-section'
@@ -109,8 +110,81 @@ beforeEach(() => {
 afterEach(async () => {
   cleanup()
   client.clear()
+  useAuthStore.getState().auth.setUser(null)
   vi.restoreAllMocks()
   await i18next.changeLanguage('en')
+})
+
+it('saves a user exception separately while preserving an unsaved global retry draft', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  let policy = {
+    user_id: 7,
+    username: 'alice',
+    disabled: false,
+    version: 0,
+    global_enabled: true,
+  }
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/option/request_policy') {
+      return { data: { success: true, data: { options: currentOptions } } }
+    }
+    if (url === '/api/user/7/session-affinity') {
+      return { data: { success: true, data: { ...policy } } }
+    }
+    const params = config?.params as { disabled_only?: boolean } | undefined
+    const items =
+      params?.disabled_only === false || policy.disabled ? [policy] : []
+    return { data: { success: true, data: { items, total: items.length } } }
+  })
+  vi.mocked(api.patch).mockImplementation(async (url, request) => {
+    if (url === '/api/user/7/session-affinity') {
+      policy = {
+        ...policy,
+        disabled: (request as { disabled: boolean }).disabled,
+        version: policy.version + 1,
+      }
+      return { data: { success: true, data: policy } }
+    }
+    currentOptions = {
+      ...currentOptions,
+      ...(request as { options: Record<string, string> }).options,
+    }
+    return { data: { success: true, data: { options: currentOptions } } }
+  })
+  show()
+  const user = userEvent.setup()
+  const retries = await screen.findByRole('spinbutton', {
+    name: 'Maximum retries',
+  })
+  fireEvent.change(retries, { target: { value: '5' } })
+  await user.click(
+    screen.getByRole('button', { name: 'Add user configuration' })
+  )
+  const picker = await screen.findByRole('dialog', {
+    name: 'Add user configuration',
+  })
+  await user.click(
+    await within(picker).findByRole('button', { name: 'Select' })
+  )
+  const editor = await screen.findByRole('dialog', {
+    name: 'Session affinity for alice',
+  })
+  const save = within(editor).getByRole('button', { name: 'Save changes' })
+  await waitFor(() => expect(save).toBeEnabled())
+  await user.click(save)
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(retries).toHaveValue(5)
+  expect(currentOptions.RetryTimes).toBe('2')
+  expect(api.patch).toHaveBeenCalledTimes(1)
+  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() =>
+    expect(api.patch).toHaveBeenLastCalledWith('/api/option/request_policy', {
+      options: { RetryTimes: '5' },
+    })
+  )
+  expect(policy.disabled).toBe(true)
 })
 function Workspace() {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)

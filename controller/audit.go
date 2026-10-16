@@ -46,6 +46,7 @@ var auditContentTemplates = map[string]string{
 	"user.passkey_delete":            "Deleted a passkey",
 	"user.reset_passkey":             "Reset the user passkey",
 	"user.channel_priorities.update": "Updated channel priority overrides for user ID ${target_user_id} (${upserts} upserted, ${deletes} removed)",
+	"user.session_affinity.update":   "Updated session affinity for user ID ${target_user_id} (disabled: ${previous_disabled} to ${disabled})",
 	"option.update":                  "Updated system setting ${key}",
 	"group.config_update":            "Updated group configuration",
 	"group.rename":                   "Renamed group ${old_name} to ${new_name}",

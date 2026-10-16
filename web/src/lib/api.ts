@@ -61,6 +61,7 @@ export async function getUserModels(): Promise<{
 export async function getUserGroups(): Promise<{
   success: boolean
   message?: string
+  display_categories?: Record<string, GroupDisplayCategory>
   data?: Record<
     string,
     {

@@ -27,6 +27,7 @@ func GetGroups(c *gin.Context) {
 
 func GetUserGroups(c *gin.Context) {
 	usableGroups := make(map[string]map[string]any)
+	visibleGroupNames := make(map[string]struct{})
 	displayConfig := service.GetGroupDisplayConfig()
 	displayCategories := make(map[string]dto.GroupDisplayCategory, len(displayConfig.Categories))
 	for _, category := range displayConfig.Categories {
@@ -36,9 +37,10 @@ func GetUserGroups(c *gin.Context) {
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
 	userUsableGroups := service.GetUserUsableGroups(userGroup)
-	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
+	for groupName := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
+			visibleGroupNames[groupName] = struct{}{}
 			usableGroups[groupName] = map[string]any{
 				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,
@@ -48,6 +50,8 @@ func GetUserGroups(c *gin.Context) {
 					usableGroups[groupName]["display_group"] = category
 					usableGroups[groupName]["display_order"] = assignment.Order
 				}
+			} else if category, exists := displayCategories[service.ResolveAutomaticGroupDisplayCategoryID(groupName)]; exists {
+				usableGroups[groupName]["display_group"] = category
 			}
 		}
 	}
@@ -58,9 +62,10 @@ func GetUserGroups(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    usableGroups,
+		"success":            true,
+		"message":            "",
+		"data":               usableGroups,
+		"display_categories": service.VisibleGroupDisplayCategories(displayConfig, visibleGroupNames),
 	})
 }
 

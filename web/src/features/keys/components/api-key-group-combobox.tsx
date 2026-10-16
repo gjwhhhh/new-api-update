@@ -39,9 +39,11 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { useMediaQuery } from '@/hooks'
-import type { GroupDisplayCategory } from '@/lib/group-display'
+import {
+  resolveAutomaticGroupDisplayCategory,
+  type GroupDisplayCategory,
+} from '@/lib/group-display'
 import { getLobeIcon } from '@/lib/lobe-icon'
-import { resolveModelProvider } from '@/lib/model-provider'
 import { cn } from '@/lib/utils'
 
 import {
@@ -61,6 +63,7 @@ export type ApiKeyGroupOption = {
 
 type ApiKeyGroupComboboxProps = {
   options: ApiKeyGroupOption[]
+  displayCategories?: Record<string, GroupDisplayCategory>
   value?: string
   onValueChange: (value: string) => void
   placeholder?: string
@@ -71,39 +74,8 @@ type ResolvedDisplayCategory = GroupDisplayCategory & {
   options: ApiKeyGroupOption[]
 }
 
-const domesticProviders = new Set([
-  '360 AI',
-  'Baidu',
-  'Baichuan',
-  'DeepSeek',
-  'Doubao',
-  'iFlytek',
-  'InternLM',
-  'MiniMax',
-  'MiMo',
-  'Moonshot',
-  'Qwen',
-  'StepFun',
-  'Tencent',
-  'Yi',
-  'Zhipu',
-])
-const providerCategoryOrders = new Map([
-  ['OpenAI', 100],
-  ['Anthropic', 200],
-  ['Gemini', 300],
-  ['xAI', 400],
-])
 // Group names cannot contain commas, so this value cannot collide with a real option.
 const inactiveCommandValue = '__inactive_api_key_group_option__,'
-
-function providerCategoryID(name: string): string {
-  return `provider:${name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}`
-}
-
-function providerCategoryOrder(name: string): number {
-  return providerCategoryOrders.get(name) ?? 600
-}
 
 export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
@@ -123,6 +95,8 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
 
   const categories = useMemo<ResolvedDisplayCategory[]>(() => {
     const categoryMap = new Map<string, ResolvedDisplayCategory>()
+    const resolveConfiguredCategory = (category: GroupDisplayCategory) =>
+      props.displayCategories?.[category.id] || category
     const ensureCategory = (category: GroupDisplayCategory) => {
       const existing = categoryMap.get(category.id)
       if (existing) return existing
@@ -132,38 +106,21 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
     }
 
     props.options.forEach((option) => {
+      if (option.value !== 'auto' && option.displayGroup) {
+        ensureCategory(resolveConfiguredCategory(option.displayGroup))
+      }
+    })
+
+    props.options.forEach((option) => {
       if (option.value === 'auto') return
       let category = option.displayGroup
       if (!category) {
-        const provider = resolveModelProvider(
-          `${option.value} ${option.label} ${option.desc || ''}`
-        )
-        if (provider && domesticProviders.has(provider.name)) {
-          category = {
-            id: 'provider:domestic',
-            name: t('Domestic models'),
-            icon: '',
-            order: 500,
-          }
-        } else if (provider) {
-          category = {
-            id: providerCategoryID(provider.name),
-            name:
-              provider.name === 'OpenAI'
-                ? 'GPT'
-                : provider.label || provider.name,
-            icon: provider.icon,
-            order: providerCategoryOrder(provider.name),
-          }
-        } else {
-          category = {
-            id: 'other',
-            name: t('Other groups'),
-            icon: '',
-            order: 10_000,
-          }
-        }
+        category = resolveAutomaticGroupDisplayCategory(option, {
+          domesticModels: t('Domestic models'),
+          otherGroups: t('Other groups'),
+        })
       }
+      category = resolveConfiguredCategory(category)
       ensureCategory(category).options.push(option)
     })
 
@@ -180,7 +137,7 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
         (left, right) =>
           left.order - right.order || left.name.localeCompare(right.name)
       )
-  }, [props.options, t])
+  }, [props.displayCategories, props.options, t])
 
   const categoryByOption = useMemo(() => {
     const result = new Map<string, ResolvedDisplayCategory>()

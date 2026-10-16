@@ -321,6 +321,14 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
     () => registry.map((entry) => entry.name),
     [registry]
   )
+  const groupDisplayOptions = useMemo(() => {
+    const descriptions = parseUsableMap(userUsableGroups)
+    return registryNames.map((name) => ({
+      value: name,
+      label: name,
+      desc: descriptions[name] || '',
+    }))
+  }, [registryNames, userUsableGroups])
 
   // Auto groups
   const autoGroupsList = useMemo(() => {
@@ -415,7 +423,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       <TabsContent value='display' keepMounted>
         <GroupDisplayEditor
           value={groupDisplayConfig}
-          groupOptions={registryNames}
+          groupOptions={groupDisplayOptions}
           onChange={(value) => onChange('GroupDisplayConfig', value)}
         />
       </TabsContent>

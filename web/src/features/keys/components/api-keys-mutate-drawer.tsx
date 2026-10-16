@@ -412,6 +412,7 @@ export function ApiKeysMutateDrawer({
                     <FormControl>
                       <ApiKeyGroupCombobox
                         options={groups}
+                        displayCategories={groupsData?.display_categories}
                         value={field.value}
                         onValueChange={(group) => {
                           field.onChange(group)
@@ -459,6 +460,7 @@ export function ApiKeysMutateDrawer({
                           mode={autoGroupsMode}
                           options={groups}
                           globalOptions={globalAutoGroupOptions}
+                          displayCategories={groupsData?.display_categories}
                           maxCount={maxAutoGroups}
                           onChange={(value) => {
                             form.setValue('auto_groups_mode', value.mode, {

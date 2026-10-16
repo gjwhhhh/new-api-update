@@ -72,6 +72,52 @@ func TestValidateGroupConfigRejectsInvalidDisplayAssignments(t *testing.T) {
 	assert.Contains(t, err.Error(), "不存在的展示分组")
 }
 
+func TestVisibleGroupDisplayCategoriesKeepsProviderOverridesWithoutLeakingHiddenCustomCategories(t *testing.T) {
+	config := &dto.GroupDisplayConfig{
+		Categories: []dto.GroupDisplayCategory{
+			{ID: "provider:openai", Name: "GPT 专区", Icon: "OpenAI.Color", Order: 10},
+			{ID: "vip-only", Name: "VIP 专区", Order: 20},
+			{ID: "visible-custom", Name: "可见专区", Order: 30},
+		},
+		Assignments: map[string]dto.GroupDisplayAssignment{
+			"hidden-vip": {CategoryID: "vip-only"},
+			"visible":    {CategoryID: "visible-custom"},
+		},
+	}
+
+	categories := VisibleGroupDisplayCategories(config, map[string]struct{}{
+		"gpt-free": {},
+		"visible":  {},
+	})
+
+	assert.Contains(t, categories, "provider:openai")
+	assert.Contains(t, categories, "visible-custom")
+	assert.NotContains(t, categories, "vip-only")
+
+	categories = VisibleGroupDisplayCategories(config, map[string]struct{}{"visible": {}})
+	assert.NotContains(t, categories, "provider:openai")
+}
+
+func TestResolveAutomaticGroupDisplayCategoryIDUsesStableGroupIdentifier(t *testing.T) {
+	tests := []struct {
+		group string
+		want  string
+	}{
+		{group: "gpt", want: "provider:openai"},
+		{group: "gpt-pro", want: "provider:openai"},
+		{group: "claude-team", want: "provider:anthropic"},
+		{group: "gemini-2.5", want: "provider:gemini"},
+		{group: "qwen-max", want: "provider:domestic"},
+		{group: "vip", want: "other"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.group, func(t *testing.T) {
+			assert.Equal(t, test.want, ResolveAutomaticGroupDisplayCategoryID(test.group))
+		})
+	}
+}
+
 func TestValidateGroupConfigRejectsDeletedExistingGroup(t *testing.T) {
 	current := map[string]float64{"default": 1, "vip": 1}
 	proposed := map[string]float64{"default": 1, "premium": 1}

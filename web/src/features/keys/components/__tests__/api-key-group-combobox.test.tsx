@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 
+import type { GroupDisplayCategory } from '@/lib/group-display'
+
 import type { ApiKeyGroupOption } from '../api-key-group-combobox'
 
 let shouldReduceMotion = false
@@ -77,6 +79,7 @@ const options: ApiKeyGroupOption[] = [
 function Harness(props: {
   initialValue: string
   options?: ApiKeyGroupOption[]
+  displayCategories?: Record<string, GroupDisplayCategory>
 }) {
   const [value, setValue] = useState(props.initialValue)
 
@@ -84,6 +87,7 @@ function Harness(props: {
     <I18nextProvider i18n={i18n}>
       <ApiKeyGroupCombobox
         options={props.options ?? options}
+        displayCategories={props.displayCategories}
         value={value}
         onValueChange={setValue}
       />
@@ -388,5 +392,59 @@ describe('API key group combobox Auto effect', () => {
     ].map((item) => item.textContent)
     expect(labels[0]).toContain('Standard pool')
     expect(labels[1]).toContain('Priority pool')
+  })
+
+  test('applies a provider override to an automatically inferred visible group', () => {
+    setReducedMotion(false)
+    render(
+      <Harness
+        initialValue='gpt-new'
+        displayCategories={{
+          'provider:openai': {
+            id: 'provider:openai',
+            name: 'GPT Zone',
+            icon: 'OpenAI.Color',
+            order: 25,
+          },
+        }}
+        options={[
+          {
+            value: 'gpt-new',
+            label: 'gpt-new',
+            desc: 'New GPT pool',
+            ratio: 1,
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(getTrigger())
+    expect(
+      screen.getByRole('tab', { name: /GPT Zone.*1 group/ })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(getCommandItem('New GPT pool')).toBeInTheDocument()
+  })
+
+  test('does not use a user-specific description to determine the provider', () => {
+    setReducedMotion(false)
+    render(
+      <Harness
+        initialValue='vip'
+        options={[
+          {
+            value: 'vip',
+            label: 'vip',
+            desc: 'GPT access granted for this user group',
+            ratio: 1,
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(getTrigger())
+    expect(
+      screen.getByRole('tab', { name: /Other groups.*1 group/ })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: /GPT.*1 group/ })).toBeNull()
   })
 })

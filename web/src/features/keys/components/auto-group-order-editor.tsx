@@ -30,6 +30,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
+import type { GroupDisplayCategory } from '@/lib/group-display'
 import { cn } from '@/lib/utils'
 
 import {
@@ -43,6 +44,7 @@ type AutoGroupOrderEditorProps = Omit<ComponentProps<'div'>, 'onChange'> & {
   mode: 'inherit' | 'custom'
   options: ApiKeyGroupOption[]
   globalOptions: ApiKeyGroupOption[]
+  displayCategories?: Record<string, GroupDisplayCategory>
   maxCount: number
   onChange: (value: { groups: string[]; mode: 'inherit' | 'custom' }) => void
   'data-slot'?: string
@@ -125,6 +127,7 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
 
       <ApiKeyGroupCombobox
         options={candidates}
+        displayCategories={props.displayCategories}
         value={undefined}
         onValueChange={handleAdd}
         placeholder={

@@ -214,6 +214,184 @@ describe('group settings workspace', () => {
     })
   })
 
+  it('shows automatic provider categories and converts one into an editable category', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn(async (_values: typeof defaults) => {})
+    render(
+      <Fixture
+        onSave={onSave}
+        initial={{
+          GroupRatio: '{"gpt-pro":1,"claude-team":1}',
+          UserUsableGroups:
+            '{"gpt-pro":"Stable GPT pool","claude-team":"Claude pool"}',
+          TopupGroupRatio: '{}',
+          AutoGroups: '[]',
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Group display' }))
+    const gptCategory = screen.getByRole('region', { name: 'GPT' })
+    const claudeCategory = screen.getByRole('region', { name: 'Claude' })
+    expect(within(gptCategory).getByText('gpt-pro')).toBeVisible()
+    expect(within(claudeCategory).getByText('claude-team')).toBeVisible()
+
+    await user.click(within(gptCategory).getByRole('button', { name: 'Edit' }))
+    expect(
+      screen.getByRole('textbox', { name: 'Display category name' })
+    ).toHaveValue('GPT')
+
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(JSON.parse(onSave.mock.calls[0][0].GroupDisplayConfig)).toEqual({
+      categories: [
+        {
+          id: 'provider:openai',
+          name: 'GPT',
+          icon: 'OpenAI.Color',
+          order: 100,
+        },
+      ],
+      assignments: {},
+    })
+  })
+
+  it('resets custom display assignments and reruns automatic provider matching', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn(async (_values: typeof defaults) => {})
+    render(
+      <Fixture
+        onSave={onSave}
+        initial={{
+          GroupRatio: '{"gpt":1}',
+          UserUsableGroups: '{"gpt":"GPT pool"}',
+          TopupGroupRatio: '{}',
+          AutoGroups: '[]',
+          GroupDisplayConfig: JSON.stringify({
+            categories: [
+              { id: 'other', name: 'Other groups', icon: '', order: 0 },
+            ],
+            assignments: {
+              gpt: { category_id: 'other', order: 0 },
+            },
+          }),
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Group display' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Reset to automatic categories' })
+    )
+    const dialog = screen.getByRole('alertdialog')
+    expect(within(dialog).getByText('Reset display categories?')).toBeVisible()
+    await user.click(within(dialog).getByRole('button', { name: 'Reset' }))
+
+    expect(screen.getByRole('region', { name: 'GPT' })).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Reset to automatic categories' })
+    ).toBeDisabled()
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(JSON.parse(onSave.mock.calls[0][0].GroupDisplayConfig)).toEqual({
+      categories: [],
+      assignments: {},
+    })
+  })
+
+  it('shows inherited groups and moves one directly into a custom category', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn(async (_values: typeof defaults) => {})
+    render(
+      <Fixture
+        onSave={onSave}
+        initial={{
+          GroupRatio: '{"gpt-pro":1,"gpt-new":1}',
+          UserUsableGroups:
+            '{"gpt-pro":"Stable GPT pool","gpt-new":"New GPT pool"}',
+          TopupGroupRatio: '{}',
+          AutoGroups: '[]',
+          GroupDisplayConfig: JSON.stringify({
+            categories: [
+              {
+                id: 'provider:openai',
+                name: 'GPT Zone',
+                icon: 'OpenAI.Color',
+                order: 0,
+              },
+              {
+                id: 'display_custom',
+                name: 'Custom',
+                icon: '',
+                order: 10,
+              },
+            ],
+            assignments: {
+              'gpt-pro': { category_id: 'provider:openai', order: 0 },
+            },
+          }),
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Group display' }))
+    const gptCategory = screen.getByRole('region', { name: 'GPT Zone' })
+    const customCategory = screen.getByRole('region', { name: 'Custom' })
+    const list = within(gptCategory).getByRole('list', {
+      name: 'Model groups in this category',
+    })
+    const rows = within(list).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveTextContent('gpt-pro')
+    expect(rows[1]).toHaveTextContent('gpt-new')
+    expect(within(rows[1]).getByText('Auto')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Remove gpt-new' })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Restore automatic category' })
+    ).toBeVisible()
+
+    await user.click(
+      within(rows[1]).getByRole('combobox', {
+        name: 'Move gpt-new to category',
+      })
+    )
+    await user.click(screen.getByRole('option', { name: 'Custom' }))
+
+    expect(within(gptCategory).queryByText('gpt-new')).toBeNull()
+    const customList = within(customCategory).getByRole('list', {
+      name: 'Model groups in this category',
+    })
+    expect(within(customList).getByText('gpt-new')).toBeVisible()
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(JSON.parse(onSave.mock.calls[0][0].GroupDisplayConfig)).toEqual({
+      categories: [
+        {
+          id: 'provider:openai',
+          name: 'GPT Zone',
+          icon: 'OpenAI.Color',
+          order: 0,
+        },
+        {
+          id: 'display_custom',
+          name: 'Custom',
+          icon: '',
+          order: 10,
+        },
+      ],
+      assignments: {
+        'gpt-pro': { category_id: 'provider:openai', order: 0 },
+        'gpt-new': { category_id: 'display_custom', order: 0 },
+      },
+    })
+  })
+
   it('reorders model groups inside a display category and saves their order', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn(async (_values: typeof defaults) => {})

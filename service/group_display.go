@@ -31,6 +31,27 @@ func emptyGroupDisplayConfig() *dto.GroupDisplayConfig {
 	}
 }
 
+func VisibleGroupDisplayCategories(config *dto.GroupDisplayConfig, visibleGroups map[string]struct{}) map[string]dto.GroupDisplayCategory {
+	if config == nil {
+		return map[string]dto.GroupDisplayCategory{}
+	}
+	visibleCategoryIDs := make(map[string]struct{})
+	for group := range visibleGroups {
+		if assignment, ok := config.Assignments[group]; ok {
+			visibleCategoryIDs[assignment.CategoryID] = struct{}{}
+			continue
+		}
+		visibleCategoryIDs[ResolveAutomaticGroupDisplayCategoryID(group)] = struct{}{}
+	}
+	result := make(map[string]dto.GroupDisplayCategory)
+	for _, category := range config.Categories {
+		if _, ok := visibleCategoryIDs[category.ID]; ok {
+			result[category.ID] = category
+		}
+	}
+	return result
+}
+
 func GetGroupDisplayConfig() *dto.GroupDisplayConfig {
 	common.OptionMapRWMutex.RLock()
 	raw := common.OptionMap[setting.GroupDisplayConfigOptionKey]

@@ -15,7 +15,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
 
     steps:
       - name: Check out source
@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           SHORT_SHA="${GITHUB_SHA::12}"
-          VERSION="custom-prod-${SHORT_SHA}"
+          VERSION="custom-prod-${SHORT_SHA}-arm64"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "${VERSION}" > VERSION
 
@@ -40,11 +40,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push AMD64 image
+      - name: Build and push ARM64 image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/arm64
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:custom-prod
@@ -60,4 +60,4 @@ jobs:
           echo "- Tag: \`${GITHUB_REF_NAME}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Image: \`${REGISTRY}/${IMAGE_NAME}:${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Platform: \`linux/amd64\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Platform: \`linux/arm64\`" >> "$GITHUB_STEP_SUMMARY"

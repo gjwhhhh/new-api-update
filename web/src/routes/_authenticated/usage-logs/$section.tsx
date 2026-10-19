@@ -34,6 +34,15 @@ const logTypeSearchSchema = z
   .catch([])
 
 const usageLogsSearchSchema = z.object({
+  preset: z
+    .preprocess(
+      (value) => (value == null ? undefined : String(value)),
+      z
+        .string()
+        .regex(/^(system|temporary|[1-9]\d*)$/)
+        .optional()
+    )
+    .catch(undefined),
   page: z.number().optional().catch(1),
   pageSize: z.number().optional().catch(undefined),
   type: logTypeSearchSchema.optional(),
@@ -62,11 +71,11 @@ export const Route = createFileRoute('/_authenticated/usage-logs/$section')({
     const hasTypeSearch = Array.isArray(search?.type)
       ? search.type.length > 0
       : search?.type != null && search.type !== ''
-    if (params.section !== 'common' && hasTypeSearch) {
+    if (params.section !== 'common' && (hasTypeSearch || search.preset)) {
       throw redirect({
         to: '/usage-logs/$section',
         params: { section: params.section },
-        search: { ...search, type: undefined },
+        search: { ...search, type: undefined, preset: undefined },
         replace: true,
       })
     }

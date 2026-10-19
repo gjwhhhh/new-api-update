@@ -46,6 +46,7 @@ import { shouldShowBillingSource } from '../lib/billing-source'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
 import { fetchLogsByCategory } from '../lib/utils'
+import { useLogPresets } from '../presets/context'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
@@ -96,7 +97,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     viewAccess,
   } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
-  const searchParams = route.useSearch()
+  const routeSearch = route.useSearch()
+  const presets = useLogPresets()
+  const searchParams = presets?.applied ?? routeSearch
   const userId = useAuthStore((state) => state.auth.user?.id)
   const { data: showBillingSource = false } = useQuery({
     queryKey: ['usage-log-billing-source', isAdmin, userId],
@@ -129,7 +132,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
+    search: searchParams,
     navigate: route.useNavigate(),
     pagination: { defaultPage: 1, defaultPageSize: isMobile ? 20 : 100 },
     globalFilter: { enabled: false },
@@ -161,10 +164,12 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const { data, isLoading, isFetching } = useQuery({
+    enabled: !presets || presets.ready,
     queryKey: [
       'logs',
       logCategory,
       viewAccess,
+      userId,
       pagination.pageIndex + 1,
       pagination.pageSize,
       columnFilters,
@@ -190,7 +195,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     placeholderData: (previousData, previousQuery) => {
       if (
         previousQuery?.queryKey[1] === logCategory &&
-        previousQuery.queryKey[2] === viewAccess
+        previousQuery.queryKey[2] === viewAccess &&
+        previousQuery.queryKey[3] === userId
       ) {
         return previousData
       }
@@ -205,7 +211,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     isRoot,
     showBillingSource
   )
-  const isLoadingData = isLoading || (isFetching && !data)
+  const isLoadingData =
+    Boolean(presets && !presets.ready) || isLoading || (isFetching && !data)
 
   const { table } = useDataTable({
     data: logs as Record<string, unknown>[],

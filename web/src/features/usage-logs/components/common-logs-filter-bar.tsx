@@ -47,6 +47,9 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
+import { useLogPresets } from '../presets/context'
+import { LogPresetControls } from '../presets/controls'
+import { logTypeValue } from '../presets/filters'
 import type { CommonLogFilters } from '../types'
 import { CommonLogsStats } from './common-logs-stats'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
@@ -121,6 +124,7 @@ export function CommonLogsFilterBar<TData>(
   props: CommonLogsFilterBarProps<TData>
 ) {
   const { t } = useTranslation()
+  const presets = useLogPresets()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -197,11 +201,15 @@ export function CommonLogsFilterBar<TData>(
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
   const activeDraft =
     draft.sourceKey === searchState.sourceKey ? draft : searchState
-  const filters = activeDraft.filters
-  const logType = activeDraft.logType
+  const filters = presets?.draft.filters ?? activeDraft.filters
+  const logType = presets?.draft.logType ?? activeDraft.logType
 
   const handleChange = useCallback(
     (field: keyof CommonLogFilters, value: Date | string | undefined) => {
+      if (presets) {
+        presets.change(field, value)
+        return
+      }
       setDraft((current) => {
         const base =
           current.sourceKey === searchState.sourceKey ? current : searchState
@@ -212,11 +220,15 @@ export function CommonLogsFilterBar<TData>(
         }
       })
     },
-    [searchState]
+    [searchState, presets]
   )
 
   const handleApply = useCallback(
     (nextFilters: CommonLogFilters = filters) => {
+      if (presets) {
+        void presets.apply(nextFilters)
+        return
+      }
       const filterParams = buildSearchParams(nextFilters, 'common')
       navigate({
         to: '/usage-logs/$section',
@@ -230,7 +242,7 @@ export function CommonLogsFilterBar<TData>(
       queryClient.invalidateQueries({ queryKey: ['logs'] })
       queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
     },
-    [filters, logType, navigate, queryClient]
+    [filters, logType, navigate, queryClient, presets]
   )
 
   const handleReset = useCallback(() => {
@@ -374,6 +386,10 @@ export function CommonLogsFilterBar<TData>(
         onValueChange={(value) => {
           const nextLogType =
             value !== null && isLogTypeValue(value) ? value : LOG_TYPE_ALL_VALUE
+          if (presets) {
+            presets.changeType(logTypeValue(nextLogType))
+            return
+          }
           setDraft((current) => {
             const base =
               current.sourceKey === searchState.sourceKey
@@ -507,6 +523,8 @@ export function CommonLogsFilterBar<TData>(
       compactMobile
       stats={statsBar}
       actionStart={sensitiveToggle}
+      presetControls={<LogPresetControls />}
+      nestedDialogOpen={presets?.dialogOpen}
       primaryFilters={
         <>
           {dateRangeFilter}
@@ -533,8 +551,14 @@ export function CommonLogsFilterBar<TData>(
       advancedFilterCount={expandedFilterCount}
       hasActiveFilters={hasAdditionalFilters}
       onSearch={() => handleApply()}
-      searchLoading={fetchingLogs > 0}
-      onReset={handleReset}
+      searchLoading={
+        fetchingLogs > 0 ||
+        Boolean(presets && (presets.busy || presets.loading || !presets.ready))
+      }
+      onReset={presets?.reset ?? handleReset}
+      resetDisabled={
+        presets ? presets.busy || presets.loading || !presets.ready : undefined
+      }
     />
   )
 }

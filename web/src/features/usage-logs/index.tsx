@@ -34,6 +34,8 @@ import {
   useUsageLogsContext,
 } from './components/usage-logs-provider'
 import { UsageLogsTable } from './components/usage-logs-table'
+import { useLogPresets } from './presets/context'
+import { LogFilterPresetsProvider } from './presets/provider'
 import {
   isUsageLogsSectionId,
   USAGE_LOGS_DEFAULT_SECTION,
@@ -72,6 +74,7 @@ function UsageLogsContent() {
     setAffinityDialogOpen,
   } = useUsageLogsContext()
   const { canManageScope, viewScope, setViewScope } = useLogsViewScope()
+  const presets = useLogPresets()
   const tabNavGroups = useMemo<NavGroup[]>(
     () => [
       {
@@ -111,10 +114,11 @@ function UsageLogsContent() {
   const handleViewScopeChange = useCallback(
     (scope: string) => {
       if (scope === 'all' || scope === 'self') {
-        setViewScope(scope as LogsViewScope)
+        if (presets) presets.changeScope(scope)
+        else setViewScope(scope as LogsViewScope)
       }
     },
-    [setViewScope]
+    [setViewScope, presets]
   )
 
   const pageMeta =
@@ -188,7 +192,9 @@ function UsageLogsContent() {
 export function UsageLogs() {
   return (
     <UsageLogsProvider>
-      <UsageLogsContent />
+      <LogFilterPresetsProvider>
+        <UsageLogsContent />
+      </LogFilterPresetsProvider>
     </UsageLogsProvider>
   )
 }

@@ -50,11 +50,14 @@ interface LogsFilterToolbarProps<TData> {
   mobileFilterCount?: number
   stats?: ReactNode
   actionStart?: ReactNode
+  presetControls?: ReactNode
+  nestedDialogOpen?: boolean
+  resetDisabled?: boolean
   hasActiveFilters: boolean
   hasAdvancedActiveFilters?: boolean
   advancedFilterCount?: number
   searchLoading?: boolean
-  onReset: () => void
+  onReset: () => void | Promise<boolean>
   onSearch: () => void
   className?: string
 }
@@ -100,9 +103,9 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
     props.advancedFilterCount ?? (props.hasAdvancedActiveFilters ? 1 : 0)
   const activeMobileFilterCount = props.mobileFilterCount ?? activeAdvancedCount
 
-  const handleMobileReset = () => {
-    props.onReset()
-    setMobileFiltersOpen(false)
+  const handleMobileReset = async () => {
+    const success = await props.onReset()
+    if (success !== false) setMobileFiltersOpen(false)
   }
 
   const handleMobileSearch = () => {
@@ -140,7 +143,13 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
 
   if (isMobile && props.mobilePinnedFilters != null) {
     return (
-      <Drawer open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+      <Drawer
+        key={props.nestedDialogOpen ? 'preset-dialog' : 'filters'}
+        open={mobileFiltersOpen && !props.nestedDialogOpen}
+        onOpenChange={(open) => {
+          if (!props.nestedDialogOpen) setMobileFiltersOpen(open)
+        }}
+      >
         <DataTableMobileFilterPanel
           compact={props.compactMobile}
           className={props.className}
@@ -209,6 +218,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
               </DrawerDescription>
             </DrawerHeader>
             <div className='flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 py-3'>
+              {props.presetControls}
               {props.mobileFilters ?? (
                 <>
                   {props.primaryFilters}
@@ -221,7 +231,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
                 type='button'
                 variant='outline'
                 onClick={handleMobileReset}
-                disabled={!props.hasActiveFilters}
+                disabled={props.resetDisabled ?? !props.hasActiveFilters}
               >
                 {t('Reset')}
               </Button>
@@ -247,6 +257,9 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
         props.className
       )}
     >
+      {props.presetControls && (
+        <div className='mb-3'>{props.presetControls}</div>
+      )}
       <div className='flex flex-wrap items-start gap-2'>
         <div className='grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]'>
           {props.primaryFilters}
@@ -272,7 +285,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
             type='button'
             variant='outline'
             onClick={props.onReset}
-            disabled={!props.hasActiveFilters}
+            disabled={props.resetDisabled ?? !props.hasActiveFilters}
           >
             {t('Reset')}
           </Button>

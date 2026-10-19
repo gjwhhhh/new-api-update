@@ -24,10 +24,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatLogQuota } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
 import { buildApiParams } from '../lib/utils'
+import { useLogPresets } from '../presets/context'
 import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -51,11 +53,15 @@ function StatBadge(props: {
 export function CommonLogsStats() {
   const { t } = useTranslation()
   const { isAdminView: isAdmin } = useLogsViewScope()
-  const searchParams = route.useSearch()
+  const routeSearch = route.useSearch()
+  const presets = useLogPresets()
+  const searchParams = presets?.applied ?? routeSearch
+  const userId = useAuthStore((state) => state.auth.user?.id)
   const { sensitiveVisible } = useUsageLogsContext()
 
   const { data: stats, isLoading } = useQuery({
-    queryKey: ['usage-logs-stats', isAdmin, searchParams],
+    queryKey: ['usage-logs-stats', isAdmin, userId, searchParams],
+    enabled: !presets || presets.ready,
     queryFn: async () => {
       const params = buildApiParams({
         page: 1,
@@ -73,10 +79,14 @@ export function CommonLogsStats() {
         ? result.data || DEFAULT_LOG_STATS
         : DEFAULT_LOG_STATS
     },
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === isAdmin &&
+      previousQuery.queryKey[2] === userId
+        ? previousData
+        : undefined,
   })
 
-  if (isLoading) {
+  if (isLoading || (presets && !presets.ready)) {
     return (
       <div className='flex items-center gap-2'>
         <Skeleton className='h-7 w-[150px] rounded-md' />

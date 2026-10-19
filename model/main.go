@@ -390,6 +390,8 @@ func migrateDB() error {
 		&UserAccessToken{},
 		&UserChannelPriority{},
 		&UserSessionAffinity{},
+		&UserLogFilterPreset{},
+		&UserLogFilterPreference{},
 	)
 	if err != nil {
 		return err

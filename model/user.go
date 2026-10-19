@@ -983,6 +983,9 @@ func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
 		if err := deleteUserChannelPrioritiesWithTx(tx, user.Id); err != nil {
 			return err
 		}
+		if err := deleteUserLogFilterPresetsWithTx(tx, user.Id); err != nil {
+			return err
+		}
 		return tx.Delete(user).Error
 	}); err != nil {
 		return 0, err
@@ -1064,6 +1067,9 @@ func deleteUserAuthenticationData(tx *gorm.DB, userId int) error {
 		}
 	}
 	if err := deleteUserOAuthBindingsByUserId(tx, userId); err != nil {
+		return err
+	}
+	if err := deleteUserLogFilterPresetsWithTx(tx, userId); err != nil {
 		return err
 	}
 	return deleteUserChannelPrioritiesWithTx(tx, userId)

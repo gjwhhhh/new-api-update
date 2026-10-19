@@ -23,6 +23,16 @@ import i18next from 'i18next'
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
+  LOG_PRESET_INVALID:
+    'Invalid filter preset. Check its name and filter values.',
+  LOG_PRESET_CONFLICT:
+    'This preset or default selection changed. Reset or reload before trying again.',
+  LOG_PRESET_NAME_EXISTS: 'A filter preset with this name already exists.',
+  LOG_PRESET_LIMIT: 'You can save up to 20 filter presets in this view.',
+  LOG_PRESET_NOT_FOUND: 'This filter preset is no longer available.',
+  LOG_PRESET_FORBIDDEN:
+    'You do not have permission to use presets in this view.',
+  LOG_PRESET_FAILED: 'Unable to load or save filter presets. Please try again.',
   USER_SESSION_AFFINITY_CONFLICT:
     'This user configuration changed. Reload before saving again.',
   INVALID_USER_SESSION_AFFINITY: 'Invalid session affinity settings.',

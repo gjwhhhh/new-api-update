@@ -204,6 +204,17 @@ afterEach(() => {
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
+  test('keeps the mobile drawer full width and widens only the desktop API key drawer', async () => {
+    installApiFixtures([])
+    await renderCreateDrawer()
+
+    expect(screen.getByRole('dialog', { name: 'Create API Key' })).toHaveClass(
+      'w-full',
+      'sm:!max-w-[620px]',
+      'lg:!max-w-[768px]'
+    )
+  })
+
   test('inherits the root Auto order and sends an empty override for every batch-created key', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)

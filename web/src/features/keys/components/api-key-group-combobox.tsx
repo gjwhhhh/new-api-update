@@ -76,6 +76,13 @@ type ResolvedDisplayCategory = GroupDisplayCategory & {
 
 // Group names cannot contain commas, so this value cannot collide with a real option.
 const inactiveCommandValue = '__inactive_api_key_group_option__,'
+// Category expansion changes the popup height; keep it below the trigger and
+// shift within the viewport instead of flipping sideways.
+const groupPopoverCollisionAvoidance = {
+  side: 'shift',
+  align: 'shift',
+  fallbackAxisSide: 'none',
+} as const
 
 export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
@@ -223,19 +230,21 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
             props.value === option.value ? 'opacity-100' : 'opacity-0'
           )}
         />
-        <span className='min-w-0 flex-1'>
-          <span className='block truncate font-medium'>{option.label}</span>
-          {option.desc ? (
-            <span className='text-muted-foreground block truncate text-xs'>
-              {option.desc}
-            </span>
-          ) : null}
+        <span className='flex min-w-0 flex-1 flex-col items-start gap-2 sm:flex-row sm:gap-3'>
+          <span className='w-full min-w-0 sm:flex-1'>
+            <span className='block truncate font-medium'>{option.label}</span>
+            {option.desc ? (
+              <span className='text-muted-foreground line-clamp-2 text-xs wrap-anywhere'>
+                {option.desc}
+              </span>
+            ) : null}
+          </span>
+          <GroupRatioBadge
+            ratio={option.ratio}
+            isAuto={isAutoOption}
+            shouldReduceMotion={shouldReduceMotion}
+          />
         </span>
-        <GroupRatioBadge
-          ratio={option.ratio}
-          isAuto={isAutoOption}
-          shouldReduceMotion={shouldReduceMotion}
-        />
       </CommandItem>
     )
   }
@@ -312,12 +321,15 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
         />
       </PopoverTrigger>
       <PopoverContent
-        className='data-closed:zoom-out-100 data-open:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0 w-[min(var(--anchor-width),calc(100vw-2rem))] overflow-hidden rounded-xl p-0 shadow-lg data-closed:duration-75 data-open:duration-100 sm:w-[min(44rem,calc(100vw-2rem))]'
+        align='start'
+        collisionAvoidance={groupPopoverCollisionAvoidance}
+        className='data-closed:zoom-out-100 data-open:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0 max-h-(--available-height) w-[min(var(--anchor-width),44rem,calc(100vw-2rem))] gap-0 overflow-hidden rounded-xl p-0 shadow-lg data-closed:duration-75 data-open:duration-100'
         onWheel={(event) => event.stopPropagation()}
         onTouchMove={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <Command
+          className='h-auto min-h-0 flex-1 [&>[data-slot=command-input-wrapper]]:shrink-0'
           shouldFilter={false}
           value={activeOptionValue}
           onValueChange={setActiveOptionValue}
@@ -333,7 +345,7 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
           <div
             role='tablist'
             aria-label={t('Provider categories')}
-            className='flex gap-2 overflow-x-auto border-b px-3 py-3'
+            className='flex shrink-0 gap-2 overflow-x-auto border-b px-3 py-3'
           >
             <Button
               type='button'
@@ -405,7 +417,7 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
               </Button>
             ))}
           </div>
-          <CommandList className='max-h-[420px] space-y-2 p-3'>
+          <CommandList className='max-h-[420px] min-h-0 space-y-2 p-3'>
             {showAuto && autoOption ? (
               <div className='mb-2'>{renderOption(autoOption)}</div>
             ) : null}
@@ -440,10 +452,10 @@ export function ApiKeyGroupCombobox(props: ApiKeyGroupComboboxProps) {
                         {getLobeIcon(category.icon, 22)}
                       </span>
                     ) : null}
-                    <span className='min-w-0 flex-1 font-semibold'>
+                    <span className='min-w-0 flex-1 truncate font-semibold'>
                       {category.name}
                     </span>
-                    <span className='text-muted-foreground text-xs tabular-nums'>
+                    <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>
                       {t('{{count}} groups', {
                         count: category.options.length,
                       })}

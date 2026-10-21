@@ -16,8 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
+import { describe, expect, test, vi } from 'vitest'
 
 import type { GroupDisplayCategory } from '@/lib/group-display'
 
@@ -111,6 +117,56 @@ function getCommandItem(label: string): HTMLElement {
 }
 
 describe('API key group combobox Auto effect', () => {
+  test('limits the popup to the trigger width and keeps the list scrollable in short viewports', () => {
+    render(<Harness initialValue='default' />)
+    fireEvent.click(getTrigger())
+
+    const popup = screen
+      .getByPlaceholderText('Search...')
+      .closest('[data-slot="popover-content"]')
+    expect(popup).toHaveClass(
+      'w-[min(var(--anchor-width),44rem,calc(100vw-2rem))]',
+      'max-h-(--available-height)'
+    )
+    expect(popup?.parentElement).toHaveAttribute('data-align', 'start')
+    expect(screen.getByRole('listbox')).toHaveClass(
+      'min-h-0',
+      'overflow-y-auto'
+    )
+  })
+
+  test('wraps long descriptions and stacks the multiplier below group text on narrow screens', () => {
+    const description =
+      'Priority access for long conversations and large context windows'
+    render(
+      <Harness
+        initialValue='default'
+        options={[
+          {
+            value: 'default',
+            label: 'default-long-context-priority-access',
+            desc: description,
+            ratio: 3,
+          },
+        ]}
+      />
+    )
+    fireEvent.click(getTrigger())
+
+    const option = getCommandItem(description)
+    const text = within(option).getByText(description)
+    const multiplier = within(option).getByText('3x')
+    expect(text).toHaveClass('line-clamp-2', 'wrap-anywhere')
+    expect(text).not.toHaveClass('truncate')
+    expect(
+      multiplier.closest('[data-slot="badge"]')?.parentElement
+    ).toHaveClass('flex-col', 'sm:flex-row', 'min-w-0')
+
+    fireEvent.click(option)
+    expect(getTrigger()).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('selected-group')).toHaveTextContent('default')
+  })
+
   test('uses the compact table capsules in the selected group and dropdown options', () => {
     setReducedMotion(false)
     render(<Harness initialValue='auto' />)
@@ -295,6 +351,58 @@ describe('API key group combobox Auto effect', () => {
     expect(
       screen.getByRole('button', { name: /GPT.*1 groups/ })
     ).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('keeps the popup on the preferred side when switching provider categories', () => {
+    setReducedMotion(false)
+    let popupHeight = 300
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function (this: HTMLElement) {
+        if (this.getAttribute('role') === 'combobox') {
+          return new DOMRect(100, 100, 400, 80)
+        }
+        if (this.querySelector('[data-slot="popover-content"]')) {
+          return new DOMRect(100, 180, 400, popupHeight)
+        }
+        return new DOMRect(0, 0, 0, 0)
+      }
+    )
+
+    render(
+      <Harness
+        initialValue='gpt-pro'
+        options={[
+          {
+            value: 'gpt-pro',
+            label: 'gpt-pro',
+            desc: 'Stable GPT pool',
+            ratio: 0.22,
+          },
+          {
+            value: 'claude-official',
+            label: 'claude-official',
+            desc: 'Claude pool',
+            ratio: 0.45,
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(getTrigger())
+    const popup = document.querySelector<HTMLElement>(
+      '[data-slot="popover-content"]'
+    )
+    const positioner = popup?.parentElement
+    expect(positioner).toHaveAttribute('data-side', 'bottom')
+
+    popupHeight = 650
+    fireEvent.click(screen.getByRole('button', { name: /Claude.*1 groups/ }))
+    window.dispatchEvent(new Event('resize'))
+    return waitFor(() => {
+      expect(positioner).toHaveAttribute('data-side', 'bottom')
+    }).finally(() => {
+      vi.restoreAllMocks()
+    })
   })
 
   test('searches across provider categories and expands matching results', () => {

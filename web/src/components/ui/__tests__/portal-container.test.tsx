@@ -28,6 +28,7 @@ import {
   DrawerDescription,
   DrawerTitle,
 } from '../drawer'
+import { Popover, PopoverContent, PopoverTrigger } from '../popover'
 import {
   Select,
   SelectContent,
@@ -70,6 +71,17 @@ function ProviderSelect(props: {
         ))}
       </SelectContent>
     </Select>
+  )
+}
+
+function ProviderPopover() {
+  return (
+    <Popover>
+      <PopoverTrigger render={<button type='button'>Open details</button>} />
+      <PopoverContent>
+        <span>Popover details</span>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -147,6 +159,22 @@ describe('popups inside a drawer', () => {
 
     expect(change).toHaveBeenCalledWith('gemini', expect.anything())
     expect(screen.getByRole('dialog', { name: 'Filters' })).toBeInTheDocument()
+  })
+
+  it('renders popover content inside the drawer dialog', async () => {
+    render(
+      <FilterDrawer>
+        <ProviderPopover />
+      </FilterDrawer>
+    )
+    const user = userEvent.setup()
+    const dialog = screen.getByRole('dialog', { name: 'Filters' })
+
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Open details' })
+    )
+
+    expect(within(dialog).getByText('Popover details')).toBeInTheDocument()
   })
 })
 

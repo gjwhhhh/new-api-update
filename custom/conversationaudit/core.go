@@ -1,6 +1,7 @@
 package conversationaudit
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -168,7 +169,7 @@ func initialize() {
 		cleanupExpired()
 	}
 	refreshSettings()
-	go refreshLoop()
+	go refreshLoop(model.DB)
 }
 
 func migrateConversationAuditTables(db *gorm.DB) error {
@@ -177,6 +178,7 @@ func migrateConversationAuditTables(db *gorm.DB) error {
 		&AuditSettings{},
 		&ConversationAuditResponseLink{},
 		&ConversationAuditResponseSegment{},
+		&ConversationAuditPendingResponse{},
 	); err != nil {
 		return err
 	}
@@ -195,13 +197,22 @@ func migrateConversationAuditTables(db *gorm.DB) error {
 	return nil
 }
 
-func refreshLoop() {
+func refreshLoop(db *gorm.DB) {
 	ticker := time.NewTicker(settingsRefreshInterval)
+	reconcileTicker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		refreshSettings()
-		if common.IsMasterNode {
-			cleanupExpired()
+	defer reconcileTicker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			refreshSettings()
+			if common.IsMasterNode {
+				cleanupExpired()
+			}
+		case <-reconcileTicker.C:
+			reconcileResponseContinuationsDB(db)
+		case <-responseReconcileWake:
+			reconcileResponseContinuationsDB(db)
 		}
 	}
 }
@@ -323,7 +334,9 @@ func loadKeyring() (map[string][]byte, error) {
 	return keys, nil
 }
 
-func encrypt(version, plaintext, aad string) (string, string, error) {
+func encrypt(version, plaintext, aad string) (nonceText, ciphertextText string, err error) {
+	started := time.Now()
+	defer func() { observeAuditPhase("encrypt", started, err != nil) }()
 	runtimeState.RLock()
 	key, exists := runtimeState.keys[version]
 	runtimeState.RUnlock()
@@ -376,9 +389,13 @@ func decrypt(version, nonceText, ciphertextText, aad string) (string, error) {
 	return string(plaintext), nil
 }
 
-func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated, fullPayload bool, status string, statusCode int) *ConversationAudit {
+func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated, fullPayload bool, status string, statusCode int, identities ...responseIdentity) *ConversationAudit {
 	cfg := currentConfig()
-	if !cfg.Enabled || (requestBody == "" && responseBody == "") {
+	var identity responseIdentity
+	if len(identities) > 0 {
+		identity = identities[0]
+	}
+	if !cfg.Enabled || (requestBody == "" && responseBody == "" && identity.parentResponseID == "") {
 		return nil
 	}
 	requestID := c.GetString(common.RequestIdKey)
@@ -421,11 +438,46 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 		audit.ResponseNonce = ""
 		audit.ResponseCiphertext = ""
 	}
-	if dbErr := model.DB.Create(audit).Error; dbErr != nil {
+	db, cancel := auditWriteDB()
+	defer cancel()
+	started := time.Now()
+	dbErr := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(audit).Error; err != nil {
+			return err
+		}
+		if identity.parentResponseID != "" {
+			payload, err := common.Marshal(pendingResponseIdentity{ParentResponseID: identity.parentResponseID, ResponseID: identity.responseID})
+			if err != nil {
+				return err
+			}
+			pending := ConversationAuditPendingResponse{AuditID: audit.ID, KeyVersion: cfg.ActiveKeyVersion, CreatedAt: now, ExpiresAt: audit.ExpiresAt, NextAttemptAt: now}
+			pending.Nonce, pending.Ciphertext, err = encrypt(pending.KeyVersion, string(payload), pendingResponseAAD(audit))
+			if err != nil {
+				return err
+			}
+			return tx.Create(&pending).Error
+		}
+		return createResponseLink(tx, audit.ID, audit.UserID, audit.ExpiresAt, responseLinkProtocol(identity.protocol), audit.KeyVersion, identity.responseID)
+	})
+	observeAuditPhase("database", started, dbErr != nil)
+	if dbErr != nil {
 		common.SysError(fmt.Sprintf("conversation audit write failed request_id=%s: %v", requestID, dbErr))
 		return nil
 	}
+	if identity.protocol == protocolOpenAIResponses {
+		notifyResponseReconcile()
+	}
 	return audit
+}
+
+// Audit persistence outlives client disconnects, but never waits indefinitely.
+func auditWriteDB() (*gorm.DB, context.CancelFunc) {
+	return boundedAuditDB(model.DB)
+}
+
+func boundedAuditDB(db *gorm.DB) (*gorm.DB, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	return db.WithContext(ctx), cancel
 }
 
 func auditAAD(audit *ConversationAudit, kind string) string {
@@ -441,13 +493,18 @@ func cleanupExpired() {
 		return
 	}
 	now := time.Now().Unix()
-	if err := model.DB.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAuditResponseSegment{}).Error; err != nil {
+	db, cancel := auditWriteDB()
+	defer cancel()
+	if err := db.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAuditPendingResponse{}).Error; err != nil {
+		common.SysError("conversation audit pending response cleanup failed: " + err.Error())
+	}
+	if err := db.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAuditResponseSegment{}).Error; err != nil {
 		common.SysError("conversation audit response segment cleanup failed: " + err.Error())
 	}
-	if err := model.DB.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAuditResponseLink{}).Error; err != nil {
+	if err := db.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAuditResponseLink{}).Error; err != nil {
 		common.SysError("conversation audit response link cleanup failed: " + err.Error())
 	}
-	if err := model.DB.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAudit{}).Error; err != nil {
+	if err := db.Where("expires_at > 0 AND expires_at < ?", now).Delete(&ConversationAudit{}).Error; err != nil {
 		common.SysError("conversation audit cleanup failed: " + err.Error())
 	}
 }

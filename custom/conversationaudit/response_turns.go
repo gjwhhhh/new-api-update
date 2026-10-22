@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -26,10 +25,9 @@ const (
 	responseLinkRootPersistFailed    responseLinkStatus = "root_persist_failed"
 	responseLinkProviderIDAbsent     responseLinkStatus = "provider_response_id_absent"
 	responseLinkCreated              responseLinkStatus = "created"
-	responseLinkWriteFailed          responseLinkStatus = "write_failed"
+	responseLinkPending              responseLinkStatus = "pending"
 	continuationAppended             responseLinkStatus = "appended"
 	continuationParentLinkNotFound   responseLinkStatus = "parent_link_not_found"
-	continuationLinkLookupFailed     responseLinkStatus = "link_lookup_failed"
 	continuationRequestIDUnavailable responseLinkStatus = "request_id_unavailable"
 	continuationWriteFailed          responseLinkStatus = "write_failed"
 )
@@ -89,27 +87,25 @@ func createResponseLink(db *gorm.DB, auditID uint, userID int, expiresAt int64, 
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error
 }
 
-func registerResponseLink(audit *ConversationAudit, protocol conversationProtocol, responseID string) responseLinkStatus {
-	linkProtocol := responseLinkProtocol(protocol)
-	if linkProtocol == "" {
+func persistedResponseLinkStatus(audit *ConversationAudit, protocol conversationProtocol, responseID, parentResponseID string) responseLinkStatus {
+	if responseLinkProtocol(protocol) == "" {
 		return responseLinkNotApplicable
 	}
 	if audit == nil {
 		return responseLinkRootPersistFailed
 	}
+	if parentResponseID != "" {
+		return responseLinkPending
+	}
 	if responseID == "" {
 		return responseLinkProviderIDAbsent
-	}
-	if err := createResponseLink(model.DB, audit.ID, audit.UserID, audit.ExpiresAt, linkProtocol, audit.KeyVersion, responseID); err != nil {
-		common.SysError("conversation audit response link write failed: " + err.Error())
-		return responseLinkWriteFailed
 	}
 	return responseLinkCreated
 }
 
-func findResponseLink(protocol conversationProtocol, userID int, parentResponseID string) (*ConversationAuditResponseLink, error) {
+func findResponseLinkDB(db *gorm.DB, protocol conversationProtocol, userID int, parentResponseID string) (*ConversationAuditResponseLink, error) {
 	linkProtocol := responseLinkProtocol(protocol)
-	if linkProtocol == "" || parentResponseID == "" || model.DB == nil {
+	if linkProtocol == "" || parentResponseID == "" || db == nil {
 		return nil, nil
 	}
 	for _, keyVersion := range responseLinkKeyVersions() {
@@ -118,7 +114,7 @@ func findResponseLink(protocol conversationProtocol, userID int, parentResponseI
 			continue
 		}
 		var link ConversationAuditResponseLink
-		err = model.DB.Where(
+		err = db.Where(
 			"protocol = ? AND key_version = ? AND response_id_hash = ? AND user_id = ?",
 			linkProtocol,
 			keyVersion,
@@ -135,92 +131,137 @@ func findResponseLink(protocol conversationProtocol, userID int, parentResponseI
 	return nil, nil
 }
 
+type responseContinuation struct {
+	RequestID          string
+	UserID             int
+	ParentResponseID   string
+	ProviderResponseID string
+	Body               string
+	ErrorCode          string
+	CaptureError       string
+	Truncated          bool
+	Status             string
+	HTTPStatus         int
+	CreatedAt          int64
+}
+
+var errContinuationParentMissing = errors.New("conversation audit continuation parent not found")
+
 func appendResponseContinuation(c *gin.Context, protocol conversationProtocol, parentResponseID, responseBody, errorCode, captureError, providerResponseID string, responseTruncated bool, status string, statusCode int) responseLinkStatus {
 	if !isEnabled() || parentResponseID == "" {
 		return continuationParentLinkNotFound
 	}
-	link, err := findResponseLink(protocol, c.GetInt("id"), parentResponseID)
-	if err != nil {
-		common.SysError("conversation audit response link lookup failed: " + err.Error())
-		return continuationLinkLookupFailed
-	}
-	if link == nil {
-		return continuationParentLinkNotFound
-	}
-
-	cfg := currentConfig()
 	requestID := c.GetString(common.RequestIdKey)
 	if requestID == "" {
 		return continuationRequestIDUnavailable
 	}
-	linkProtocol := responseLinkProtocol(protocol)
-	now := time.Now().Unix()
-	err = model.DB.Transaction(func(tx *gorm.DB) error {
-		var audit ConversationAudit
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&audit, link.AuditID).Error; err != nil {
-			return err
-		}
-		if audit.UserID != c.GetInt("id") {
-			return nil
-		}
-
-		segmentBody, limitTruncated, err := fitResponseSegment(responseBody, cfg.MaxContentBytes-audit.ResponseLength)
+	continuation := responseContinuation{RequestID: requestID, UserID: c.GetInt("id"), ParentResponseID: parentResponseID, ProviderResponseID: providerResponseID, Body: responseBody, ErrorCode: errorCode, CaptureError: captureError, Truncated: responseTruncated, Status: status, HTTPStatus: statusCode, CreatedAt: time.Now().Unix()}
+	db, cancel := auditWriteDB()
+	defer cancel()
+	started := time.Now()
+	err := db.Transaction(func(tx *gorm.DB) error {
+		audit, err := continuationRoot(tx, protocol, continuation.UserID, parentResponseID)
 		if err != nil {
 			return err
 		}
-		responseTruncated = responseTruncated || limitTruncated
-
-		segmentLength := 0
-		if segmentBody != "" {
-			segment := &ConversationAuditResponseSegment{
-				AuditID:           audit.ID,
-				RequestID:         requestID,
-				KeyVersion:        cfg.ActiveKeyVersion,
-				ResponseLength:    len(segmentBody),
-				ResponseTruncated: responseTruncated,
-				CreatedAt:         now,
-				ExpiresAt:         audit.ExpiresAt,
-			}
-			segment.ResponseNonce, segment.ResponseCiphertext, err = encrypt(segment.KeyVersion, segmentBody, auditResponseSegmentAAD(segment))
-			if err != nil {
-				return err
-			}
-			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(segment)
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected > 0 {
-				segmentLength = segment.ResponseLength
-			}
-		}
-
-		updates := map[string]interface{}{}
-		if segmentLength > 0 {
-			updates["response_length"] = audit.ResponseLength + segmentLength
-		}
-		if responseTruncated {
-			updates["response_truncated"] = true
-			updates["status"] = "truncated"
-		} else if statusCode >= 400 {
-			updates["status"] = "failed"
-			updates["http_status"] = statusCode
-			updates["error_code"] = errorCode
-		}
-		if captureError != "" {
-			updates["capture_error"] = joinCaptureErrors(audit.CaptureError, captureError)
-		}
-		if len(updates) > 0 {
-			if err := tx.Model(&ConversationAudit{}).Where("id = ?", audit.ID).Updates(updates).Error; err != nil {
-				return err
-			}
-		}
-		return createResponseLink(tx, audit.ID, audit.UserID, audit.ExpiresAt, linkProtocol, cfg.ActiveKeyVersion, providerResponseID)
+		return appendResponseSegment(tx, audit, continuation)
 	})
+	observeAuditPhase("database", started, err != nil && !errors.Is(err, errContinuationParentMissing))
+	if errors.Is(err, errContinuationParentMissing) {
+		return continuationParentLinkNotFound
+	}
 	if err != nil {
-		common.SysError("conversation audit response continuation write failed request_id=" + requestID + ": " + err.Error())
+		common.SysError("conversation audit response continuation write failed request_id=" + safeDiagnosticValue(requestID) + ": " + err.Error())
 		return continuationWriteFailed
 	}
+	notifyResponseReconcile()
 	return continuationAppended
+}
+
+// Pending continuations never publish response links. Only a durable root or
+// an already attached segment can therefore be the target of a continuation.
+func continuationRoot(tx *gorm.DB, protocol conversationProtocol, userID int, parentResponseID string) (*ConversationAudit, error) {
+	link, err := findResponseLinkDB(tx, protocol, userID, parentResponseID)
+	if err != nil {
+		return nil, err
+	}
+	if link == nil {
+		return nil, errContinuationParentMissing
+	}
+	var audit ConversationAudit
+	query := tx
+	if tx.Dialector.Name() != "sqlite" {
+		query = tx.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := query.First(&audit, link.AuditID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errContinuationParentMissing
+		}
+		return nil, err
+	}
+	if audit.UserID != userID || audit.ExpiresAt <= time.Now().Unix() {
+		return nil, errContinuationParentMissing
+	}
+	return &audit, nil
+}
+
+// Always store a segment receipt, including tool-only responses with no text,
+// so replaying a request cannot reapply status or length changes.
+func appendResponseSegment(tx *gorm.DB, audit *ConversationAudit, continuation responseContinuation) error {
+	cfg := currentConfig()
+	segmentBody, limitTruncated, err := fitResponseSegment(continuation.Body, cfg.MaxContentBytes-audit.ResponseLength)
+	if err != nil {
+		return err
+	}
+	truncated := continuation.Truncated || limitTruncated
+	segment := &ConversationAuditResponseSegment{AuditID: audit.ID, RequestID: continuation.RequestID, KeyVersion: cfg.ActiveKeyVersion, ResponseLength: len(segmentBody), ResponseTruncated: truncated, CreatedAt: continuation.CreatedAt, ExpiresAt: audit.ExpiresAt}
+	if segmentBody != "" {
+		segment.ResponseNonce, segment.ResponseCiphertext, err = encrypt(segment.KeyVersion, segmentBody, auditResponseSegmentAAD(segment))
+		if err != nil {
+			return err
+		}
+	}
+	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(segment)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		var existing ConversationAuditResponseSegment
+		if err := tx.Where("request_id = ?", continuation.RequestID).First(&existing).Error; err != nil {
+			return err
+		}
+		if existing.AuditID != audit.ID {
+			return errors.New("conversation audit segment belongs to another turn")
+		}
+	}
+	if result.RowsAffected > 0 {
+		updates := map[string]any{"response_length": audit.ResponseLength + segment.ResponseLength}
+		if truncated {
+			updates["response_truncated"] = true
+		}
+		// Preserve the worst outcome across a user turn. Content truncation must
+		// never turn a failed or incomplete generation into an apparent success.
+		status := audit.Status
+		if continuation.Status == "failed" || continuation.HTTPStatus >= 400 {
+			status = "failed"
+			updates["http_status"] = continuation.HTTPStatus
+			updates["error_code"] = continuation.ErrorCode
+		} else if continuation.Status == "capture_failed" && status != "failed" {
+			status = "capture_failed"
+		} else if continuation.Status == "incomplete" && status != "failed" && status != "capture_failed" {
+			status = "incomplete"
+		} else if truncated && status == "completed" {
+			status = "truncated"
+		}
+		updates["status"] = status
+		if continuation.CaptureError != "" {
+			updates["capture_error"] = joinCaptureErrors(audit.CaptureError, continuation.CaptureError)
+		}
+		if err := tx.Model(&ConversationAudit{}).Where("id = ?", audit.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return createResponseLink(tx, audit.ID, audit.UserID, audit.ExpiresAt, openAIResponsesLinkProtocol, cfg.ActiveKeyVersion, continuation.ProviderResponseID)
 }
 
 func fitResponseSegment(body string, remaining int) (string, bool, error) {

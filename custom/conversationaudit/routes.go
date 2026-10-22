@@ -38,6 +38,7 @@ func registerRoutes(apiRouter *gin.RouterGroup) {
 	settingsRoute.Use(middleware.RootAuth())
 	{
 		settingsRoute.GET("/settings", getSettings)
+		settingsRoute.GET("/metrics", getAuditMetrics)
 		settingsRoute.PUT("/settings", updateSettings)
 		settingsRoute.POST("/rotate-key", rotateKey)
 	}
@@ -135,6 +136,9 @@ func deleteAudit(c *gin.Context) {
 		return
 	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("audit_id = ?", audit.ID).Delete(&ConversationAuditPendingResponse{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("audit_id = ?", audit.ID).Delete(&ConversationAuditResponseSegment{}).Error; err != nil {
 			return err
 		}
@@ -276,6 +280,9 @@ func decryptAuditResponseSegments(audit *ConversationAudit) ([]string, error) {
 	plaintexts := make([]string, 0, len(segments))
 	for index := range segments {
 		segment := &segments[index]
+		if segment.ResponseCiphertext == "" {
+			continue
+		}
 		plaintext, err := decrypt(segment.KeyVersion, segment.ResponseNonce, segment.ResponseCiphertext, auditResponseSegmentAAD(segment))
 		if err != nil {
 			return nil, err

@@ -2,9 +2,12 @@ package conversationaudit
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -22,7 +25,7 @@ import (
 
 type legacyConversationAudit struct {
 	ID        uint   `gorm:"primaryKey"`
-	RequestID string `gorm:"uniqueIndex;index;default:''"`
+	RequestID string `gorm:"index;default:''"`
 }
 
 func (legacyConversationAudit) TableName() string {
@@ -33,7 +36,53 @@ func openConversationAuditMigrationTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
+	var dialector gorm.Dialector = sqlite.Open(dsn)
+	dialect := os.Getenv("TEST_AUDIT_DB_DIALECT")
+	if dialect == "mysql" || dialect == "postgres" {
+		sum := sha256.Sum256([]byte(t.Name()))
+		database := fmt.Sprintf("audit_test_%x", sum[:8])
+		var adminDialector gorm.Dialector
+		if dialect == "mysql" {
+			dsn = os.Getenv("TEST_MYSQL_DSN")
+			require.NotEmpty(t, dsn)
+			adminDialector = mysql.Open(dsn)
+		} else {
+			dsn = os.Getenv("TEST_POSTGRES_DSN")
+			require.NotEmpty(t, dsn)
+			adminDialector = postgres.Open(dsn)
+		}
+		admin, err := gorm.Open(adminDialector, &gorm.Config{})
+		require.NoError(t, err)
+		quoted := "\"" + database + "\""
+		if dialect == "mysql" {
+			quoted = "`" + database + "`"
+		}
+		require.NoError(t, admin.Exec("CREATE DATABASE "+quoted).Error)
+		t.Cleanup(func() {
+			require.NoError(t, admin.Exec("DROP DATABASE "+quoted).Error)
+			sqlDB, err := admin.DB()
+			require.NoError(t, err)
+			require.NoError(t, sqlDB.Close())
+		})
+		if dialect == "mysql" {
+			base, query, hasQuery := strings.Cut(dsn, "?")
+			dsn = base[:strings.LastIndex(base, "/")+1] + database
+			if hasQuery {
+				dsn += "?" + query
+			}
+			dialector = mysql.Open(dsn)
+		} else {
+			if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+				u, err := url.Parse(dsn)
+				require.NoError(t, err)
+				u.Path = "/" + database
+				dialector = postgres.Open(u.String())
+			} else {
+				dialector = postgres.Open(dsn + " dbname=" + database)
+			}
+		}
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		sqlDB, sqlErr := db.DB()

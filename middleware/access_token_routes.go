@@ -282,6 +282,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/custom/conversation-audits/:request_id":    accessTokenScopeRule("log:read"),
 	"DELETE /api/custom/conversation-audits/:request_id": accessTokenScopeRule("log:write"),
 	"GET /api/custom/conversation-audit/settings":        accessTokenScopeRule("option:read"),
+	"GET /api/custom/conversation-audit/metrics":         accessTokenScopeRule("option:read"),
 	"PUT /api/custom/conversation-audit/settings":        accessTokenScopeRule("option:write"),
 	"POST /api/custom/conversation-audit/rotate-key":     accessTokenScopeRule("option:write"),
 

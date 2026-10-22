@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -52,6 +53,7 @@ type responseCapture struct {
 	errorCode          string
 	captureError       string
 	providerResponseID string
+	status             string
 }
 
 type capturePayload struct {
@@ -81,7 +83,9 @@ func CaptureMiddleware() gin.HandlerFunc {
 			}
 		}
 
+		parseStarted := time.Now()
 		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, cfg.CaptureFullPayload)
+		observeAuditPhase("request_parse", parseStarted, request.captureError != "")
 		if !cfg.CaptureFullPayload && request.captureError == captureErrorRequestParseLimitExceeded {
 			c.Next()
 			logCaptureDiagnostic(c, protocol, "skipped", captureErrorRequestParseLimitExceeded, "not_applicable", request.requestBytes, 0, 0)
@@ -95,11 +99,14 @@ func CaptureMiddleware() gin.HandlerFunc {
 		c.Next()
 
 		response := collector.FinalizeCapture()
-		status := "completed"
+		status := response.status
+		if status == "" {
+			status = "completed"
+		}
 		if c.Writer.Status() >= http.StatusBadRequest {
 			status = "failed"
 		}
-		if request.truncated || response.truncated {
+		if (request.truncated || response.truncated) && status == "completed" {
 			status = "truncated"
 		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
@@ -115,8 +122,9 @@ func CaptureMiddleware() gin.HandlerFunc {
 				request.fullPayload,
 				status,
 				c.Writer.Status(),
+				responseIdentity{protocol: protocol, responseID: response.providerResponseID},
 			)
-			linkStatus := registerResponseLink(audit, protocol, response.providerResponseID)
+			linkStatus := persistedResponseLinkStatus(audit, protocol, response.providerResponseID, "")
 			event := "captured_root"
 			if audit == nil {
 				event = "root_persist_failed"
@@ -137,8 +145,8 @@ func CaptureMiddleware() gin.HandlerFunc {
 				status,
 				c.Writer.Status(),
 			)
-			if appendStatus == continuationParentLinkNotFound && response.body != "" {
-				captureError = joinCaptureErrors(captureError, "unlinked_response_continuation")
+			if appendStatus != continuationAppended {
+				captureError = joinCaptureErrors(captureError, "pending_response_continuation")
 				persistOrphanResponse(c, protocol, request, response, captureError, status)
 				return
 			}
@@ -166,8 +174,9 @@ func persistOrphanResponse(c *gin.Context, protocol conversationProtocol, reques
 		request.fullPayload,
 		status,
 		c.Writer.Status(),
+		responseIdentity{protocol: protocol, responseID: response.providerResponseID, parentResponseID: request.continuationParentResponseID},
 	)
-	linkStatus := registerResponseLink(audit, protocol, response.providerResponseID)
+	linkStatus := persistedResponseLinkStatus(audit, protocol, response.providerResponseID, request.continuationParentResponseID)
 	event := "captured_orphan_response"
 	if audit == nil {
 		event = "orphan_response_persist_failed"
@@ -532,6 +541,8 @@ type responseCollector struct {
 	captureError       string
 	providerResponseID string
 	finalized          bool
+	status             string
+	parseTime          time.Duration
 }
 
 func newResponseCollector(protocol conversationProtocol, maxContentBytes, maxParseBytes int, captureFullPayload bool) *responseCollector {
@@ -555,6 +566,8 @@ func (c *responseCollector) Write(data []byte, streaming bool) {
 	if c.fullPayload != nil {
 		c.fullPayload.Write(data)
 	}
+	started := time.Now()
+	defer func() { c.parseTime += time.Since(started) }()
 	if streaming && !c.streaming {
 		c.streaming = true
 		if c.raw.buffer.Len() > 0 {
@@ -581,9 +594,12 @@ func (c *responseCollector) FinalizeCapture() responseCapture {
 			errorCode:          c.errorCode,
 			captureError:       c.captureError,
 			providerResponseID: c.providerResponseID,
+			status:             c.status,
 		}
 	}
 	c.finalized = true
+	started := time.Now()
+	defer func() { observeAuditDuration("response_parse", c.parseTime+time.Since(started), c.captureError != "") }()
 	if c.streaming {
 		c.decoder.Flush()
 		if c.decoder.Oversized() {
@@ -594,6 +610,10 @@ func (c *responseCollector) FinalizeCapture() responseCapture {
 	} else {
 		c.consumeNonStreaming(c.raw.Bytes())
 	}
+	if c.protocol == protocolOpenAIResponses && c.streaming && c.status == "" {
+		c.status = "incomplete"
+		c.captureError = joinCaptureErrors(c.captureError, "response_terminal_missing")
+	}
 	if c.fullPayload != nil {
 		return responseCapture{
 			body:               string(c.fullPayload.Bytes()),
@@ -601,6 +621,7 @@ func (c *responseCollector) FinalizeCapture() responseCapture {
 			errorCode:          c.errorCode,
 			captureError:       c.captureError,
 			providerResponseID: c.providerResponseID,
+			status:             c.status,
 		}
 	}
 
@@ -611,6 +632,7 @@ func (c *responseCollector) FinalizeCapture() responseCapture {
 			errorCode:          c.errorCode,
 			captureError:       c.captureError,
 			providerResponseID: c.providerResponseID,
+			status:             c.status,
 		}
 	}
 	body, truncated, err := marshalCapturePayload(capturePayload{
@@ -624,6 +646,7 @@ func (c *responseCollector) FinalizeCapture() responseCapture {
 			errorCode:          c.errorCode,
 			captureError:       joinCaptureErrors(c.captureError, "response_encode_failed"),
 			providerResponseID: c.providerResponseID,
+			status:             c.status,
 		}
 	}
 	return responseCapture{
@@ -632,6 +655,7 @@ func (c *responseCollector) FinalizeCapture() responseCapture {
 		errorCode:          c.errorCode,
 		captureError:       c.captureError,
 		providerResponseID: c.providerResponseID,
+		status:             c.status,
 	}
 }
 
@@ -685,8 +709,10 @@ func (c *responseCollector) consumeSSEPayload(payload []byte) {
 	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
 		return
 	}
-	if code := extractSafeErrorCode(payload); code != "" {
-		c.errorCode = code
+	if c.protocol != protocolOpenAIResponses {
+		if code := extractSafeErrorCode(payload); code != "" {
+			c.errorCode = code
+		}
 	}
 	switch c.protocol {
 	case protocolOpenAIChat:
@@ -708,15 +734,23 @@ func (c *responseCollector) consumeSSEPayload(payload []byte) {
 		}
 	case protocolOpenAIResponses:
 		var event struct {
-			Type         string `json:"type"`
-			Delta        string `json:"delta"`
-			OutputIndex  int    `json:"output_index"`
-			ContentIndex int    `json:"content_index"`
-			Response     struct {
-				ID string `json:"id"`
-			} `json:"response"`
+			Type         string               `json:"type"`
+			Delta        string               `json:"delta"`
+			OutputIndex  int                  `json:"output_index"`
+			ContentIndex int                  `json:"content_index"`
+			Response     responsesAuditResult `json:"response"`
+			Error        auditError           `json:"error"`
+			Code         json.RawMessage      `json:"code"`
 		}
 		if common.Unmarshal(payload, &event) == nil {
+			c.applyResponsesResult(event.Response, event.Type)
+			if event.Type == "error" || event.Error.safeCode() != "" {
+				c.status = "failed"
+				c.errorCode = event.Error.safeCode()
+				if c.errorCode == "" {
+					c.errorCode = (auditError{Code: event.Code}).safeCode()
+				}
+			}
 			if event.Response.ID != "" {
 				c.providerResponseID = event.Response.ID
 			}
@@ -745,8 +779,10 @@ func (c *responseCollector) consumeNonStreaming(raw []byte) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return
 	}
-	if code := extractSafeErrorCode(raw); code != "" {
-		c.errorCode = code
+	if c.protocol != protocolOpenAIResponses {
+		if code := extractSafeErrorCode(raw); code != "" {
+			c.errorCode = code
+		}
 	}
 	switch c.protocol {
 	case protocolOpenAIChat:
@@ -769,7 +805,7 @@ func (c *responseCollector) consumeNonStreaming(raw []byte) {
 		}
 	case protocolOpenAIResponses:
 		var response struct {
-			ID     string `json:"id"`
+			responsesAuditResult
 			Output []struct {
 				Type    string `json:"type"`
 				Role    string `json:"role"`
@@ -783,6 +819,7 @@ func (c *responseCollector) consumeNonStreaming(raw []byte) {
 			c.captureError = joinCaptureErrors(c.captureError, "response_parse_failed")
 			return
 		}
+		c.applyResponsesResult(response.responsesAuditResult, "")
 		c.providerResponseID = response.ID
 		for outputIndex, output := range response.Output {
 			if output.Type != "message" || (output.Role != "" && output.Role != "assistant") {
@@ -844,21 +881,68 @@ func (c *responseCollector) consumeGeminiResponse(raw []byte) {
 	}
 }
 
+type auditError struct {
+	Code json.RawMessage `json:"code"`
+	Type string          `json:"type"`
+}
+
+func (e auditError) safeCode() string {
+	var code string
+	if len(e.Code) > 0 && common.GetJsonType(e.Code) == "string" && common.Unmarshal(e.Code, &code) == nil && code != "" {
+		return code
+	}
+	return e.Type
+}
+
+type responsesAuditResult struct {
+	ID                string     `json:"id"`
+	Status            string     `json:"status"`
+	Error             auditError `json:"error"`
+	IncompleteDetails struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
+}
+
+func (c *responseCollector) applyResponsesResult(result responsesAuditResult, eventType string) {
+	status := result.Status
+	switch eventType {
+	case "response.completed":
+		status = "completed"
+	case "response.failed":
+		status = "failed"
+	case "response.incomplete":
+		status = "incomplete"
+	}
+	// A later event must not erase a failure already observed in this stream.
+	if c.status != "failed" {
+		switch status {
+		case "completed", "failed", "incomplete":
+			c.status = status
+		case "cancelled":
+			c.status = "incomplete"
+		case "in_progress", "queued":
+			if eventType == "" {
+				c.status = "incomplete"
+			}
+		}
+	}
+	if code := result.Error.safeCode(); code != "" {
+		c.errorCode = code
+		c.status = "failed"
+	}
+	if status == "incomplete" && result.IncompleteDetails.Reason != "" {
+		c.captureError = joinCaptureErrors(c.captureError, "response_incomplete_"+safeDiagnosticValue(result.IncompleteDetails.Reason))
+	}
+}
+
 func extractSafeErrorCode(raw []byte) string {
-	var value map[string]any
+	var value struct {
+		Error auditError `json:"error"`
+	}
 	if common.Unmarshal(raw, &value) != nil {
 		return ""
 	}
-	errorValue, ok := value["error"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	for _, key := range []string{"code", "type"} {
-		if code, ok := errorValue[key].(string); ok {
-			return code
-		}
-	}
-	return ""
+	return value.Error.safeCode()
 }
 
 type limitedBuffer struct {

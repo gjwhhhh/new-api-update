@@ -203,6 +203,7 @@ func TestResponsesSSEOrdersOutputTextByIndexes(t *testing.T) {
 	collector.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"second\"}\n\n"), true)
 	collector.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"first\"}\n\n"), true)
 
+	collector.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"), true)
 	body, _, _, captureError := collector.Finalize()
 	require.Empty(t, captureError)
 	assert.Equal(t, "first\nsecond", decodedPayloadField(t, body, "assistant_text"))

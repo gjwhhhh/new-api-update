@@ -165,3 +165,27 @@ export type ChannelStatusDetailData = {
   start_ts: number
   end_ts: number
 }
+
+export type UpstreamCacheWindow = '1h' | '24h'
+
+export type UpstreamCacheWindowStats = {
+  cached_token_rate_mode?: string
+  hit: number
+  total: number
+  request_hit_rate: number | null
+  token_hit_rate: number | null
+  window_seconds: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cached_tokens: number
+  prompt_cache_hit_tokens: number
+  last_seen_at: number
+}
+
+export type UpstreamCacheUsageStats = {
+  scope: 'group' | 'channel' | 'group_channel' | string
+  group?: string
+  channel_id?: number
+  windows: Partial<Record<UpstreamCacheWindow, UpstreamCacheWindowStats>>
+}

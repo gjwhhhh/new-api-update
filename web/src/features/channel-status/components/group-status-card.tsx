@@ -63,8 +63,14 @@ import {
   getChannelHealth,
   shouldShowGroupRatio,
 } from '../lib/health'
-import type { ChannelHealth, GroupHours, GroupStatusItem } from '../types'
+import type {
+  ChannelHealth,
+  GroupHours,
+  GroupStatusItem,
+  UpstreamCacheUsageStats,
+} from '../types'
 import { AvailabilitySparkline } from './availability-sparkline'
+import { UpstreamCacheHitMetrics } from './upstream-cache-hit-metrics'
 
 const HEALTH_DOT_CLASS: Record<ChannelHealth, string> = {
   running: 'bg-emerald-500',
@@ -90,6 +96,8 @@ const BORDER_CLASS: Record<ChannelHealth, string> = {
 export function GroupStatusCard(props: {
   group: GroupStatusItem
   hours: GroupHours
+  cacheStats?: UpstreamCacheUsageStats
+  showCacheStats?: boolean
   isAdmin: boolean
   reorderMode: boolean
   canMoveUp: boolean
@@ -307,6 +315,10 @@ export function GroupStatusCard(props: {
               value={formatThroughput(props.group.avg_tps)}
             />
           </div>
+
+          {props.showCacheStats ? (
+            <UpstreamCacheHitMetrics stats={props.cacheStats} />
+          ) : null}
 
           <div className='bg-muted/40 flex items-center justify-between gap-3 rounded-lg px-3 py-2.5'>
             <div className='flex min-w-0 flex-col gap-0.5'>

@@ -391,7 +391,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, "上游无计费信息")
 	}
 	if originUsage != nil {
-		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, billingUsage, relayInfo.GetFinalRequestRelayFormat())
+		relayFormat := relayInfo.GetFinalRequestRelayFormat()
+		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, billingUsage, relayFormat)
+		ObserveUpstreamCacheUsage(relayInfo, billingUsage, relayFormat)
 	}
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)

@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -26,7 +27,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { CHANNEL_TYPE_OPTIONS } from '@/features/channels/constants'
 import { getChannelTypeLabel } from '@/features/channels/lib/channel-utils'
 
-import { CHANNEL_METRICS_SORT_OPTIONS } from '../constants'
+import { batchGetUpstreamCacheStats } from '../api'
+import {
+  CHANNEL_METRICS_SORT_OPTIONS,
+  CHANNEL_STATUS_QUERY_KEYS,
+} from '../constants'
+import { indexUpstreamCacheByChannel } from '../lib/upstream-cache'
 import type {
   ChannelHealth,
   ChannelMetricsSort,
@@ -80,6 +86,22 @@ export function LocalChannelsPanel(props: {
   const pageSize = data?.page_size ?? 24
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const channelIds = useMemo(
+    () => (data?.items ?? []).map((item) => item.channel_id),
+    [data?.items]
+  )
+  const cacheStatsQuery = useQuery({
+    queryKey: CHANNEL_STATUS_QUERY_KEYS.upstreamCacheChannels(channelIds),
+    queryFn: () =>
+      batchGetUpstreamCacheStats({ scope: 'channel', ids: channelIds }),
+    enabled: channelIds.length > 0,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  })
+  const cacheStatsByChannel = useMemo(
+    () => indexUpstreamCacheByChannel(cacheStatsQuery.data ?? []),
+    [cacheStatsQuery.data]
+  )
   const providerOptions = [
     ...CHANNEL_TYPE_OPTIONS.filter((provider) =>
       props.providerTypes.includes(provider.value)
@@ -225,6 +247,7 @@ export function LocalChannelsPanel(props: {
                 key={channel.channel_id}
                 channel={channel}
                 hours={props.hours}
+                cacheStats={cacheStatsByChannel.get(channel.channel_id)}
                 onOpen={() => setOpenChannel(channel)}
               />
             ))}

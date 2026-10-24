@@ -26,6 +26,7 @@ import type {
   GroupsStatusData,
   GroupSortMode,
   OpenAIStatusData,
+  UpstreamCacheUsageStats,
 } from './types'
 
 export async function getPerfMetricGroups(
@@ -190,6 +191,51 @@ export async function getOpenAIStatus() {
   })
   if (!res.data.success || !res.data.data) {
     throw new Error(res.data.message || 'Failed to load OpenAI status')
+  }
+  return res.data.data
+}
+
+export async function batchGetUpstreamCacheStats(params: {
+  scope: 'group' | 'channel'
+  ids?: number[]
+  groups?: string[]
+}) {
+  const res = await api.get<{
+    success: boolean
+    data: UpstreamCacheUsageStats[]
+    message?: string
+  }>('/api/channel/upstream-cache-stats/batch', {
+    params: {
+      scope: params.scope,
+      ids: params.ids?.length ? params.ids.join(',') : undefined,
+      groups: params.groups?.length ? params.groups.join(',') : undefined,
+      windows: '1h,24h',
+    },
+    skipErrorHandler: true,
+    skipBusinessError: true,
+  })
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to load cache hit stats')
+  }
+  return res.data.data
+}
+
+/** Group cache hit stats for the signed-in user (usable / non-hidden groups only). */
+export async function batchGetVisibleGroupUpstreamCacheStats(groups: string[]) {
+  const res = await api.get<{
+    success: boolean
+    data: UpstreamCacheUsageStats[]
+    message?: string
+  }>('/api/perf-metrics/groups/upstream-cache-stats/batch', {
+    params: {
+      groups: groups.length ? groups.join(',') : undefined,
+      windows: '1h,24h',
+    },
+    skipErrorHandler: true,
+    skipBusinessError: true,
+  })
+  if (!res.data.success || !res.data.data) {
+    throw new Error(res.data.message || 'Failed to load cache hit stats')
   }
   return res.data.data
 }

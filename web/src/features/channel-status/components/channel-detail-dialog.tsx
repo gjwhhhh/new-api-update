@@ -33,7 +33,7 @@ import {
 } from '@/features/performance-metrics/lib/format'
 import { cn } from '@/lib/utils'
 
-import { getPerfMetricChannelDetail } from '../api'
+import { batchGetUpstreamCacheStats, getPerfMetricChannelDetail } from '../api'
 import {
   CHANNEL_CONFIGURED_STATUS_LABEL,
   CHANNEL_HEALTH_LABEL,
@@ -48,6 +48,7 @@ import type {
   GroupModelStat,
 } from '../types'
 import { AvailabilitySparkline } from './availability-sparkline'
+import { UpstreamCacheHitMetrics } from './upstream-cache-hit-metrics'
 
 const HEALTH_VARIANT: Record<
   ChannelHealth,
@@ -82,11 +83,20 @@ export function ChannelDetailDialog(props: {
     enabled: props.open && channelId > 0,
     staleTime: 60_000,
   })
+  const cacheStatsQuery = useQuery({
+    queryKey: CHANNEL_STATUS_QUERY_KEYS.upstreamCacheChannels([channelId]),
+    queryFn: () =>
+      batchGetUpstreamCacheStats({ scope: 'channel', ids: [channelId] }),
+    enabled: props.open && channelId > 0,
+    staleTime: 60_000,
+    refetchInterval: props.open ? 60_000 : false,
+  })
   const channel = detailQuery.data?.channel ?? props.channel
   const health = channel
     ? getChannelHealth(channel.request_count, channel.success_rate)
     : 'no_data'
   const models = detailQuery.data?.models ?? []
+  const cacheStats = cacheStatsQuery.data?.[0]
 
   return (
     <Dialog
@@ -189,6 +199,8 @@ export function ChannelDetailDialog(props: {
               />
             </div>
           </div>
+
+          <UpstreamCacheHitMetrics stats={cacheStats} />
 
           <AvailabilitySparkline
             series={channel.series ?? []}

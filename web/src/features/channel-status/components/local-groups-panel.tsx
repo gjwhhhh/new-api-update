@@ -16,13 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 
+import { batchGetVisibleGroupUpstreamCacheStats } from '../api'
+import { CHANNEL_STATUS_QUERY_KEYS } from '../constants'
 import { getChannelHealth } from '../lib/health'
+import { indexUpstreamCacheByGroup } from '../lib/upstream-cache'
 import type { ChannelHealth, GroupHours, GroupStatusItem } from '../types'
 import { GroupDetailDialog } from './group-detail-dialog'
 import { GroupStatusCard } from './group-status-card'
@@ -62,6 +66,22 @@ export function LocalGroupsPanel(props: {
         getChannelHealth(group.request_count, group.success_rate) === selected
     )
   }, [props.groups, props.reorderMode, selected])
+
+  const groupNames = useMemo(
+    () => props.groups.map((group) => group.group).filter(Boolean),
+    [props.groups]
+  )
+  const cacheStatsQuery = useQuery({
+    queryKey: CHANNEL_STATUS_QUERY_KEYS.upstreamCacheGroups(groupNames),
+    queryFn: () => batchGetVisibleGroupUpstreamCacheStats(groupNames),
+    enabled: groupNames.length > 0 && !props.isLoading,
+    staleTime: 60_000,
+    refetchInterval: props.reorderMode ? false : 60_000,
+  })
+  const cacheStatsByGroup = useMemo(
+    () => indexUpstreamCacheByGroup(cacheStatsQuery.data ?? []),
+    [cacheStatsQuery.data]
+  )
 
   if (props.isLoading) {
     return (
@@ -114,6 +134,8 @@ export function LocalGroupsPanel(props: {
               key={group.group}
               group={group}
               hours={props.hours}
+              cacheStats={cacheStatsByGroup.get(group.group)}
+              showCacheStats
               isAdmin={props.isAdmin}
               reorderMode={props.reorderMode}
               canMoveUp={index > 0}

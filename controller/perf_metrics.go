@@ -137,6 +137,69 @@ func GetPerfMetricsGroups(c *gin.Context) {
 	})
 }
 
+// BatchGetVisibleGroupUpstreamCacheStats returns upstream Prompt/KV cache stats for
+// groups the caller may see (usable groups; non-admins also skip hidden groups).
+// Unauthorized requested names are dropped rather than erroring, to avoid probing.
+func BatchGetVisibleGroupUpstreamCacheStats(c *gin.Context) {
+	requested := parseUpstreamCacheGroups(c.Query("groups"))
+	if len(requested) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "missing param: groups",
+		})
+		return
+	}
+	windows := parseUpstreamCacheWindows(c.Query("windows"))
+	if len(windows) == 0 {
+		windows = parseUpstreamCacheWindows(c.Query("window"))
+	}
+
+	userGroup, _ := model.GetUserGroup(c.GetInt("id"), false)
+	usable := service.GetUserUsableGroups(userGroup)
+	isAdmin := c.GetInt("role") >= common.RoleAdminUser
+	visible := filterVisibleUpstreamCacheGroups(requested, usable, isAdmin)
+
+	data, err := service.BatchGetUpstreamCacheUsageStatsByGroups(visible, windows)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    data,
+	})
+}
+
+func filterVisibleUpstreamCacheGroups(requested []string, usable map[string]string, isAdmin bool) []string {
+	if len(requested) == 0 || len(usable) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(requested))
+	seen := make(map[string]struct{}, len(requested))
+	for _, name := range requested {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		if _, ok := usable[name]; !ok {
+			continue
+		}
+		if !isAdmin && perf_metrics_setting.IsGroupHidden(name) {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
 type channelStatusMetricItem struct {
 	ChannelID     int                            `json:"channel_id"`
 	ChannelName   string                         `json:"channel_name"`

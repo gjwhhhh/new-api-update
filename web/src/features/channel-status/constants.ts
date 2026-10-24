@@ -85,4 +85,8 @@ export const CHANNEL_STATUS_QUERY_KEYS = {
   channelDetail: (channelId: number, hours: GroupHours) =>
     ['channel-status', 'channel-detail', channelId, hours] as const,
   openai: ['channel-status', 'openai'] as const,
+  upstreamCacheGroups: (groups: string[]) =>
+    ['channel-status', 'upstream-cache', 'groups', groups] as const,
+  upstreamCacheChannels: (ids: number[]) =>
+    ['channel-status', 'upstream-cache', 'channels', ids] as const,
 }

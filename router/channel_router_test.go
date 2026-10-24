@@ -35,6 +35,9 @@ func TestChannelStatusRoutesUseExpectedPermissions(t *testing.T) {
 func TestChannelMetricsRoutesUseReadPermission(t *testing.T) {
 	assertChannelRoutePermission(t, http.MethodGet, "/status-metrics", authz.ChannelRead, controller.GetPerfMetricsChannels)
 	assertChannelRoutePermission(t, http.MethodGet, "/:id/status-metrics", authz.ChannelRead, controller.GetPerfMetricsChannelDetail)
+	assertChannelRoutePermission(t, http.MethodGet, "/upstream-cache-stats", authz.ChannelRead, controller.GetUpstreamCacheUsageStats)
+	assertChannelRoutePermission(t, http.MethodGet, "/upstream-cache-stats/batch", authz.ChannelRead, controller.BatchGetUpstreamCacheUsageStats)
+	assertChannelRoutePermission(t, http.MethodPost, "/upstream-cache-stats/clear", authz.ChannelOperate, controller.ClearUpstreamCacheUsageStats)
 	assertChannelRoutePermission(t, http.MethodPost, "/:id/status-metrics/clear", authz.ChannelOperate, controller.ClearPerfMetricChannelSamples)
 }
 

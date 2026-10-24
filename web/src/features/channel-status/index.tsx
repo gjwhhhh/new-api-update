@@ -208,6 +208,9 @@ export function ChannelStatusPage() {
       void openaiQuery.refetch()
       return
     }
+    void queryClient.invalidateQueries({
+      queryKey: ['channel-status', 'upstream-cache'],
+    })
     if (isChannelView) {
       void channelsQuery.refetch()
       return

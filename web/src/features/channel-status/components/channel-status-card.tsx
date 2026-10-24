@@ -56,8 +56,10 @@ import type {
   ChannelConfiguredStatus,
   ChannelHealth,
   ChannelStatusItem,
+  UpstreamCacheUsageStats,
 } from '../types'
 import { AvailabilitySparkline } from './availability-sparkline'
+import { UpstreamCacheHitMetrics } from './upstream-cache-hit-metrics'
 
 const HEALTH_DOT_CLASS: Record<ChannelHealth, string> = {
   running: 'bg-emerald-500',
@@ -85,6 +87,7 @@ const CONFIGURED_STATUS_VARIANT: Record<
 export function ChannelStatusCard(props: {
   channel: ChannelStatusItem
   hours: 48 | 168
+  cacheStats?: UpstreamCacheUsageStats
   onOpen: () => void
 }) {
   const { t } = useTranslation()
@@ -196,6 +199,8 @@ export function ChannelStatusCard(props: {
               value={formatThroughput(props.channel.avg_tps)}
             />
           </div>
+
+          <UpstreamCacheHitMetrics stats={props.cacheStats} />
 
           <div className='bg-muted/40 flex items-center justify-between gap-3 rounded-lg px-3 py-2.5'>
             <div className='flex min-w-0 flex-col gap-0.5'>

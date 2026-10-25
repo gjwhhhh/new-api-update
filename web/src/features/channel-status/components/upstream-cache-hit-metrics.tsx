@@ -42,10 +42,11 @@ function CacheHitMetric(props: {
     props.window === '1h'
       ? t('Cache hit 1h')
       : t('Cache hit 24h')
-  const value = formatRequestHitRate(windowStats)
   const tokenRate = formatTokenHitRate(windowStats)
+  const requestRate = formatRequestHitRate(windowStats)
   const hit = windowStats?.hit ?? 0
   const total = windowStats?.total ?? 0
+  const cachedTokens = windowStats?.cached_tokens ?? 0
   const pcht = windowStats?.prompt_cache_hit_tokens ?? 0
 
   return (
@@ -57,7 +58,7 @@ function CacheHitMetric(props: {
               {label}
             </span>
             <span className='text-foreground truncate font-mono text-sm font-semibold tabular-nums'>
-              {value}
+              {tokenRate}
             </span>
           </div>
         }
@@ -69,11 +70,14 @@ function CacheHitMetric(props: {
             : t('Sliding ~24h window; independent of the hours filter above.')}
         </p>
         <p>
-          {t('Request hit rate')}: {value}
+          {t('Token cache rate')}: {tokenRate}
+        </p>
+        <p>
+          {t('Request hit rate')}: {requestRate}
           {total > 0 ? ` (${hit}/${total})` : ''}
         </p>
         <p>
-          {t('Token cache rate')}: {tokenRate}
+          {t('Cached tokens')}: {cachedTokens}
         </p>
         <p>
           {t('Prompt cache hit tokens')}: {pcht}

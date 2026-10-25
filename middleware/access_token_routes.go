@@ -49,6 +49,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/perf-metrics":                      accessTokenAnyRule,
 	"GET /api/perf-metrics/groups":                              accessTokenScopeRule("usage:read"),
 	"GET /api/perf-metrics/groups/upstream-cache-stats/batch":   accessTokenScopeRule("usage:read"),
+	"PUT /api/perf-metrics/groups/upstream-cache-visibility":    accessTokenScopeRule("ops:write"),
 	"POST /api/perf-metrics/groups/clear":                       accessTokenScopeRule("ops:write"),
 	"PUT /api/perf-metrics/groups/visibility":                   accessTokenScopeRule("ops:write"),
 	"PUT /api/perf-metrics/groups/display-order":                accessTokenScopeRule("ops:write"),

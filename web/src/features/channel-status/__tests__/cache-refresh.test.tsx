@@ -82,7 +82,13 @@ beforeEach(() => {
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     let data: unknown
     if (url === '/api/perf-metrics/groups') {
-      data = { groups: [group], bucket_seconds: 3600, start_ts: 0, end_ts: 0 }
+      data = {
+        groups: [group],
+        bucket_seconds: 3600,
+        start_ts: 0,
+        end_ts: 0,
+        upstream_cache_visible_to_users: true,
+      }
     } else if (url === '/api/channel/status-metrics') {
       data = {
         items: [channel],
@@ -99,8 +105,22 @@ beforeEach(() => {
           group: 'vip',
           channel_id: 3,
           windows: {
-            '1h': { total: 4, hit: hitRate * 4, request_hit_rate: hitRate },
-            '24h': { total: 4, hit: hitRate * 4, request_hit_rate: hitRate },
+            '1h': {
+              total: 4,
+              hit: hitRate * 4,
+              request_hit_rate: hitRate,
+              token_hit_rate: hitRate,
+              cached_tokens: hitRate * 100,
+              prompt_tokens: 100,
+            },
+            '24h': {
+              total: 4,
+              hit: hitRate * 4,
+              request_hit_rate: hitRate,
+              token_hit_rate: hitRate,
+              cached_tokens: hitRate * 100,
+              prompt_tokens: 100,
+            },
           },
         },
       ]

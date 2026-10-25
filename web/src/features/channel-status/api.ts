@@ -166,6 +166,24 @@ export async function updatePerfMetricGroupVisibility(
   return res.data.data
 }
 
+export async function updateUpstreamCacheVisibility(visibleToUsers: boolean) {
+  const res = await api.put<{
+    success: boolean
+    message?: string
+    data?: {
+      visible_to_users: boolean
+    }
+  }>('/api/perf-metrics/groups/upstream-cache-visibility', {
+    visible_to_users: visibleToUsers,
+  })
+  if (!res.data.success) {
+    throw new Error(
+      res.data.message || 'Failed to update cache hit visibility'
+    )
+  }
+  return res.data.data
+}
+
 export async function updatePerfMetricGroupDisplayOrder(groups: string[]) {
   const res = await api.put<{
     success: boolean

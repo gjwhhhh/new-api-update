@@ -35,6 +35,22 @@ func TestIncludeChannelTestEnabled(t *testing.T) {
 	assert.False(t, IncludeChannelTestEnabled())
 }
 
+func TestIsUpstreamCacheVisibleToUsers(t *testing.T) {
+	prev := GetSetting()
+	t.Cleanup(func() {
+		RestoreSettingForTest(prev)
+	})
+
+	RestoreSettingForTest(PerfMetricsSetting{ShowUpstreamCacheToUsers: true})
+	assert.True(t, IsUpstreamCacheVisibleToUsers())
+
+	SetShowUpstreamCacheToUsersInMemory(false)
+	assert.False(t, IsUpstreamCacheVisibleToUsers())
+
+	SetShowUpstreamCacheToUsersInMemory(true)
+	assert.True(t, IsUpstreamCacheVisibleToUsers())
+}
+
 func TestSampleGenerationConfigReloadReplacesProtectedMaps(t *testing.T) {
 	previous := GetSetting()
 	t.Cleanup(func() {

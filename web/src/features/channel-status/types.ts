@@ -59,6 +59,8 @@ export type GroupsStatusData = {
   sort?: GroupSortMode
   display_order?: string[]
   groups: GroupStatusItem[]
+  /** When false, non-admin users must not see group upstream cache hit metrics. */
+  upstream_cache_visible_to_users?: boolean
 }
 
 export type OpenAIUptimeEvent = {

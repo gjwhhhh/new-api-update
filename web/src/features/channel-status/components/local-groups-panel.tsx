@@ -38,6 +38,7 @@ export function LocalGroupsPanel(props: {
   isLoading: boolean
   isError: boolean
   isAdmin: boolean
+  showCacheStats: boolean
   reorderMode: boolean
   onMoveGroup: (groupName: string, direction: -1 | 1) => void
 }) {
@@ -74,9 +75,11 @@ export function LocalGroupsPanel(props: {
   const cacheStatsQuery = useQuery({
     queryKey: CHANNEL_STATUS_QUERY_KEYS.upstreamCacheGroups(groupNames),
     queryFn: () => batchGetVisibleGroupUpstreamCacheStats(groupNames),
-    enabled: groupNames.length > 0 && !props.isLoading,
+    enabled:
+      props.showCacheStats && groupNames.length > 0 && !props.isLoading,
     staleTime: 60_000,
-    refetchInterval: props.reorderMode ? false : 60_000,
+    refetchInterval:
+      props.showCacheStats && !props.reorderMode ? 60_000 : false,
   })
   const cacheStatsByGroup = useMemo(
     () => indexUpstreamCacheByGroup(cacheStatsQuery.data ?? []),
@@ -135,7 +138,7 @@ export function LocalGroupsPanel(props: {
               group={group}
               hours={props.hours}
               cacheStats={cacheStatsByGroup.get(group.group)}
-              showCacheStats
+              showCacheStats={props.showCacheStats}
               isAdmin={props.isAdmin}
               reorderMode={props.reorderMode}
               canMoveUp={index > 0}

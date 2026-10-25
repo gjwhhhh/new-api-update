@@ -9,27 +9,29 @@ import (
 )
 
 type PerfMetricsSetting struct {
-	Enabled                 bool             `json:"enabled"`
-	IncludeChannelTest      bool             `json:"include_channel_test"`
-	FlushInterval           int              `json:"flush_interval"`
-	BucketTime              string           `json:"bucket_time"`
-	RetentionDays           int              `json:"retention_days"`
-	HiddenGroups            []string         `json:"hidden_groups"`
-	GroupSampleGeneration   map[string]int64 `json:"group_sample_generation"`
-	ChannelSampleGeneration map[string]int64 `json:"channel_sample_generation"`
-	GroupDisplayOrder       []string         `json:"group_display_order"`
+	Enabled                  bool             `json:"enabled"`
+	IncludeChannelTest       bool             `json:"include_channel_test"`
+	ShowUpstreamCacheToUsers bool             `json:"show_upstream_cache_to_users"`
+	FlushInterval            int              `json:"flush_interval"`
+	BucketTime               string           `json:"bucket_time"`
+	RetentionDays            int              `json:"retention_days"`
+	HiddenGroups             []string         `json:"hidden_groups"`
+	GroupSampleGeneration    map[string]int64 `json:"group_sample_generation"`
+	ChannelSampleGeneration  map[string]int64 `json:"channel_sample_generation"`
+	GroupDisplayOrder        []string         `json:"group_display_order"`
 }
 
 var perfMetricsSetting = PerfMetricsSetting{
-	Enabled:                 true,
-	IncludeChannelTest:      true,
-	FlushInterval:           5,
-	BucketTime:              "hour",
-	RetentionDays:           0,
-	HiddenGroups:            []string{},
-	GroupSampleGeneration:   map[string]int64{},
-	ChannelSampleGeneration: map[string]int64{},
-	GroupDisplayOrder:       []string{},
+	Enabled:                  true,
+	IncludeChannelTest:       true,
+	ShowUpstreamCacheToUsers: true,
+	FlushInterval:            5,
+	BucketTime:               "hour",
+	RetentionDays:            0,
+	HiddenGroups:             []string{},
+	GroupSampleGeneration:    map[string]int64{},
+	ChannelSampleGeneration:  map[string]int64{},
+	GroupDisplayOrder:        []string{},
 }
 
 var perfMetricsSettingMu sync.RWMutex
@@ -116,6 +118,21 @@ func IncludeChannelTestEnabled() bool {
 	perfMetricsSettingMu.RLock()
 	defer perfMetricsSettingMu.RUnlock()
 	return perfMetricsSetting.Enabled && perfMetricsSetting.IncludeChannelTest
+}
+
+// IsUpstreamCacheVisibleToUsers reports whether non-admin users may see group
+// upstream Prompt/KV cache hit metrics on the channel status page.
+func IsUpstreamCacheVisibleToUsers() bool {
+	perfMetricsSettingMu.RLock()
+	defer perfMetricsSettingMu.RUnlock()
+	return perfMetricsSetting.ShowUpstreamCacheToUsers
+}
+
+// SetShowUpstreamCacheToUsersInMemory updates the runtime visibility flag (tests / apply after persist).
+func SetShowUpstreamCacheToUsersInMemory(visible bool) {
+	perfMetricsSettingMu.Lock()
+	defer perfMetricsSettingMu.Unlock()
+	perfMetricsSetting.ShowUpstreamCacheToUsers = visible
 }
 
 func IsEnabled() bool {

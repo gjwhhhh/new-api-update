@@ -48,6 +48,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		apiRouter.GET("/perf-metrics/groups", middleware.UserAuth(), controller.GetPerfMetricsGroups)
 		apiRouter.GET("/perf-metrics/groups/upstream-cache-stats/batch", middleware.UserAuth(), controller.BatchGetVisibleGroupUpstreamCacheStats)
+		apiRouter.PUT("/perf-metrics/groups/upstream-cache-visibility", middleware.AdminAuth(), controller.UpdateUpstreamCacheVisibility)
 		apiRouter.POST("/perf-metrics/groups/clear", middleware.AdminAuth(), controller.ClearPerfMetricGroupSamples)
 		apiRouter.PUT("/perf-metrics/groups/visibility", middleware.AdminAuth(), controller.UpdatePerfMetricGroupVisibility)
 		apiRouter.PUT("/perf-metrics/groups/display-order", middleware.AdminAuth(), controller.UpdatePerfMetricGroupDisplayOrder)

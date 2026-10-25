@@ -121,11 +121,12 @@ func GetPerfMetricsGroups(c *gin.Context) {
 	}
 
 	data := gin.H{
-		"bucket_seconds": metrics.BucketSeconds,
-		"start_ts":       metrics.StartTs,
-		"end_ts":         metrics.EndTs,
-		"sort":           sortMode,
-		"groups":         items,
+		"bucket_seconds":                  metrics.BucketSeconds,
+		"start_ts":                        metrics.StartTs,
+		"end_ts":                          metrics.EndTs,
+		"sort":                            sortMode,
+		"groups":                          items,
+		"upstream_cache_visible_to_users": perf_metrics_setting.IsUpstreamCacheVisibleToUsers(),
 	}
 	if isAdmin {
 		data["display_order"] = perf_metrics_setting.GetGroupDisplayOrder()
@@ -140,6 +141,7 @@ func GetPerfMetricsGroups(c *gin.Context) {
 // BatchGetVisibleGroupUpstreamCacheStats returns upstream Prompt/KV cache stats for
 // groups the caller may see (usable groups; non-admins also skip hidden groups).
 // Unauthorized requested names are dropped rather than erroring, to avoid probing.
+// Non-admins receive an empty list when show_upstream_cache_to_users is disabled.
 func BatchGetVisibleGroupUpstreamCacheStats(c *gin.Context) {
 	requested := parseUpstreamCacheGroups(c.Query("groups"))
 	if len(requested) == 0 {
@@ -154,9 +156,18 @@ func BatchGetVisibleGroupUpstreamCacheStats(c *gin.Context) {
 		windows = parseUpstreamCacheWindows(c.Query("window"))
 	}
 
+	isAdmin := c.GetInt("role") >= common.RoleAdminUser
+	if !isAdmin && !perf_metrics_setting.IsUpstreamCacheVisibleToUsers() {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    []service.UpstreamCacheUsageStats{},
+		})
+		return
+	}
+
 	userGroup, _ := model.GetUserGroup(c.GetInt("id"), false)
 	usable := service.GetUserUsableGroups(userGroup)
-	isAdmin := c.GetInt("role") >= common.RoleAdminUser
 	visible := filterVisibleUpstreamCacheGroups(requested, usable, isAdmin)
 
 	data, err := service.BatchGetUpstreamCacheUsageStatsByGroups(visible, windows)
@@ -627,6 +638,42 @@ func ClearPerfMetricChannelSamples(c *gin.Context) {
 	}
 
 	common.ApiSuccess(c, result)
+}
+
+type updateUpstreamCacheVisibilityRequest struct {
+	VisibleToUsers bool `json:"visible_to_users"`
+}
+
+// UpdateUpstreamCacheVisibility toggles whether non-admin users see group cache hit metrics.
+func UpdateUpstreamCacheVisibility(c *gin.Context) {
+	var req updateUpstreamCacheVisibilityRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+
+	value := "false"
+	if req.VisibleToUsers {
+		value = "true"
+	}
+	if err := model.UpdateOption("perf_metrics_setting.show_upstream_cache_to_users", value); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "ok",
+		"data": gin.H{
+			"visible_to_users": req.VisibleToUsers,
+		},
+	})
 }
 
 type updatePerfMetricGroupVisibilityRequest struct {

@@ -20,6 +20,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   ArrowUpDown,
+  Eye,
+  EyeOff,
   History,
   ListOrdered,
   RefreshCw,
@@ -31,6 +33,7 @@ import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getGroups } from '@/features/channels/api'
 import { useDebounce } from '@/hooks'
@@ -43,6 +46,7 @@ import {
   getOpenAIStatus,
   getPerfMetricGroups,
   updatePerfMetricGroupDisplayOrder,
+  updateUpstreamCacheVisibility,
 } from './api'
 import {
   LocalChannelsPanel,
@@ -172,6 +176,10 @@ export function ChannelStatusPage() {
   const displayGroups =
     reorderMode && draftGroups ? draftGroups : (groupsQuery.data?.groups ?? [])
 
+  const cacheVisibleToUsers =
+    groupsQuery.data?.upstream_cache_visible_to_users !== false
+  const showGroupCacheStats = isAdmin || cacheVisibleToUsers
+
   const saveOrderMutation = useMutation({
     mutationFn: (groups: string[]) => updatePerfMetricGroupDisplayOrder(groups),
     onSuccess: async () => {
@@ -185,6 +193,26 @@ export function ChannelStatusPage() {
     },
     onError: (error: Error) => {
       toast.error(error.message || t('Failed to save display order'))
+    },
+  })
+
+  const cacheVisibilityMutation = useMutation({
+    mutationFn: (visible: boolean) => updateUpstreamCacheVisibility(visible),
+    onSuccess: async (_data, visible) => {
+      toast.success(
+        visible
+          ? t('Cache hit is now visible to users')
+          : t('Cache hit is now hidden from users')
+      )
+      await queryClient.invalidateQueries({
+        queryKey: ['channel-status', 'groups'],
+      })
+      await queryClient.invalidateQueries({
+        queryKey: ['channel-status', 'upstream-cache'],
+      })
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || t('Failed to update cache hit visibility'))
     },
   })
 
@@ -368,6 +396,30 @@ export function ChannelStatusPage() {
                 {t('Save this order')}
               </Button>
             ) : null}
+            {!isChannelView && isAdmin ? (
+              <div className='border-border/60 flex items-center gap-2 rounded-lg border px-2.5 py-1'>
+                {cacheVisibleToUsers ? (
+                  <Eye className='text-muted-foreground size-3.5' />
+                ) : (
+                  <EyeOff className='text-muted-foreground size-3.5' />
+                )}
+                <span className='text-muted-foreground text-xs whitespace-nowrap'>
+                  {t('Show cache hit to users')}
+                </span>
+                <Switch
+                  checked={cacheVisibleToUsers}
+                  disabled={
+                    reorderMode ||
+                    cacheVisibilityMutation.isPending ||
+                    groupsQuery.isLoading
+                  }
+                  onCheckedChange={(checked) => {
+                    cacheVisibilityMutation.mutate(checked)
+                  }}
+                  aria-label={t('Show cache hit to users')}
+                />
+              </div>
+            ) : null}
           </>
         ) : null}
         {tab === 'local' && isAdmin ? (
@@ -445,6 +497,7 @@ export function ChannelStatusPage() {
                     isLoading={groupsQuery.isLoading}
                     isError={groupsQuery.isError}
                     isAdmin={isAdmin}
+                    showCacheStats={showGroupCacheStats}
                     reorderMode={reorderMode}
                     onMoveGroup={moveGroup}
                   />

@@ -174,6 +174,10 @@ export function SidebarModulesSection({
         title: t('Subscription Management'),
         description: t('Manage subscription plans and pricing.'),
       },
+      mail: {
+        title: t('Mail Center'),
+        description: t('Review and send user email.'),
+      },
       conversation_audit: {
         title: t('Conversation Audit'),
         description: t('Review encrypted conversation metadata and details.'),

@@ -510,3 +510,38 @@ func TestApplyWebSocketSubprotocolAuthorizationReadsRepeatedHeaders(t *testing.T
 	assert.True(t, applyWebSocketSubprotocolAuthorization(header))
 	assert.Equal(t, "Bearer sk-later-field", header.Get("Authorization"))
 }
+
+func TestMailSessionAndOriginGuards(t *testing.T) {
+	for _, test := range []struct {
+		name, origin, contentType string
+		session                   bool
+		want                      int
+	}{
+		{name: "session and same origin", origin: "https://gateway.example.com", contentType: "application/json", session: true, want: http.StatusOK},
+		{name: "missing session", origin: "https://gateway.example.com", contentType: "application/json", want: http.StatusForbidden},
+		{name: "missing origin", contentType: "application/json", session: true, want: http.StatusForbidden},
+		{name: "cross site origin", origin: "https://attacker.example.com", contentType: "application/json", session: true, want: http.StatusForbidden},
+		{name: "simple form submission", origin: "https://gateway.example.com", contentType: "application/x-www-form-urlencoded", session: true, want: http.StatusUnsupportedMediaType},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.POST("/mail", func(c *gin.Context) {
+				c.Set("id", 1)
+				if test.session {
+					c.Set("session_id", "mail-test-session")
+					c.Set("auth_version", int64(1))
+					c.Set("session_version", int64(1))
+				}
+				c.Next()
+			}, MailSessionRequired(), MailWriteOriginGuard(), func(c *gin.Context) { c.Status(http.StatusOK) })
+			request := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/mail", strings.NewReader("{}"))
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			request.Header.Set("Content-Type", test.contentType)
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, request)
+			assert.Equal(t, test.want, response.Code, response.Body.String())
+		})
+	}
+}

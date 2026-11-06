@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/textproto"
 	"regexp"
 	"strings"
@@ -317,7 +318,15 @@ func (mailbox *securityMailbox) code(t *testing.T, receiver string) string {
 	mailbox.mutex.Lock()
 	defer mailbox.mutex.Unlock()
 	for index := len(mailbox.mail[receiver]) - 1; index >= 0; index-- {
-		match := regexp.MustCompile(`<strong>([0-9]{6})</strong>`).FindStringSubmatch(mailbox.mail[receiver][index])
+		message, err := mail.ReadMessage(strings.NewReader(mailbox.mail[receiver][index]))
+		require.NoError(t, err)
+		reader := io.Reader(message.Body)
+		if message.Header.Get("Content-Transfer-Encoding") == "base64" {
+			reader = base64.NewDecoder(base64.StdEncoding, reader)
+		}
+		body, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		match := regexp.MustCompile(`<strong>([0-9]{6})</strong>`).FindStringSubmatch(string(body))
 		if len(match) == 2 {
 			return match[1]
 		}

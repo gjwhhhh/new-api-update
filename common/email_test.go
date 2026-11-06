@@ -7,10 +7,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
+	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -283,13 +287,21 @@ func TestSendEmailUsesExplicitStartTLSWithInsecureCertificate(t *testing.T) {
 	SMTPToken = "secret"
 	SystemName = "New API"
 
-	err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
+	subject := strings.Repeat("服务更新", 50)
+	err := SendEmail(subject, "receiver@example.com", "<p>123456</p>")
 	require.NoError(t, err)
 
 	select {
 	case message := <-server.messages:
-		require.Contains(t, message, "Subject: =?UTF-8?B?")
-		require.Contains(t, message, "<p>123456</p>")
+		parsed, err := mail.ReadMessage(strings.NewReader(message))
+		require.NoError(t, err)
+		decodedSubject, err := new(mime.WordDecoder).DecodeHeader(parsed.Header.Get("Subject"))
+		require.NoError(t, err)
+		require.Equal(t, subject, decodedSubject)
+		for line := range strings.SplitSeq(message, "\r\n") {
+			require.LessOrEqual(t, len(line), 998, "SMTP lines must not exceed the wire limit")
+		}
+		require.Equal(t, "<p>123456</p>", smtpTestMessageBody(t, message))
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SMTP DATA")
 	}
@@ -343,7 +355,7 @@ func TestSendEmailDoesNotAutoUpgradeWhenStartTLSDisabled(t *testing.T) {
 
 	select {
 	case message := <-server.messages:
-		require.Contains(t, message, "<p>123456</p>")
+		require.Equal(t, "<p>123456</p>", smtpTestMessageBody(t, message))
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SMTP DATA")
 	}
@@ -446,7 +458,7 @@ func TestSendEmailSkipsAuthWhenCredentialsAreEmpty(t *testing.T) {
 
 	select {
 	case message := <-server.messages:
-		require.Contains(t, message, "<p>123456</p>")
+		require.Equal(t, "<p>123456</p>", smtpTestMessageBody(t, message))
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SMTP DATA")
 	}
@@ -479,7 +491,7 @@ func TestSendEmailSkipsAuthWhenCredentialsAreIncomplete(t *testing.T) {
 
 	select {
 	case message := <-server.messages:
-		require.Contains(t, message, "<p>123456</p>")
+		require.Equal(t, "<p>123456</p>", smtpTestMessageBody(t, message))
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SMTP DATA")
 	}
@@ -560,4 +572,17 @@ func TestSendEmailExplicitStartTLSRejectsUntrustedCertificateByDefault(t *testin
 	err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
 	require.Error(t, err)
 	require.Contains(t, fmt.Sprint(err), "certificate")
+}
+
+func smtpTestMessageBody(t *testing.T, raw string) string {
+	t.Helper()
+	message, err := mail.ReadMessage(strings.NewReader(raw))
+	require.NoError(t, err)
+	reader := io.Reader(message.Body)
+	if message.Header.Get("Content-Transfer-Encoding") == "base64" {
+		reader = base64.NewDecoder(base64.StdEncoding, reader)
+	}
+	body, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	return string(body)
 }

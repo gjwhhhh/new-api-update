@@ -68,6 +68,7 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     setting: true,
     subscription: true,
     conversation_audit: true,
+    mail: true,
   },
 }
 
@@ -121,6 +122,7 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/models/metadata': { section: 'admin', module: 'models' },
   '/models/deployments': { section: 'admin', module: 'models' },
   '/users': { section: 'admin', module: 'user' },
+  '/mail': { section: 'admin', module: 'mail' },
   '/redemption-codes': { section: 'admin', module: 'redemption' },
   '/subscriptions': { section: 'admin', module: 'subscription' },
   '/conversation-audit/': { section: 'admin', module: 'conversation_audit' },

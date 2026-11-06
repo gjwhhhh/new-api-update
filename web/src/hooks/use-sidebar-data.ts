@@ -28,6 +28,7 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageSquare,
+  Mail,
   PanelsTopLeft,
   PlugZap,
   Radio,
@@ -43,7 +44,9 @@ import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
 import { useRechargeCenterConfig } from '@/features/recharge-center/hooks/use-recharge-center-config'
+import { hasPermission } from '@/lib/admin-permissions'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -53,6 +56,8 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const canReadMail = hasPermission(user, 'mail', 'read')
   const rechargeCenter = useRechargeCenterConfig()
 
   return {
@@ -176,6 +181,16 @@ export function useSidebarData(): SidebarData {
             url: '/users',
             icon: Users,
           },
+          ...(canReadMail
+            ? [
+                {
+                  title: t('Mail Center'),
+                  url: '/mail',
+                  icon: Mail,
+                  requiredRole: ROLE.ADMIN,
+                },
+              ]
+            : []),
           {
             title: t('Conversation Audit'),
             url: '/conversation-audit/',

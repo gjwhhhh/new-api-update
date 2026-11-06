@@ -42,6 +42,7 @@ import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
+import { Route as AuthenticatedMailIndexRouteImport } from './routes/_authenticated/mail/index'
 import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
 import { Route as AuthenticatedModelsSectionRouteImport } from './routes/_authenticated/models/$section'
 import { Route as AuthenticatedPerformanceIndexRouteImport } from './routes/_authenticated/performance/index'
@@ -245,6 +246,11 @@ const AuthenticatedErrorsErrorRoute =
 const AuthenticatedKeysIndexRoute = AuthenticatedKeysIndexRouteImport.update({
   id: '/keys/',
   path: '/keys/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedMailIndexRoute = AuthenticatedMailIndexRouteImport.update({
+  id: '/mail/',
+  path: '/mail/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedModelsIndexRoute =
@@ -485,6 +491,7 @@ export interface FileRoutesByFullPath {
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
+  '/mail/': typeof AuthenticatedMailIndexRoute
   '/models/': typeof AuthenticatedModelsIndexRoute
   '/performance/': typeof AuthenticatedPerformanceIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -551,6 +558,7 @@ export interface FileRoutesByTo {
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
+  '/mail': typeof AuthenticatedMailIndexRoute
   '/models': typeof AuthenticatedModelsIndexRoute
   '/performance': typeof AuthenticatedPerformanceIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
@@ -621,6 +629,7 @@ export interface FileRoutesById {
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
+  '/_authenticated/mail/': typeof AuthenticatedMailIndexRoute
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
   '/_authenticated/performance/': typeof AuthenticatedPerformanceIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -690,6 +699,7 @@ export interface FileRouteTypes {
     | '/channels/'
     | '/dashboard/'
     | '/keys/'
+    | '/mail/'
     | '/models/'
     | '/performance/'
     | '/playground/'
@@ -756,6 +766,7 @@ export interface FileRouteTypes {
     | '/channels'
     | '/dashboard'
     | '/keys'
+    | '/mail'
     | '/models'
     | '/performance'
     | '/playground'
@@ -825,6 +836,7 @@ export interface FileRouteTypes {
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/keys/'
+    | '/_authenticated/mail/'
     | '/_authenticated/models/'
     | '/_authenticated/performance/'
     | '/_authenticated/playground/'
@@ -1108,6 +1120,13 @@ declare module '@tanstack/react-router' {
       path: '/keys'
       fullPath: '/keys/'
       preLoaderRoute: typeof AuthenticatedKeysIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/mail/': {
+      id: '/_authenticated/mail/'
+      path: '/mail'
+      fullPath: '/mail/'
+      preLoaderRoute: typeof AuthenticatedMailIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/models/': {
@@ -1454,6 +1473,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
+  AuthenticatedMailIndexRoute: typeof AuthenticatedMailIndexRoute
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
   AuthenticatedPerformanceIndexRoute: typeof AuthenticatedPerformanceIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
@@ -1484,6 +1504,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
+  AuthenticatedMailIndexRoute: AuthenticatedMailIndexRoute,
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
   AuthenticatedPerformanceIndexRoute: AuthenticatedPerformanceIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,

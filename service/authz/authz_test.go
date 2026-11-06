@@ -158,6 +158,7 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceMail:  {ActionRead: false, ActionWrite: false, ActionOperate: false},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -190,6 +191,7 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceMail:  {ActionRead: false, ActionWrite: false, ActionOperate: false},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
 }
@@ -319,4 +321,18 @@ func TestTaskPluginBindIsRootOnlyUntilGranted(t *testing.T) {
 	_, err = enforcer.RemovePolicy(RoleSubject(BuiltInRoleAdmin), ResourceTaskPlugin, ActionBind, EffectAllow)
 	require.NoError(t, err)
 	assert.False(t, Can(2, common.RoleAdminUser, TaskPluginBind))
+}
+
+func TestMailPermissionsRequireIndependentGrants(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+	for _, permission := range []Permission{MailRead, MailWrite, MailOperate} {
+		assert.True(t, Can(1, common.RoleRootUser, permission))
+		assert.False(t, Can(2, common.RoleAdminUser, permission))
+		assert.False(t, Can(3, common.RoleCommonUser, permission))
+	}
+	require.NoError(t, SetUserPermissions(2, map[string]map[string]bool{ResourceMail: {ActionRead: true}}))
+	assert.True(t, Can(2, common.RoleAdminUser, MailRead))
+	assert.False(t, Can(2, common.RoleAdminUser, MailWrite))
+	assert.False(t, Can(2, common.RoleAdminUser, MailOperate))
 }

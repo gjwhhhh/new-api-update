@@ -80,7 +80,7 @@ func StartEmailBinding(identity AuthIdentity, authorization *model.AuthFlowAutho
 	if err != nil {
 		return nil, err
 	}
-	if err := sendEmailBindingCodes(state, codes); err != nil {
+	if err := sendEmailBindingCodes(identity.UserID, state, codes); err != nil {
 		// A partially delivered pair must not leave a usable change request.
 		_, _ = model.ConsumeAuthFlow(token, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeEmailBinding, UserId: identity.UserID, SessionId: identity.SessionID})
 		return nil, ErrEmailBindingDelivery
@@ -118,7 +118,7 @@ func ResendAccountEmailBinding(identity AuthIdentity, token string) (*EmailBindi
 	if err != nil {
 		return nil, err
 	}
-	if err := sendEmailBindingCodes(*state, codes); err != nil {
+	if err := sendEmailBindingCodes(identity.UserID, *state, codes); err != nil {
 		_, _ = model.ConsumeAuthFlow(token, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeEmailBinding, UserId: identity.UserID, SessionId: identity.SessionID})
 		return nil, ErrEmailBindingDelivery
 	}
@@ -177,15 +177,17 @@ func generateEmailBindingCodes(requireOld bool) (emailBindingCodes, error) {
 	return codes, nil
 }
 
-func sendEmailBindingCodes(state model.EmailBindingState, codes emailBindingCodes) error {
+func sendEmailBindingCodes(userID int, state model.EmailBindingState, codes emailBindingCodes) error {
 	subject := common.SystemName + " — Confirm your email address"
 	content := fmt.Sprintf("<p>Confirm linking this email address to your account.</p><p>Verification code: <strong>%s</strong></p><p>This code expires in 10 minutes. If you did not request this change, do not share this code.</p>", html.EscapeString(codes.New))
-	if err := common.SendEmail(subject, state.Email, content); err != nil {
+	safeBody := strings.ReplaceAll(content, html.EscapeString(codes.New), "[REDACTED]")
+	if err := SendSystemEmail("email_binding", userID, state.Email, subject, content, &safeBody); err != nil {
 		return err
 	}
 	if codes.Old != "" {
 		content = fmt.Sprintf("<p>A change to your account email address was requested. Confirm replacing your current address.</p><p>Verification code: <strong>%s</strong></p><p>This code expires in 10 minutes. If you did not request this change, do not share this code and contact your administrator.</p>", html.EscapeString(codes.Old))
-		return common.SendEmail(subject, state.CurrentEmail, content)
+		safeBody = strings.ReplaceAll(content, html.EscapeString(codes.Old), "[REDACTED]")
+		return SendSystemEmail("email_binding", userID, state.CurrentEmail, subject, content, &safeBody)
 	}
 	return nil
 }

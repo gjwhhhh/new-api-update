@@ -64,6 +64,11 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 
 - 目标服务器（包括测试和生产）禁止本机 `docker build` 或任何源码编译构建，避免小规格机器因构建占用资源导致卡死。
 - 必须使用远端打包流程构建镜像（例如推送 `custom-prod-*` tag 触发 CI 构建并推送镜像），服务器仅允许执行 `docker compose pull` / `docker compose up` 更新容器。
+- **部署规则必读：** 执行服务器版本更新，或实现、修改、评审发布脚本前，必须完整阅读并遵守 [`.agents/rules/deployment.md`](.agents/rules/deployment.md)。
+- 默认更新现有 Compose 项目的指定应用服务，直接替换镜像；未经用户要求，不另建并行应用实例或改用蓝绿发布。
+- 停止旧容器前必须完成镜像拉取与校验、备份、配置与权限检查及恢复准备；准备失败不得进入替换阶段。
+- 替换必须由脱离 SSH/聊天会话的服务器端受监管任务连续执行，包含启动、健康验证和有界故障恢复；不得先手动 `stop/down` 再等待下一次命令，不得在替换中途停下来请求例行确认。
+- 新容器处于 `Created`、退出或不健康时，必须执行规则中的恢复流程；只有运行版本、容器健康和公网访问均验证通过，才能报告更新成功。
 
 ### Backend Rules
 

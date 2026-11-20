@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,12 +18,15 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Option struct {
 	Key   string `json:"key" gorm:"primaryKey"`
 	Value string `json:"value"`
 }
+
+var cyberPolicyOptionMutex sync.Mutex
 
 func AllOption() ([]*Option, error) {
 	var options []*Option
@@ -206,9 +210,27 @@ func loadOptionsFromDatabase() {
 	}()
 	passkeyOptionMutex.Lock()
 	defer passkeyOptionMutex.Unlock()
-	options, _ := AllOption()
+	cyberPolicyOptionMutex.Lock()
+	options, err := AllOption()
+	if err == nil {
+		for _, option := range options {
+			if option.Key != operation_setting.CyberPolicyOptionKey {
+				continue
+			}
+			if err := validateOptionValue(option.Key, option.Value); err != nil {
+				common.SysError("invalid Cyber policy: " + err.Error())
+			} else {
+				_ = updateOptionMap(option.Key, option.Value)
+			}
+			break
+		}
+	}
+	cyberPolicyOptionMutex.Unlock()
 	passkeyOptions := make(map[string]string)
 	for _, option := range options {
+		if option.Key == operation_setting.CyberPolicyOptionKey {
+			continue
+		}
 		if IsPasskeyDomainOption(option.Key) {
 			passkeyOptions[option.Key] = option.Value
 			continue
@@ -230,6 +252,13 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == operation_setting.CyberPolicyOptionKey {
+		var policy operation_setting.CyberPolicy
+		if err := common.UnmarshalJsonStr(value, &policy); err != nil {
+			return err
+		}
+		return policy.Validate()
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -261,6 +290,17 @@ func UpdateOption(key string, value string) error {
 	}
 	if err := validateOptionValue(key, value); err != nil {
 		return err
+	}
+	if key == operation_setting.CyberPolicyOptionKey {
+		cyberPolicyOptionMutex.Lock()
+		defer cyberPolicyOptionMutex.Unlock()
+		option := Option{Key: key, Value: value}
+		if err := DB.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value"}),
+		}).Create(&option).Error; err != nil {
+			return err
+		}
+		return updateOptionMap(key, value)
 	}
 	// Save to database first
 	option := Option{

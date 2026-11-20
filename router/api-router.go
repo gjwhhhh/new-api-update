@@ -360,6 +360,13 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
 
+		cyberRoute := apiRouter.Group("/cyber", middleware.DisableCache())
+		cyberRoute.GET("/policy", middleware.AdminAuth(), controller.GetCyberPolicy)
+		cyberRoute.GET("/events", middleware.AdminAuth(), middleware.SearchRateLimit(), controller.GetCyberEvents)
+		cyberRoute.GET("/bans", middleware.AdminAuth(), middleware.SearchRateLimit(), controller.GetCyberBans)
+		cyberRoute.PUT("/policy", middleware.RootAuth(), middleware.CriticalRateLimit(), controller.SaveCyberPolicy)
+		cyberRoute.POST("/bans/revoke", middleware.RootAuth(), middleware.CriticalRateLimit(), controller.DeleteCyberBan)
+
 		systemTaskRoute := apiRouter.Group("/system-task")
 		systemTaskRoute.Use(middleware.RootAuth())
 		{

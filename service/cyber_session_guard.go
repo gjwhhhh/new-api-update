@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -33,13 +35,36 @@ const (
 	cyberSessionNoExpiry = -1 * time.Nanosecond
 )
 
-type cyberSessionConfig struct {
-	mode     string
-	tokenIDs map[int]struct{}
-	ttl      time.Duration
+type CyberPolicy = operation_setting.CyberPolicy
+
+type cyberPolicySnapshot struct {
+	raw    string
+	policy CyberPolicy
 }
 
-var cyberSessionSettings cyberSessionConfig
+var cyberSessionDefaults atomic.Pointer[CyberPolicy]
+var cyberSessionSnapshot atomic.Pointer[cyberPolicySnapshot]
+
+func CurrentCyberPolicy() CyberPolicy {
+	common.OptionMapRWMutex.RLock()
+	raw := common.OptionMap[operation_setting.CyberPolicyOptionKey]
+	common.OptionMapRWMutex.RUnlock()
+	if snapshot := cyberSessionSnapshot.Load(); snapshot != nil && snapshot.raw == raw {
+		return snapshot.policy
+	}
+	var policy CyberPolicy
+	if raw != "" && common.UnmarshalJsonStr(raw, &policy) == nil && policy.Validate() == nil {
+		cyberSessionSnapshot.Store(&cyberPolicySnapshot{raw: raw, policy: policy})
+		return policy
+	}
+	if snapshot := cyberSessionSnapshot.Load(); raw != "" && snapshot != nil {
+		return snapshot.policy
+	}
+	if fallback := cyberSessionDefaults.Load(); fallback != nil {
+		return *fallback
+	}
+	return CyberPolicy{Mode: "off", Scope: "token", TTLSeconds: 600}
+}
 
 var cyberSessionCounters struct {
 	checked, ineligible, armed, wouldBlock, blocked, readError, writeError atomic.Uint64
@@ -47,52 +72,60 @@ var cyberSessionCounters struct {
 
 func InitCyberSessionGuard() {
 	settings, err := loadCyberSessionConfig(os.Getenv)
-	cyberSessionSettings = settings
 	if err != nil {
+		settings = CyberPolicy{Mode: "off", Scope: "token", TTLSeconds: 600}
 		common.SysError("cyber_session_guard disabled: " + err.Error())
-		return
 	}
-	if settings.mode != "off" {
-		common.SysLog(fmt.Sprintf("cyber_session_guard mode=%s token_count=%d ttl_seconds=%d redis_ready=%t", settings.mode, len(settings.tokenIDs), int(settings.ttl/time.Second), common.RedisEnabled && common.RDB != nil))
+	cyberSessionDefaults.Store(&settings)
+	settings = CurrentCyberPolicy()
+	if settings.Mode != "off" {
+		common.SysLog(fmt.Sprintf("cyber_session_guard mode=%s scope=%s ttl_seconds=%d redis_ready=%t", settings.Mode, settings.Scope, settings.TTLSeconds, common.RedisEnabled && common.RDB != nil))
 	}
 }
 
-func loadCyberSessionConfig(getEnv func(string) string) (cyberSessionConfig, error) {
-	mode := strings.TrimSpace(getEnv("CYBER_SESSION_GUARD_MODE"))
-	switch mode {
-	case "", "off":
-		return cyberSessionConfig{mode: "off"}, nil
-	case cyberSessionShadow, cyberSessionEnforce:
-	default:
-		return cyberSessionConfig{}, fmt.Errorf("CYBER_SESSION_GUARD_MODE must be off, shadow or enforce")
+func loadCyberSessionConfig(getEnv func(string) string) (CyberPolicy, error) {
+	p := CyberPolicy{Mode: strings.TrimSpace(getEnv("CYBER_SESSION_GUARD_MODE")), Scope: strings.TrimSpace(getEnv("CYBER_SESSION_GUARD_SCOPE")), TTLSeconds: 600}
+	if p.Mode == "" {
+		p.Mode = "off"
 	}
-	settings := cyberSessionConfig{mode: mode, tokenIDs: make(map[int]struct{}), ttl: 10 * time.Minute}
-	for item := range strings.SplitSeq(getEnv("CYBER_SESSION_GUARD_TOKEN_IDS"), ",") {
-		id, err := strconv.Atoi(strings.TrimSpace(item))
-		if err != nil || id <= 0 {
-			return cyberSessionConfig{}, fmt.Errorf("CYBER_SESSION_GUARD_TOKEN_IDS must list positive local token IDs")
+	if p.Scope == "" {
+		p.Scope = "token"
+	}
+	for key, list := range map[string]*[]int{"CYBER_SESSION_GUARD_TOKEN_IDS": &p.TokenIDs, "CYBER_SESSION_GUARD_CHANNEL_IDS": &p.ChannelIDs} {
+		for item := range strings.SplitSeq(strings.TrimSpace(getEnv(key)), ",") {
+			if item == "" {
+				continue
+			}
+			id, err := strconv.Atoi(strings.TrimSpace(item))
+			if err != nil {
+				return p, fmt.Errorf("invalid %s", key)
+			}
+			*list = append(*list, id)
 		}
-		settings.tokenIDs[id] = struct{}{}
 	}
 	if value := strings.TrimSpace(getEnv("CYBER_SESSION_GUARD_TTL_SECONDS")); value != "" {
 		seconds, err := strconv.Atoi(value)
-		if err != nil || (seconds != 0 && (seconds < 30 || seconds > 3600)) || (seconds == 0 && mode != cyberSessionEnforce) {
-			return cyberSessionConfig{}, fmt.Errorf("CYBER_SESSION_GUARD_TTL_SECONDS must be 30-3600, or 0 in enforce mode")
+		if err != nil {
+			return p, fmt.Errorf("invalid CYBER_SESSION_GUARD_TTL_SECONDS")
 		}
-		settings.ttl = time.Duration(seconds) * time.Second
+		p.TTLSeconds = seconds
 	}
-	return settings, nil
+	if raw := strings.TrimSpace(getEnv("CYBER_SESSION_GUARD_MATCH_MESSAGE")); raw != "" {
+		on, err := strconv.ParseBool(raw)
+		if err != nil {
+			return p, fmt.Errorf("invalid CYBER_SESSION_GUARD_MATCH_MESSAGE")
+		}
+		p.MatchMessage = on
+	}
+	return p, p.Validate()
 }
 
 func CyberSessionGuardMetrics() map[string]any {
-	mode := cyberSessionSettings.mode
-	if mode == "" {
-		mode = "off"
-	}
+	p := CurrentCyberPolicy()
 	return map[string]any{
-		"mode": mode, "ttl_seconds": int(cyberSessionSettings.ttl / time.Second),
-		"permanent":         mode == cyberSessionEnforce && cyberSessionSettings.ttl == 0,
-		"configured_tokens": len(cyberSessionSettings.tokenIDs), "redis_ready": common.RedisEnabled && common.RDB != nil,
+		"mode": p.Mode, "scope": p.Scope, "ttl_seconds": p.TTLSeconds,
+		"permanent":         p.Mode == cyberSessionEnforce && p.TTLSeconds == 0,
+		"configured_tokens": len(p.TokenIDs), "redis_ready": common.RedisEnabled && common.RDB != nil,
 		"checked": cyberSessionCounters.checked.Load(), "ineligible": cyberSessionCounters.ineligible.Load(),
 		"armed": cyberSessionCounters.armed.Load(), "would_block": cyberSessionCounters.wouldBlock.Load(), "blocked": cyberSessionCounters.blocked.Load(),
 		"read_error": cyberSessionCounters.readError.Load(), "write_error": cyberSessionCounters.writeError.Load(),
@@ -102,22 +135,35 @@ func CyberSessionGuardMetrics() map[string]any {
 // CyberSessionGuard runs after token authentication and before routing/billing.
 // For Responses WS the same middleware receives one normalized response.create.
 func CyberSessionGuard(c *gin.Context) {
-	settings := cyberSessionSettings
+	settings := CurrentCyberPolicy()
+	c.Set(cyberMessagePolicyKey, settings.MatchMessage)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), cyberUpstreamContextKey{}, c))
 	tokenID := c.GetInt("token_id")
-	_, enabled := settings.tokenIDs[tokenID]
-	if !enabled || c.Request.Method != http.MethodPost || !strings.HasPrefix(c.ContentType(), "application/json") {
+	if settings.Mode == "off" {
+		c.Set(cyberSessionSkipKey, "guard_off")
+		return
+	}
+	if tokenID <= 0 || (settings.Scope == "token" && !slices.Contains(settings.TokenIDs, tokenID)) {
+		c.Set(cyberSessionSkipKey, "out_of_scope")
+		return
+	}
+	if c.Request.Method != http.MethodPost || !strings.HasPrefix(c.ContentType(), "application/json") {
+		c.Set(cyberSessionSkipKey, "unsupported_request")
 		return
 	}
 	switch c.Request.URL.Path {
 	case "/v1/responses", "/v1/responses/compact", "/v1/chat/completions":
 	default:
+		c.Set(cyberSessionSkipKey, "unsupported_request")
 		return
 	}
 	if !common.RedisEnabled || common.RDB == nil {
+		c.Set(cyberSessionSkipKey, "redis_unavailable")
 		cyberSessionCounters.readError.Add(1)
 		return
 	}
 	if c.Request.ContentLength > cyberSessionCacheLimit {
+		c.Set(cyberSessionSkipKey, "request_too_large")
 		cyberSessionCounters.ineligible.Add(1)
 		return
 	}
@@ -133,62 +179,116 @@ func CyberSessionGuard(c *gin.Context) {
 	c.Request.Body = io.NopCloser(storage)
 	digest := cyberSessionFingerprint(storage)
 	if digest == "" {
+		c.Set(cyberSessionSkipKey, "missing_session")
 		cyberSessionCounters.ineligible.Add(1)
 		return
 	}
-	key := fmt.Sprintf("new-api:cyber-session:v1:%s:%d:%s", settings.mode, tokenID, digest)
+	session := cyberRequestSession{policy: settings, tokenID: tokenID, digest: digest}
+	c.Set(cyberSessionRequestKey, session)
+	if settings.Scope != "channel" {
+		if apiErr := checkCyberSession(c, session, 0); apiErr != nil {
+			SetRelayFinalError(c, apiErr)
+			c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+			return
+		}
+	}
+	arm := sync.OnceFunc(func() { writeCyberSession(c, session) })
+	c.Set(cyberSessionArmKey, arm)
+	c.Next()
+	if failure, failed := FinalRelayFailure(c); failed && failure.Code == relaycommon.CyberPolicyCode {
+		arm()
+	}
+}
+
+const cyberSessionSkipKey = "cyber_session_skip"
+const cyberSessionRequestKey = "cyber_session_request"
+const cyberSessionPrefix = "new-api:cyber-session:v1:"
+
+type cyberRequestSession struct {
+	policy  CyberPolicy
+	tokenID int
+	digest  string
+}
+
+func (s cyberRequestSession) redisKey(channelID int) string {
+	if channelID > 0 {
+		return fmt.Sprintf("%s%s:channel:%d:%d:%s", cyberSessionPrefix, s.policy.Mode, channelID, s.tokenID, s.digest)
+	}
+	return fmt.Sprintf("%s%s:%d:%s", cyberSessionPrefix, s.policy.Mode, s.tokenID, s.digest)
+}
+
+func CheckCyberSessionChannel(c *gin.Context, channelID int) *types.NewAPIError {
+	value, _ := c.Get(cyberSessionRequestKey)
+	session, ok := value.(cyberRequestSession)
+	if !ok || session.policy.Scope != "channel" || !slices.Contains(session.policy.ChannelIDs, channelID) {
+		return nil
+	}
+	return checkCyberSession(c, session, channelID)
+}
+
+func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID int) *types.NewAPIError {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), cyberSessionRedisBudget)
-	remaining, err := common.RDB.PTTL(ctx, key).Result()
+	remaining, err := common.RDB.PTTL(ctx, session.redisKey(channelID)).Result()
+	if err == nil && remaining < 0 && remaining != cyberSessionNoExpiry && channelID > 0 {
+		remaining, err = common.RDB.PTTL(ctx, session.redisKey(0)).Result()
+	}
 	cancel()
 	if err != nil {
 		cyberSessionCounters.readError.Add(1)
 	} else {
 		cyberSessionCounters.checked.Add(1)
 		if remaining >= 0 || remaining == cyberSessionNoExpiry {
-			if settings.mode == cyberSessionEnforce {
+			if session.policy.Mode == cyberSessionEnforce {
 				cyberSessionCounters.blocked.Add(1)
 				permanent := remaining == cyberSessionNoExpiry
-				c.Set(cyberSessionLogKey, gin.H{"mode": settings.mode, "action": "blocked", "session_fingerprint": digest, "permanent": permanent})
+				c.Set(cyberSessionLogKey, gin.H{"mode": session.policy.Mode, "action": "blocked", "session_fingerprint": session.digest, "permanent": permanent, "channel_id": channelID})
 				message := "This conversation is temporarily blocked after an upstream content policy rejection"
 				if permanent {
 					message = "This conversation is blocked after an upstream content policy rejection"
 				} else {
 					c.Header("Retry-After", strconv.FormatInt(max(1, int64((remaining+time.Second-1)/time.Second)), 10))
 				}
-				apiErr := types.WithOpenAIError(types.OpenAIError{
+				return types.WithOpenAIError(types.OpenAIError{
 					Type: "content_policy_violation", Code: CyberSessionBlockedCode,
 					Message: message,
 				}, http.StatusForbidden, types.ErrOptionWithSkipRetry())
-				SetRelayFinalError(c, apiErr)
-				c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
-				return
 			}
 			cyberSessionCounters.wouldBlock.Add(1)
 			logger.LogInfo(c, "cyber_session_guard mode=shadow decision=would_block")
 		}
 	}
-	arm := sync.OnceFunc(func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), cyberSessionRedisBudget)
-		defer cancel()
-		// Repeated matches, including shadow-mode requests, do not extend the cooldown.
-		created, err := common.RDB.SetNX(ctx, key, "1", settings.ttl).Result()
-		action := "already_active"
-		if err != nil {
-			action = "store_failed"
-			if cyberSessionCounters.writeError.Add(1) == 1 {
-				logger.LogWarn(c, "cyber_session_guard could not store a cooldown; check Redis and guard metrics")
-			}
-		} else if created {
-			action = "armed"
-			cyberSessionCounters.armed.Add(1)
+	return nil
+}
+
+func writeCyberSession(c *gin.Context, session cyberRequestSession) {
+	settings := session.policy
+	channelID := 0
+	if settings.Scope == "channel" {
+		channelID = c.GetInt("channel_id")
+		if !slices.Contains(settings.ChannelIDs, channelID) {
+			c.Set(cyberSessionSkipKey, "out_of_scope")
+			return
 		}
-		c.Set(cyberSessionLogKey, gin.H{"mode": settings.mode, "action": action, "session_fingerprint": digest, "configured_ttl_seconds": int(settings.ttl / time.Second)})
-	})
-	c.Set(cyberSessionArmKey, arm)
-	c.Next()
-	if failure, failed := FinalRelayFailure(c); failed && failure.Code == relaycommon.CyberPolicyCode {
-		arm()
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), cyberSessionRedisBudget)
+	defer cancel()
+	metadata, err := common.Marshal(CyberBanMetadata{ID: uuid.NewString(), RequestID: c.GetString(common.RequestIdKey), CreatedAt: time.Now().Unix()})
+	if err != nil {
+		c.Set(cyberSessionSkipKey, "store_failed")
+		return
+	}
+	created, err := common.RDB.SetNX(ctx, session.redisKey(channelID), metadata, time.Duration(settings.TTLSeconds)*time.Second).Result()
+	action := "already_active"
+	if err != nil {
+		action = "store_failed"
+		if cyberSessionCounters.writeError.Add(1) == 1 {
+			logger.LogWarn(c, "cyber_session_guard could not store a cooldown; check Redis and guard metrics")
+		}
+	} else if created {
+		action = "armed"
+		cyberSessionCounters.armed.Add(1)
+	}
+	c.Set(cyberSessionLogKey, gin.H{"mode": settings.Mode, "action": action, "session_fingerprint": session.digest, "configured_ttl_seconds": settings.TTLSeconds, "channel_id": channelID})
 }
 
 func cyberSessionFingerprint(storage common.BodyStorage) string {

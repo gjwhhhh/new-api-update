@@ -154,6 +154,32 @@ func TestRelayErrorHandlerMatchesCyberPolicyByExactCode(t *testing.T) {
 	}
 }
 
+func TestRelayErrorHandlerOptionalCyberMessageMatchesOnlyEligibleFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, source string
+		status             int
+	}{
+		{"nested", `{"error":{"code":"invalid_request_error","message":"denied [cyber_policy]"}}`, "message", 403},
+		{"flat", `{"type":"invalid_request_error","message":"denied (cyber_policy)"}`, "message", 400},
+		{"flat structured code", `{"code":"cyber_policy"}`, "code", 403},
+		{"flat conflicting code", `{"code":"invalid_api_key","message":"cyber_policy"}`, "", 403},
+		{"rate limit", `{"error":{"message":"cyber_policy"}}`, "", 429},
+		{"identifier prefix", `{"error":{"message":"not_cyber_policy"}}`, "", 403},
+		{"non-error field", `{"result":{"message":"cyber_policy"}}`, "", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(nil)
+			c.Set(cyberMessagePolicyKey, true)
+			ctx := context.WithValue(t.Context(), cyberUpstreamContextKey{}, c)
+			resp := &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body))}
+			result := RelayErrorHandler(ctx, resp, false)
+			require.NotNil(t, result)
+			assert.Equal(t, tc.source, c.GetString(cyberMatchSourceKey))
+			assert.Equal(t, tc.source != "", result.GetErrorCode() == "cyber_policy")
+		})
+	}
+}
+
 func TestRelayErrorHandlerKeepsInvalidJSONBodyInDebugLog(t *testing.T) {
 	withDebugEnabled(t, true)
 

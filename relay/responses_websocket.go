@@ -290,6 +290,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if apiErr != nil {
 				return apiErr
 			}
+			if blocked := service.CheckCyberSessionChannel(c, channel.Id); blocked != nil {
+				return blocked
+			}
 			service.AppendUsedChannel(c, channel.Id)
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
@@ -424,8 +427,13 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
 					}
 					service.ObserveRelayAuditFrame(c, incoming.body)
+					cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), rejection.Error, rejection.Status)
+					if cyberErr != nil {
+						info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", cyberErr.StatusCode)
+						service.SetRelayFinalError(c, cyberErr)
+					}
 					if accepted {
-						if rejection.Error != nil {
+						if cyberErr == nil && rejection.Error != nil {
 							code := ""
 							if rejection.Error.Code != nil {
 								code = fmt.Sprint(rejection.Error.Code)
@@ -433,14 +441,17 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 							info.StreamStatus.MarkFailed(code, rejection.Error.Type, rejection.Status)
 						}
 						accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
+						if cyberErr != nil && rejection.Error.Code != relaycommon.CyberPolicyCode {
+							incoming.body = normalizeResponsesWSCyberTerminal(incoming.body, cyberErr, false)
+						}
 						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 						s.lastResponseID = responseID
 						state.terminal, state.closeAfter = &incoming, ambiguous
 						ConsumeResponsesQuota(c, info, accumulator.Finish())
 						return nil
 					}
-					if rejection.Error.Code == relaycommon.CyberPolicyCode {
-						return service.CyberPolicyError(rejection.Status)
+					if cyberErr != nil {
+						return cyberErr
 					}
 					rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
 					if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
@@ -464,8 +475,30 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
 			}
 			switch event.Type {
-			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
+			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.error", "response.cancelled", "response.canceled":
 				service.ObserveRelayAuditFrame(c, incoming.body)
+				if event.Type == "response.failed" || event.Type == "response.error" {
+					var upstream *types.OpenAIError
+					if event.Response != nil {
+						upstream = event.Response.GetOpenAIError()
+					}
+					nested := upstream != nil
+					if !nested {
+						var rejection responsesWSErrorEvent
+						_ = common.Unmarshal(incoming.body, &rejection)
+						upstream = rejection.Error
+						if upstream == nil {
+							upstream = &types.OpenAIError{Type: "upstream_error", Code: event.Code, Message: event.Message}
+						}
+					}
+					if cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), upstream, 0); cyberErr != nil {
+						info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", cyberErr.StatusCode)
+						service.SetRelayFinalError(c, cyberErr)
+						if upstream.Code != relaycommon.CyberPolicyCode {
+							incoming.body = normalizeResponsesWSCyberTerminal(incoming.body, cyberErr, nested)
+						}
+					}
+				}
 				if event.Response != nil {
 					s.lastResponseID = event.Response.ID
 				}
@@ -508,6 +541,39 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			return nil
 		}
 	}
+}
+
+// Keep the terminal frame's identifiers, usage and ordering fields intact.
+func normalizeResponsesWSCyberTerminal(body []byte, apiErr *types.NewAPIError, nested bool) []byte {
+	var event map[string]common.RawMessage
+	if common.Unmarshal(body, &event) != nil || event == nil {
+		return body
+	}
+	upstream := apiErr.ToOpenAIError()
+	encoded, err := common.Marshal(upstream)
+	if err != nil {
+		return body
+	}
+	if nested {
+		var response map[string]common.RawMessage
+		if common.Unmarshal(event["response"], &response) != nil || response == nil {
+			return body
+		}
+		response["error"] = encoded
+		event["response"], err = common.Marshal(response)
+		if err != nil {
+			return body
+		}
+	} else if len(event["error"]) > 0 {
+		event["error"] = encoded
+	} else {
+		event["code"], _ = common.Marshal(upstream.Code)
+		event["message"], _ = common.Marshal(upstream.Message)
+	}
+	if normalized, err := common.Marshal(event); err == nil {
+		return normalized
+	}
+	return body
 }
 
 // A single generation is active, but a cancel can fail independently. Correlate
@@ -600,6 +666,9 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	common.SetContextKey(c, appconstant.ContextKeyChannelParamOverride, channel.GetParamOverride())
 	common.SetContextKey(c, appconstant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, appconstant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
+	if blocked := service.CheckCyberSessionChannel(c, channel.Id); blocked != nil {
+		return blocked
+	}
 	policy := service.RequestPolicy(c)
 	policy.BeginAttempt(channel, s.lockedGroup)
 	policy.AddEvent(service.PolicyEvent{ChannelID: channel.Id, Decision: service.PolicyDecision{Action: "select", Reason: "pinned_channel", Source: "channel_constraint"}})

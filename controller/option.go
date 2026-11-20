@@ -86,7 +86,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == operation_setting.CyberPolicyOptionKey {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -202,6 +202,10 @@ func UpdateOption(c *gin.Context) {
 	}
 	if service.IsGroupManagedOption(option.Key) {
 		common.ApiErrorMsg(c, "分组相关配置必须通过分组配置接口保存")
+		return
+	}
+	if option.Key == operation_setting.CyberPolicyOptionKey {
+		common.ApiErrorMsg(c, "Cyber policy must be updated through the Cyber policy API")
 		return
 	}
 	switch option.Key {

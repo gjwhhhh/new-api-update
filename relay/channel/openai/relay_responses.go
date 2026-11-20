@@ -33,8 +33,8 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil {
-		if oaiError.Code == relaycommon.CyberPolicyCode {
-			return nil, service.CyberPolicyError(resp.StatusCode)
+		if cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), oaiError, resp.StatusCode); cyberErr != nil {
+			return nil, cyberErr
 		}
 		if oaiError.Type != "" {
 			return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
@@ -145,8 +145,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				streamResponse.Type,
 				hasCommittedEvent || businessRejection,
 			)
-			if upstreamError.Code == relaycommon.CyberPolicyCode {
-				streamErr = service.CyberPolicyError(resp.StatusCode)
+			if cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), upstreamError, resp.StatusCode); cyberErr != nil {
+				streamErr = cyberErr
 				info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", streamErr.StatusCode)
 				service.SetRelayFinalError(c, streamErr)
 			}

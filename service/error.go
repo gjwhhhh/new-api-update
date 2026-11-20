@@ -115,12 +115,11 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 	}
 
 	if common.GetJsonType(errResponse.Error) == "object" {
-		// Recognize policy rejections even when the upstream omits the message.
-		var policyError struct {
-			Code string `json:"code"`
-		}
-		if common.Unmarshal(errResponse.Error, &policyError) == nil && policyError.Code == relaycommon.CyberPolicyCode {
-			return CyberPolicyError(resp.StatusCode)
+		// Even a malformed or absent message must not hide a structured code.
+		var policyError types.OpenAIError
+		_ = common.Unmarshal(errResponse.Error, &policyError)
+		if cyberErr := RecognizeCyberUpstreamError(ctx, &policyError, resp.StatusCode); cyberErr != nil {
+			return cyberErr
 		}
 
 		// General format error (OpenAI, Anthropic, Gemini, etc.)
@@ -131,6 +130,13 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 				newApiErr.Err = buildErrWithBody(newApiErr.Error())
 			}
 			return
+		}
+	}
+	if len(errResponse.Error) == 0 || string(errResponse.Error) == "null" {
+		var flat types.OpenAIError
+		_ = common.Unmarshal(responseBody, &flat)
+		if cyberErr := RecognizeCyberUpstreamError(ctx, &flat, resp.StatusCode); cyberErr != nil {
+			return cyberErr
 		}
 	}
 	message := errResponse.ToMessage()

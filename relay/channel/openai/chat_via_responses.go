@@ -38,8 +38,8 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil {
-		if oaiError.Code == relaycommon.CyberPolicyCode {
-			return nil, service.CyberPolicyError(resp.StatusCode)
+		if cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), oaiError, resp.StatusCode); cyberErr != nil {
+			return nil, cyberErr
 		}
 		if oaiError.Type != "" {
 			return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
@@ -113,8 +113,8 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		case "error", "response.failed", "response.error":
 			oaiErr := responsesStreamEventError(&streamResp, data)
 			streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
-			if oaiErr.Code == relaycommon.CyberPolicyCode {
-				streamErr = service.CyberPolicyError(resp.StatusCode)
+			if cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), oaiErr, resp.StatusCode); cyberErr != nil {
+				streamErr = cyberErr
 			}
 		}
 		if streamErr != nil || finalResponse != nil {
@@ -288,8 +288,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				failedUsage = streamResp.Response.Usage
 			}
 			streamErr = types.WithOpenAIError(*upstreamError, http.StatusInternalServerError)
-			if upstreamError.Code == relaycommon.CyberPolicyCode {
-				streamErr = service.CyberPolicyError(resp.StatusCode)
+			if cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), upstreamError, resp.StatusCode); cyberErr != nil {
+				streamErr = cyberErr
 				info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", streamErr.StatusCode)
 				service.SetRelayFinalError(c, streamErr)
 			}

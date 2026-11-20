@@ -166,6 +166,19 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 		AppendRelayLogAdminInfo(c, nil, other)
 		if guard, ok := c.Get(cyberSessionLogKey); ok {
 			other.SetAdmin("cyber_session_guard", guard)
+		} else if isCyber {
+			reason := c.GetString(cyberSessionSkipKey)
+			if reason == "" {
+				reason = "unsupported_request"
+			}
+			other.SetAdmin("cyber_session_guard", gin.H{"action": "skipped", "reason": reason})
+		}
+		if isCyber {
+			source := c.GetString(cyberMatchSourceKey)
+			if source == "" {
+				source = "code"
+			}
+			other.SetAdmin("cyber_match_source", source)
 		}
 		started := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		elapsed := 0

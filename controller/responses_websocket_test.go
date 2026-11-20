@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -432,7 +434,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 	const rejected = `{"type":"response.failed","response":{"id":"rejected","status":"failed","error":{"code":"cyber_policy"}}}`
 	const completed = `{"type":"response.completed","response":{"id":"next","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`
 	for _, tc := range []struct{ name, mode, ttl string }{
-		{"off", "off", "30"}, {"shadow", "shadow", "30"}, {"temporary", "enforce", "30"}, {"permanent", "enforce", "0"}, {"redis unavailable", "enforce", "30"},
+		{"off", "off", "30"}, {"shadow", "shadow", "30"}, {"temporary", "enforce", "30"}, {"permanent", "enforce", "0"}, {"redis unavailable", "enforce", "30"}, {"message rejection", "enforce", "30"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(service.InitCyberSessionGuard)
@@ -444,6 +446,9 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 					event := strings.Replace(completed, `"next"`, fmt.Sprintf(`"next-%d"`, turn), 1)
 					if turn == 0 {
 						event = rejected
+						if tc.name == "message rejection" {
+							event = `{"type":"response.failed","response":{"id":"rejected","status":"failed","error":{"message":"denied (cyber_policy)"}}}`
+						}
 					}
 					if err := ws.WriteMessage(websocket.TextMessage, []byte(event)); err != nil {
 						return
@@ -453,6 +458,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			t.Setenv("CYBER_SESSION_GUARD_MODE", tc.mode)
 			t.Setenv("CYBER_SESSION_GUARD_TOKEN_IDS", fmt.Sprint(fixture.token.Id))
 			t.Setenv("CYBER_SESSION_GUARD_TTL_SECONDS", tc.ttl)
+			t.Setenv("CYBER_SESSION_GUARD_MATCH_MESSAGE", strconv.FormatBool(tc.name == "message rejection"))
 			service.InitCyberSessionGuard()
 			metricsBefore := service.CyberSessionGuardMetrics()
 			assert.Equal(t, tc.mode, metricsBefore["mode"])
@@ -464,7 +470,11 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 				require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(body)))
 				return readResponsesWSTestEvent(t, fixture.client)
 			}
-			assert.Equal(t, "response.failed", wsTurn(session)["type"])
+			failed := wsTurn(session)
+			assert.Equal(t, "response.failed", failed["type"])
+			if tc.name == "message rejection" {
+				assert.Equal(t, "cyber_policy", failed["response"].(map[string]any)["error"].(map[string]any)["code"])
+			}
 			if tc.name == "redis unavailable" {
 				fixture.redisServer.SetError("")
 				assert.Equal(t, "response.completed", wsTurn(session)["type"])
@@ -504,11 +514,13 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			fixture.redisServer.FastForward(time.Hour)
 			if tc.ttl == "0" {
 				assert.Equal(t, float64(http.StatusForbidden), wsTurn(session)["status"])
-				keys, err := common.RDB.Keys(t.Context(), "new-api:cyber-session:v1:enforce:*").Result()
+				bans, _, err := service.ListCyberBans(t.Context(), 0)
 				require.NoError(t, err)
-				require.Len(t, keys, 1)
-				assert.NotContains(t, keys[0], session)
-				require.NoError(t, common.RDB.Del(t.Context(), keys[0]).Err())
+				require.Len(t, bans, 1)
+				assert.True(t, bans[0].Permanent)
+				assert.NotEqual(t, session, bans[0].Fingerprint)
+				require.NoError(t, service.RevokeCyberBan(t.Context(), bans[0].CyberBanTarget, bans[0].Generation))
+				assert.ErrorIs(t, service.RevokeCyberBan(t.Context(), bans[0].CyberBanTarget, bans[0].Generation), service.ErrCyberBanChanged)
 			}
 			assert.Equal(t, "response.completed", wsTurn(session)["type"])
 			fixture.closeAndWait(t)
@@ -524,16 +536,25 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
 	const delta = `{"type":"response.output_text.delta","delta":"partial output"}`
-	const rejected = `{"type":"response.failed","response":{"id":"rejected","status":"failed","error":{"type":"invalid_request","code":"cyber_policy"}}}`
+	const rejected = `{"type":"response.failed","response":{"id":"rejected","status":"failed","error":{"type":"invalid_request","message":"denied (cyber_policy)"}}}`
 	t.Cleanup(service.InitCyberSessionGuard)
 	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {
 		t.Error("the blocked session must not reach the WebSocket upstream")
 	}, delta, rejected)
 	fixture.closeAndWait(t)
-	t.Setenv("CYBER_SESSION_GUARD_MODE", "enforce")
-	t.Setenv("CYBER_SESSION_GUARD_TOKEN_IDS", fmt.Sprint(fixture.token.Id))
-	t.Setenv("CYBER_SESSION_GUARD_TTL_SECONDS", "600")
-	service.InitCyberSessionGuard()
+	key := operation_setting.CyberPolicyOptionKey
+	common.OptionMapRWMutex.Lock()
+	oldMap := common.OptionMap
+	common.OptionMap = map[string]string{}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = oldMap
+		common.OptionMapRWMutex.Unlock()
+	})
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	require.NoError(t, model.UpdateOption(key, `{"mode":"enforce","scope":"token","token_ids":[999999],"ttl_seconds":0}`))
+	require.NoError(t, model.UpdateOption(key, `{"mode":"enforce","scope":"all","ttl_seconds":0,"match_message":true}`))
 
 	httpClient := &http.Client{Timeout: 3 * time.Second}
 	post := func() (int, string) {
@@ -561,6 +582,11 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	require.EqualValues(t, 1, total)
 	require.Len(t, logs, 1)
 	assert.Contains(t, logs[0].Other, `"protocol":"sse"`)
+	events, err := model.CyberEvents(t.Context(), model.CyberEventFilter{Start: 1, End: time.Now().Unix(), TokenID: fixture.token.Id, Source: "message", Action: "permanent"})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "responses-http-billing", events[0].RequestID)
+	assert.Len(t, events[0].Fingerprint, 64)
 
 	status, body = post()
 	require.Equal(t, http.StatusForbidden, status)

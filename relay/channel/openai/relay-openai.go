@@ -131,8 +131,12 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 				sr.Error(err)
 			}
 		}
-		if gjson.Get(data, "error.code").Str == relaycommon.CyberPolicyCode && gjson.Valid(data) {
-			cyberErr = service.CyberPolicyError(resp.StatusCode)
+		if upstream := gjson.Get(data, "error"); upstream.IsObject() && gjson.Valid(data) {
+			var upstreamError types.OpenAIError
+			_ = common.UnmarshalJsonStr(upstream.Raw, &upstreamError)
+			cyberErr = service.RecognizeCyberUpstreamError(c.Request.Context(), &upstreamError, resp.StatusCode)
+		}
+		if cyberErr != nil {
 			info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", cyberErr.StatusCode)
 			service.SetRelayFinalError(c, cyberErr)
 			sr.Stop(cyberErr)
@@ -303,8 +307,8 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil {
-		if oaiError.Code == relaycommon.CyberPolicyCode {
-			return nil, service.CyberPolicyError(resp.StatusCode)
+		if cyberErr := service.RecognizeCyberUpstreamError(c.Request.Context(), oaiError, resp.StatusCode); cyberErr != nil {
+			return nil, cyberErr
 		}
 		if oaiError.Type != "" {
 			return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)

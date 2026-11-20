@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -399,6 +400,72 @@ type sensitiveAuditRequest struct {
 	Request string                      `json:"request,omitempty"`
 }
 
+func marshalSensitiveAuditRequest(match service.RelaySensitiveMatch, requestBody string, maxBytes int) (string, bool, error) {
+	envelope := sensitiveAuditRequest{Match: match, Request: requestBody}
+	encoded, err := common.Marshal(envelope)
+	if err != nil {
+		return "", false, err
+	}
+	truncated := false
+	if len(encoded)+len(sensitiveAuditPrefix) <= maxBytes {
+		return sensitiveAuditPrefix + string(encoded), false, nil
+	}
+	// Prefer keeping the matched field body; drop user-input payload first.
+	if envelope.Request != "" {
+		envelope.Request = ""
+		truncated = true
+		encoded, err = common.Marshal(envelope)
+		if err != nil {
+			return "", false, err
+		}
+		if len(encoded)+len(sensitiveAuditPrefix) <= maxBytes {
+			return sensitiveAuditPrefix + string(encoded), truncated, nil
+		}
+	}
+	if envelope.Match.Content == "" {
+		return sensitiveAuditPrefix + string(encoded), truncated, nil
+	}
+	originalContent := envelope.Match.Content
+	envelope.Match.Content = ""
+	envelope.Match.ContentTruncated = true
+	encoded, err = common.Marshal(envelope)
+	if err != nil {
+		return "", false, err
+	}
+	budget := maxBytes - len(sensitiveAuditPrefix) - len(encoded)
+	if budget > 64 {
+		content := originalContent
+		if len(content) > budget {
+			content = content[:budget]
+			for len(content) > 0 && !utf8.ValidString(content) {
+				content = content[:len(content)-1]
+			}
+		}
+		for len(content) > 0 {
+			envelope.Match.Content = content
+			envelope.Match.ContentTruncated = len(content) < len(originalContent)
+			encoded, err = common.Marshal(envelope)
+			if err != nil {
+				return "", false, err
+			}
+			if len(encoded)+len(sensitiveAuditPrefix) <= maxBytes {
+				return sensitiveAuditPrefix + string(encoded), true, nil
+			}
+			content = content[:len(content)*3/4]
+			for len(content) > 0 && !utf8.ValidString(content) {
+				content = content[:len(content)-1]
+			}
+		}
+	}
+	envelope.Match.Content = ""
+	envelope.Match.ContentTruncated = true
+	encoded, err = common.Marshal(envelope)
+	if err != nil {
+		return "", false, err
+	}
+	return sensitiveAuditPrefix + string(encoded), true, nil
+}
+
 func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated, fullPayload bool, status string, statusCode int, identities ...responseIdentity) *ConversationAudit {
 	cfg := currentConfig()
 	var identity responseIdentity
@@ -413,15 +480,10 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 		return nil
 	}
 	if match, ok := service.RelayPromptSensitiveMatch(c); ok && status == "failed" {
-		envelope := sensitiveAuditRequest{Match: match, Request: requestBody}
-		encoded, err := common.Marshal(envelope)
-		if err == nil && len(encoded)+len(sensitiveAuditPrefix) > cfg.MaxContentBytes {
-			envelope.Request = ""
-			encoded, err = common.Marshal(envelope)
-			requestTruncated = true
-		}
+		body, truncated, err := marshalSensitiveAuditRequest(match, requestBody, cfg.MaxContentBytes)
 		if err == nil {
-			requestBody = sensitiveAuditPrefix + string(encoded)
+			requestBody = body
+			requestTruncated = requestTruncated || truncated
 		}
 	}
 	now := time.Now().Unix()

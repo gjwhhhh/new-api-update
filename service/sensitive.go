@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -16,13 +17,19 @@ const relaySensitiveMatchKey = "relay_sensitive_match"
 
 // RelaySensitiveMatch is private request evidence. Never attach it to usage logs or client errors.
 type RelaySensitiveMatch struct {
-	Rule      string `json:"rule"`
-	Word      string `json:"word"`
-	Source    string `json:"source"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Rule             string `json:"rule"`
+	Word             string `json:"word"`
+	Source           string `json:"source"`
+	Content          string `json:"content,omitempty"`
+	Truncated        bool   `json:"truncated,omitempty"`
+	ContentTruncated bool   `json:"content_truncated,omitempty"`
 }
 
 const relaySensitiveScopeKey = "relay_sensitive_scope"
+
+// Max length for the matched field body kept in private audit evidence.
+// Audit persist still applies MaxContentBytes; this bounds in-request memory.
+const maxSensitiveMatchContentBytes = 256 * 1024
 
 func RelayPromptSensitiveMatch(c *gin.Context) (RelaySensitiveMatch, bool) {
 	value, _ := c.Get(relaySensitiveMatchKey)
@@ -37,13 +44,17 @@ func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string,
 	}
 	match := RelaySensitiveMatch{Rule: "local_prompt_sensitive_words", Word: words[0], Source: "unknown"}
 	if responses, ok := request.(*dto.OpenAIResponsesRequest); ok {
-		match.Source = responsesSensitiveSource(responses, text, match.Word)
+		match.Source, match.Content = responsesSensitiveMatch(responses, text, match.Word)
 	}
 	for i := range match.Word {
 		if i >= 120 {
 			match.Word, match.Truncated = match.Word[:i], true
 			break
 		}
+	}
+	if match.Content != "" && len(match.Content) > maxSensitiveMatchContentBytes {
+		match.Content = truncateUTF8Bytes(match.Content, maxSensitiveMatchContentBytes)
+		match.ContentTruncated = true
 	}
 	c.Set(relaySensitiveMatchKey, match)
 	c.Set(relaySensitiveScopeKey, scope)
@@ -52,31 +63,50 @@ func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string,
 	return types.NewError(errors.New("Request rejected by the local sensitive word policy"), code, types.ErrOptionWithSkipRetry())
 }
 
+type sensitiveTextPart struct {
+	source string
+	text   string
+}
+
 // Attribute only when the reconstructed parts exactly match what the detector scanned.
 // The budget bounds the extra parsing on rejected requests with large agent histories.
-func responsesSensitiveSource(request *dto.OpenAIResponsesRequest, text, word string) string {
+func responsesSensitiveMatch(request *dto.OpenAIResponsesRequest, text, word string) (string, string) {
 	const unknown = "unknown"
 	if len(request.Input) > 1<<20 || len(text) > 1<<20 {
-		return unknown
+		return unknown, ""
 	}
-	type part struct{ source, text string }
-	var parts []part
+	parts := responsesSensitiveParts(request)
+	if len(parts) == 0 {
+		return unknown, ""
+	}
+	word = strings.ToLower(word)
+	if strings.Contains(word, "\n") {
+		return unknown, firstMatchingPartContent(parts, word)
+	}
+	if source, content, ok := attributeResponsesSensitiveParts(parts, text, word); ok {
+		return source, content
+	}
+	return unknown, firstMatchingPartContent(parts, word)
+}
+
+func responsesSensitiveParts(request *dto.OpenAIResponsesRequest) []sensitiveTextPart {
+	var parts []sensitiveTextPart
 	switch common.GetJsonType(request.Input) {
 	case "string":
 		var input string
 		if common.Unmarshal(request.Input, &input) != nil {
-			return unknown
+			return nil
 		}
-		parts = append(parts, part{"current_user_text", input})
+		parts = append(parts, sensitiveTextPart{"current_user_text", input})
 	case "array":
 		var items []json.RawMessage
 		if common.Unmarshal(request.Input, &items) != nil || len(items) > 128 {
-			return unknown
+			return nil
 		}
 		for i, raw := range items {
 			var item dto.Input
 			if common.Unmarshal(raw, &item) != nil {
-				return unknown
+				return nil
 			}
 			source := "input_context"
 			switch item.Type {
@@ -89,11 +119,11 @@ func responsesSensitiveSource(request *dto.OpenAIResponsesRequest, text, word st
 			}
 			input, err := common.Marshal([]json.RawMessage{raw})
 			if err != nil {
-				return unknown
+				return nil
 			}
 			for _, media := range (&dto.OpenAIResponsesRequest{Input: input}).ParseInput() {
 				if media.Type != "input_image" && media.Type != "input_file" {
-					parts = append(parts, part{source, media.Text})
+					parts = append(parts, sensitiveTextPart{source, media.Text})
 				}
 			}
 		}
@@ -103,7 +133,7 @@ func responsesSensitiveSource(request *dto.OpenAIResponsesRequest, text, word st
 		if common.GetJsonType(request.Instructions) == "string" {
 			_ = common.Unmarshal(request.Instructions, &instructions)
 		}
-		parts = append(parts, part{"instructions", instructions})
+		parts = append(parts, sensitiveTextPart{"instructions", instructions})
 	}
 	for _, field := range []struct {
 		source string
@@ -113,36 +143,56 @@ func responsesSensitiveSource(request *dto.OpenAIResponsesRequest, text, word st
 		{"prompt_settings", request.Prompt}, {"tool_definitions", request.Tools},
 	} {
 		if len(field.value) > 0 {
-			parts = append(parts, part{field.source, string(field.value)})
+			parts = append(parts, sensitiveTextPart{field.source, string(field.value)})
 		}
 	}
+	return parts
+}
+
+func attributeResponsesSensitiveParts(parts []sensitiveTextPart, text, word string) (string, string, bool) {
 	remaining := text
 	for i, p := range parts {
 		var ok bool
 		if i > 0 {
 			remaining, ok = strings.CutPrefix(remaining, "\n")
 			if !ok {
-				return unknown
+				return "", "", false
 			}
 		}
 		remaining, ok = strings.CutPrefix(remaining, p.text)
 		if !ok {
-			return unknown
+			return "", "", false
 		}
 	}
 	if remaining != "" {
-		return unknown
-	}
-	word = strings.ToLower(word)
-	if strings.Contains(word, "\n") {
-		return unknown
+		return "", "", false
 	}
 	for _, p := range parts {
 		if strings.Contains(strings.ToLower(p.text), word) {
-			return p.source
+			return p.source, p.text, true
 		}
 	}
-	return unknown
+	return "", "", false
+}
+
+func firstMatchingPartContent(parts []sensitiveTextPart, word string) string {
+	for _, p := range parts {
+		if strings.Contains(strings.ToLower(p.text), word) {
+			return p.text
+		}
+	}
+	return ""
+}
+
+func truncateUTF8Bytes(text string, maxBytes int) string {
+	if maxBytes <= 0 || len(text) <= maxBytes {
+		return text
+	}
+	truncated := text[:maxBytes]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated
 }
 
 func CheckSensitiveMessages(messages []dto.Message) ([]string, error) {

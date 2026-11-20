@@ -65,12 +65,13 @@ func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
 	})
 	registerRoutes(engine.Group("/api"))
 	for _, tc := range []struct {
-		id, contentType, input, source, captureError, userText string
+		id, contentType, input, source, captureError, userText, matchContent string
 	}{
-		{"tool", "application/json", `{"previous_response_id":"resp_parent","input":[{"type":"function_call_output","output":"fixture-trigger private tool result"}]}`, "tool_context", "no_visible_text", ""},
-		{"tool-definition", "application/json", `{"input":[{"type":"function_call_output","output":"private tool result"}],"tools":[{"description":"fixture-trigger private definition"}]}`, "tool_definitions", "no_new_user_text", ""},
-		{"current-user", "application/json", `{"input":"fixture-trigger current request"}`, "current_user_text", "", word + " current request"},
-		{"unsupported-content-type", "application/octet-stream", `{"input":"fixture-trigger current request"}`, "current_user_text", "unsupported_request_protocol", ""},
+		{"tool", "application/json", `{"previous_response_id":"resp_parent","input":[{"type":"function_call_output","output":"fixture-trigger private tool result"}]}`, "tool_context", "no_visible_text", "", "fixture-trigger private tool result"},
+		{"tool-definition", "application/json", `{"input":[{"type":"function_call_output","output":"private tool result"}],"tools":[{"description":"fixture-trigger private definition"}]}`, "tool_definitions", "no_new_user_text", "", `[{"description":"fixture-trigger private definition"}]`},
+		{"user-before-tool", "application/json", `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"please continue this turn"}]},{"type":"function_call_output","output":"fixture-trigger private tool result"}]}`, "tool_context", "", "please continue this turn", "fixture-trigger private tool result"},
+		{"current-user", "application/json", `{"input":"fixture-trigger current request"}`, "current_user_text", "", word + " current request", word + " current request"},
+		{"unsupported-content-type", "application/octet-stream", `{"input":"fixture-trigger current request"}`, "current_user_text", "unsupported_request_protocol", "", word + " current request"},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(tc.input))
@@ -124,13 +125,15 @@ func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
 				} `json:"data"`
 			}
 			require.NoError(t, common.Unmarshal(detail.Body.Bytes(), &payload))
-			assert.Equal(t, service.RelaySensitiveMatch{Rule: "local_prompt_sensitive_words", Word: word, Source: tc.source}, payload.Data.Match)
+			assert.Equal(t, "local_prompt_sensitive_words", payload.Data.Match.Rule)
+			assert.Equal(t, word, payload.Data.Match.Word)
+			assert.Equal(t, tc.source, payload.Data.Match.Source)
+			assert.Equal(t, tc.matchContent, payload.Data.Match.Content)
+			assert.False(t, payload.Data.Match.ContentTruncated)
 			if tc.userText != "" {
 				assert.Equal(t, tc.userText, decodedPayloadField(t, payload.Data.Request, "user_input"))
 			} else {
 				assert.Empty(t, payload.Data.Request)
-				assert.NotContains(t, detail.Body.String(), "private tool result")
-				assert.NotContains(t, detail.Body.String(), "private definition")
 			}
 		})
 	}

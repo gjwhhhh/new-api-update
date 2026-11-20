@@ -154,6 +154,17 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
 		_, localSensitiveMatch := service.RelayPromptSensitiveMatch(c)
+		if localSensitiveMatch && !request.hasPersistableRequest() && !captureFullPayload {
+			if filled, truncated, fillError := captureSensitiveUserText(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes); fillError == "" && filled != "" {
+				request.body = filled
+				request.truncated = truncated
+				request.continuationParentResponseID = ""
+				if request.captureError == "no_new_user_text" || request.captureError == "" {
+					request.captureError = ""
+				}
+				captureError = joinCaptureErrors(request.captureError, response.captureError)
+			}
+		}
 		if request.hasPersistableRequest() || (status == "failed" && (websocketFailuresOnly || !request.isResponsesContinuation() || localSensitiveMatch || response.errorCode == relaycommon.CyberPolicyCode)) {
 			if request.body == "" && response.body == "" && captureError == "" {
 				captureError = "no_visible_text"
@@ -360,6 +371,206 @@ func extractPreviousResponseID(raw []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(envelope.PreviousResponseID)
+}
+
+// captureSensitiveUserText walks the request for the last user text when a local
+// sensitive rejection left the default latest-item capture empty.
+func captureSensitiveUserText(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int) (string, bool, string) {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return "", false, "request_body_unavailable"
+	}
+	defer func() {
+		if _, seekErr := storage.Seek(0, io.SeekStart); seekErr == nil {
+			c.Request.Body = io.NopCloser(storage)
+		}
+	}()
+	if storage.Size() > int64(maxParseBytes) {
+		return "", false, captureErrorRequestParseLimitExceeded
+	}
+	if _, err = storage.Seek(0, io.SeekStart); err != nil {
+		return "", false, "request_body_unavailable"
+	}
+	raw, _, err := readLimited(storage, maxParseBytes)
+	if err != nil {
+		return "", false, "request_body_unavailable"
+	}
+	userText, captureError := extractLastUserTextAnywhere(protocol, raw)
+	if captureError != "" || userText == "" {
+		return "", false, captureError
+	}
+	body, truncated, err := marshalCapturePayload(capturePayload{
+		SchemaVersion: 2,
+		CaptureMode:   "latest_user_text",
+		UserInput:     userText,
+	}, maxContentBytes)
+	if err != nil {
+		return "", false, "request_encode_failed"
+	}
+	return body, truncated, ""
+}
+
+func extractLastUserTextAnywhere(protocol conversationProtocol, raw []byte) (string, string) {
+	switch protocol {
+	case protocolOpenAIChat, protocolClaude:
+		return extractLastUserMessageTextAnywhere(raw)
+	case protocolOpenAIResponses:
+		return extractResponsesLastUserTextAnywhere(raw)
+	case protocolGemini:
+		return extractGeminiLastUserTextAnywhere(raw)
+	default:
+		return "", "unsupported_request_protocol"
+	}
+}
+
+func extractLastUserMessageTextAnywhere(raw []byte) (string, string) {
+	var envelope struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if common.Unmarshal(raw, &envelope) != nil {
+		return "", "request_parse_failed"
+	}
+	for i := len(envelope.Messages) - 1; i >= 0; i-- {
+		var message struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if common.Unmarshal(envelope.Messages[i], &message) != nil {
+			return "", "request_parse_failed"
+		}
+		if message.Role != "user" {
+			continue
+		}
+		if common.GetJsonType(message.Content) == "array" {
+			var blocks []struct {
+				Type string `json:"type"`
+			}
+			if common.Unmarshal(message.Content, &blocks) == nil {
+				hasToolResult := false
+				for _, block := range blocks {
+					if block.Type == "tool_result" {
+						hasToolResult = true
+						break
+					}
+				}
+				if hasToolResult {
+					continue
+				}
+			}
+		}
+		text := extractTextContent(message.Content, "text", "input_text")
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		return text, ""
+	}
+	return "", "no_new_user_text"
+}
+
+func extractResponsesLastUserTextAnywhere(raw []byte) (string, string) {
+	var envelope struct {
+		Input json.RawMessage `json:"input"`
+	}
+	if common.Unmarshal(raw, &envelope) != nil || len(envelope.Input) == 0 {
+		return "", "request_parse_failed"
+	}
+	switch common.GetJsonType(envelope.Input) {
+	case "string":
+		var input string
+		if common.Unmarshal(envelope.Input, &input) != nil || !isAuditableText(input) {
+			return "", "no_new_user_text"
+		}
+		return input, ""
+	case "array":
+		var items []json.RawMessage
+		if common.Unmarshal(envelope.Input, &items) != nil {
+			return "", "request_parse_failed"
+		}
+		for i := len(items) - 1; i >= 0; i-- {
+			last := items[i]
+			if common.GetJsonType(last) == "string" {
+				var input string
+				if common.Unmarshal(last, &input) == nil && isAuditableText(input) {
+					return input, ""
+				}
+				continue
+			}
+			var item struct {
+				Type    string          `json:"type"`
+				Role    string          `json:"role"`
+				Text    string          `json:"text"`
+				Content json.RawMessage `json:"content"`
+			}
+			if common.Unmarshal(last, &item) != nil {
+				return "", "request_parse_failed"
+			}
+			switch item.Type {
+			case "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output", "local_shell_call_output":
+				continue
+			case "input_text":
+				if isAuditableText(item.Text) {
+					return item.Text, ""
+				}
+				continue
+			}
+			if item.Role != "" && item.Role != "user" {
+				continue
+			}
+			if item.Role == "user" || item.Type == "message" || item.Type == "" {
+				if item.Type == "input_text" && isAuditableText(item.Text) {
+					return item.Text, ""
+				}
+				text := extractTextContent(item.Content, "input_text", "text")
+				if strings.TrimSpace(text) != "" {
+					return text, ""
+				}
+				if isAuditableText(item.Text) {
+					return item.Text, ""
+				}
+			}
+		}
+		return "", "no_new_user_text"
+	default:
+		return "", "no_new_user_text"
+	}
+}
+
+func extractGeminiLastUserTextAnywhere(raw []byte) (string, string) {
+	var envelope struct {
+		Contents []json.RawMessage `json:"contents"`
+	}
+	if common.Unmarshal(raw, &envelope) != nil {
+		return "", "request_parse_failed"
+	}
+	for i := len(envelope.Contents) - 1; i >= 0; i-- {
+		var content struct {
+			Role  string `json:"role"`
+			Parts []struct {
+				Text             string          `json:"text"`
+				InlineData       json.RawMessage `json:"inlineData"`
+				InlineDataSnake  json.RawMessage `json:"inline_data"`
+				FileData         json.RawMessage `json:"fileData"`
+				FunctionResponse json.RawMessage `json:"functionResponse"`
+			} `json:"parts"`
+		}
+		if common.Unmarshal(envelope.Contents[i], &content) != nil {
+			return "", "request_parse_failed"
+		}
+		if content.Role != "" && content.Role != "user" {
+			continue
+		}
+		var texts []string
+		for _, part := range content.Parts {
+			if isAuditableText(part.Text) {
+				texts = append(texts, part.Text)
+			}
+		}
+		if len(texts) == 0 {
+			continue
+		}
+		return strings.Join(texts, "\n"), ""
+	}
+	return "", "no_new_user_text"
 }
 
 func readLimited(reader io.Reader, maxBytes int) ([]byte, bool, error) {

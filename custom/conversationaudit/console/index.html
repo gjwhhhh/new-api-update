@@ -192,7 +192,14 @@
         };
         document.getElementById('sensitiveMatch').hidden = !match;
         document.getElementById('sensitiveMatchText').textContent = match
-          ? `规则：${match.rule}\n命中词：${match.word}${match.truncated ? '（已截断）' : ''}\n来源：${Object.hasOwn(sourceLabels, match.source) ? sourceLabels[match.source] : '未知'}`
+          ? [
+              `规则：${match.rule}`,
+              `命中词：${match.word}${match.truncated ? '（已截断）' : ''}`,
+              `来源：${Object.hasOwn(sourceLabels, match.source) ? sourceLabels[match.source] : '未知'}（命中内容不一定等于本轮用户输入）`,
+              match.content
+                ? `命中内容${match.content_truncated ? '（已截断）' : ''}：\n${match.content}`
+                : '命中内容：无',
+            ].join('\n')
           : '';
         document.getElementById('request').textContent = fullPayload ? rawPayloadText(payload.data.request) : auditText(payload.data.request, 'user_input');
         document.getElementById('response').textContent = fullPayload ? rawPayloadText(payload.data.response) : mergedResponseText(payload.data.response, payload.data.response_segments);

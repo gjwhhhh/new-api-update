@@ -22,14 +22,16 @@ type RelaySensitiveMatch struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
+const relaySensitiveScopeKey = "relay_sensitive_scope"
+
 func RelayPromptSensitiveMatch(c *gin.Context) (RelaySensitiveMatch, bool) {
 	value, _ := c.Get(relaySensitiveMatchKey)
 	match, ok := value.(RelaySensitiveMatch)
 	return match, ok
 }
 
-func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string) *types.NewAPIError {
-	matched, words := CheckSensitiveText(text)
+func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string, keywords []string, scope string, channelID int) *types.NewAPIError {
+	matched, words := AcSearch(strings.ToLower(text), keywords, true)
 	if !matched {
 		return nil
 	}
@@ -44,9 +46,10 @@ func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string)
 		}
 	}
 	c.Set(relaySensitiveMatchKey, match)
+	c.Set(relaySensitiveScopeKey, scope)
 	code := types.ErrorCodeSensitiveWordsDetected
-	RequestPolicy(c).AddEvent(PolicyEvent{ErrorCode: string(code), ErrorSource: "local", Decision: PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
-	return types.NewError(errors.New("Request rejected by the local sensitive word policy"), code)
+	RequestPolicy(c).AddEvent(PolicyEvent{ChannelID: channelID, ErrorCode: string(code), ErrorSource: "local", Decision: PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
+	return types.NewError(errors.New("Request rejected by the local sensitive word policy"), code, types.ErrOptionWithSkipRetry())
 }
 
 // Attribute only when the reconstructed parts exactly match what the detector scanned.

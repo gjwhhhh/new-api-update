@@ -14,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,15 +22,14 @@ import (
 func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
 	db := setupResponseTurnTest(t)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}))
-	oldLogDB, oldLogging, oldWords := model.LOG_DB, constant.ErrorLogEnabled, setting.SensitiveWords
+	oldLogDB, oldLogging := model.LOG_DB, constant.ErrorLogEnabled
 	oldRedis := common.RedisEnabled
 	oldLogType := common.LogDatabaseType()
 	model.LOG_DB, constant.ErrorLogEnabled = db, false
 	common.RedisEnabled = false
 	const word = "fixture-trigger"
-	setting.SensitiveWords = []string{word}
 	t.Cleanup(func() {
-		model.LOG_DB, constant.ErrorLogEnabled, setting.SensitiveWords = oldLogDB, oldLogging, oldWords
+		model.LOG_DB, constant.ErrorLogEnabled = oldLogDB, oldLogging
 		common.RedisEnabled = oldRedis
 		common.SetLogDatabaseType(oldLogType)
 	})
@@ -60,7 +58,7 @@ func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
 	}, service.RelayFailureLog(""), CaptureMiddleware(), func(c *gin.Context) {
 		var request dto.OpenAIResponsesRequest
 		require.NoError(t, c.ShouldBindJSON(&request))
-		apiErr := service.CheckRelayPromptSensitive(c, &request, request.GetTokenCountMeta().CombineText)
+		apiErr := service.CheckRelayPromptSensitive(c, &request, request.GetTokenCountMeta().CombineText, []string{word}, "all", 0)
 		require.NotNil(t, apiErr)
 		service.SetRelayFinalError(c, apiErr)
 		c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
@@ -88,6 +86,7 @@ func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
 			require.NoError(t, model.LOG_DB.Where("request_id = ?", tc.id).Take(&log).Error)
 			assert.Equal(t, "sensitive_words_detected", log.ErrorCode)
 			assert.Contains(t, log.Other, `"error_source":"local"`)
+			assert.Contains(t, log.Other, `"prompt_text_filter_scope":"all"`)
 			assert.NotContains(t, log.Content+log.Other, word)
 
 			var audit ConversationAudit

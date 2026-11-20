@@ -17,11 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
+import { MultiSelect } from '@/components/multi-select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Form,
@@ -32,9 +34,16 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { handleServerError } from '@/lib/handle-server-error'
+import { useDebounce } from '@/hooks/use-debounce'
 
 import {
   SettingsForm,
@@ -45,18 +54,199 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import {
+  getFilterTargets,
+  type FilterTarget as FilterTargetRow,
+  type FilterTargetKind,
+} from './api'
+import type { FilteringSettings } from './defaults'
+import { promptTextFilterScopeLabel } from './policy-label'
 import { useSavePolicy } from './use-save-policy'
+
+const maxTargets = 100
+const targetIDs = z.array(z.int().positive()).max(maxTargets)
+const filterScopes = ['all', 'channel', 'token', 'channel_token'] as const
+const filterScope = z.enum(filterScopes)
+const savedIDs = targetIDs.nullish().transform((ids) => ids ?? [])
+const targetSchema = z
+  .object({
+    scope: filterScope,
+    channel_ids: savedIDs,
+    token_ids: savedIDs,
+  })
+  .refine((target) =>
+    (['channel', 'token'] as const).every(
+      (kind) =>
+        (target.scope === kind || target.scope === 'channel_token') ===
+        target[`${kind}_ids`].length > 0
+    )
+  )
+
+function parseFilterTarget(raw: string) {
+  try {
+    return targetSchema.parse(JSON.parse(raw))
+  } catch {
+    return { scope: null, channel_ids: [], token_ids: [] }
+  }
+}
 
 const sensitiveSchema = z.object({
   CheckSensitiveEnabled: z.boolean(),
   CheckSensitiveOnPromptEnabled: z.boolean(),
   SensitiveWords: z.string().optional(),
+  target: z
+    .object({
+      scope: filterScope.nullable(),
+      channel_ids: targetIDs,
+      token_ids: targetIDs,
+    })
+    .superRefine((target, ctx) => {
+      if (target.scope === null) {
+        ctx.addIssue({ code: 'custom', path: ['scope'], message: 'Required' })
+        return
+      }
+      if (target.scope === 'all') return
+      for (const kind of ['channel', 'token'] as const) {
+        const field = `${kind}_ids` as const
+        if (
+          (target.scope === kind || target.scope === 'channel_token') &&
+          !target[field].length
+        ) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [field],
+            message: 'Select at least one target',
+          })
+        }
+      }
+    }),
 })
 
 type SensitiveFormValues = z.infer<typeof sensitiveSchema>
 
+function serializeFilterTarget(target: SensitiveFormValues['target']) {
+  if (target.scope === null) return undefined
+  return JSON.stringify({
+    scope: target.scope,
+    channel_ids:
+      target.scope === 'channel' || target.scope === 'channel_token'
+        ? [...new Set(target.channel_ids)].toSorted((a, b) => a - b)
+        : undefined,
+    token_ids:
+      target.scope === 'token' || target.scope === 'channel_token'
+        ? [...new Set(target.token_ids)].toSorted((a, b) => a - b)
+        : undefined,
+  })
+}
+
 type RequestChecksSectionProps = {
-  defaultValues: SensitiveFormValues
+  defaultValues: FilteringSettings
+}
+
+type FilterTargetSelectProps = Pick<
+  React.ComponentProps<typeof MultiSelect>,
+  'id' | 'aria-invalid' | 'aria-describedby' | 'data-form-root'
+> & {
+  kind: FilterTargetKind
+  ids: number[]
+  onChange: (ids: number[]) => void
+}
+
+function FilterTargetSelect({
+  kind,
+  ids,
+  onChange,
+  ...inputProps
+}: FilterTargetSelectProps) {
+  const { t } = useTranslation()
+  const client = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const query = search.trim()
+  const debounced = useDebounce(query, 250)
+  const metadataKey = ['prompt-filter-targets', kind, 'metadata'] as const
+  const metadata = useQuery<ReadonlyMap<number, FilterTargetRow | null>>({
+    queryKey: metadataKey,
+    queryFn: skipToken,
+  }).data
+  const unknownIDs = ids.filter((id) => !metadata?.has(id))
+  const searchResults = useQuery({
+    queryKey: ['prompt-filter-targets', kind, debounced],
+    queryFn: ({ signal }) => getFilterTargets(kind, debounced, signal),
+    enabled: open && query === debounced,
+  })
+  const selectedResults = useQuery({
+    queryKey: ['prompt-filter-targets', kind, 'lookup', unknownIDs],
+    queryFn: async ({ signal }) => {
+      const rows = await getFilterTargets(kind, unknownIDs, signal)
+      const byID = new Map(rows.map((row) => [row.id, row]))
+      client.setQueryData<ReadonlyMap<number, FilterTargetRow | null>>(
+        metadataKey,
+        (previous) => {
+          const next = new Map(previous)
+          for (const id of unknownIDs) {
+            if (!next.has(id)) next.set(id, byID.get(id) ?? null)
+          }
+          return next
+        }
+      )
+      return rows
+    },
+    enabled: unknownIDs.length > 0,
+  })
+  const results = query === debounced ? searchResults.data : undefined
+  const rows = new Map(metadata)
+  for (const row of results ?? []) rows.set(row.id, row)
+  const options = [
+    ...new Set([...(results ?? []).map((row) => row.id), ...ids]),
+  ].map((id) => {
+    const row = rows.get(id)
+    if (row) return { value: String(id), label: `${row.name} (#${id})` }
+    return {
+      value: String(id),
+      label: row === null ? t('Unavailable target #{{id}}', { id }) : `#${id}`,
+    }
+  })
+
+  return (
+    <>
+      <MultiSelect
+        {...inputProps}
+        options={options}
+        selected={ids.map(String)}
+        onChange={(values) => {
+          const nextIDs = values.slice(0, maxTargets).map(Number)
+          const picked = (results ?? []).filter((row) =>
+            nextIDs.includes(row.id)
+          )
+          if (picked.length > 0) {
+            client.setQueryData<ReadonlyMap<number, FilterTargetRow | null>>(
+              metadataKey,
+              (previous) => {
+                const next = new Map(previous)
+                for (const row of picked) next.set(row.id, row)
+                return next
+              }
+            )
+          }
+          onChange(nextIDs)
+        }}
+        placeholder={t('Search by name or ID')}
+        maxVisibleChips={4}
+        remoteSearch={{ onSearchChange: setSearch, onOpenChange: setOpen }}
+        emptyText={
+          query !== debounced || searchResults.isFetching
+            ? t('Loading...')
+            : undefined
+        }
+      />
+      {(searchResults.isError || selectedResults.isError) && (
+        <p role='status' className='text-destructive text-sm'>
+          {t('Failed to load filter targets')}
+        </p>
+      )}
+    </>
+  )
 }
 
 export function RequestChecksSection({
@@ -64,31 +254,59 @@ export function RequestChecksSection({
 }: RequestChecksSectionProps) {
   const { t } = useTranslation()
   const updateOption = useSavePolicy()
+  const {
+    CheckSensitiveEnabled,
+    CheckSensitiveOnPromptEnabled,
+    SensitiveWords,
+    PromptTextFilterTarget,
+  } = defaultValues
+  const initialValues = useMemo(
+    () => ({
+      CheckSensitiveEnabled,
+      CheckSensitiveOnPromptEnabled,
+      SensitiveWords,
+      target: parseFilterTarget(PromptTextFilterTarget),
+    }),
+    [
+      CheckSensitiveEnabled,
+      CheckSensitiveOnPromptEnabled,
+      SensitiveWords,
+      PromptTextFilterTarget,
+    ]
+  )
   const form = useForm<SensitiveFormValues>({
     resolver: zodResolver(sensitiveSchema),
-    defaultValues,
+    defaultValues: initialValues,
   })
+  const scope = useWatch({ control: form.control, name: 'target.scope' })
+  const scopes = filterScopes.map((value) => ({
+    value,
+    label: promptTextFilterScopeLabel(t, value),
+  }))
 
   useEffect(() => {
-    form.reset(defaultValues)
-  }, [defaultValues, form])
+    form.reset(initialValues)
+  }, [initialValues, form])
 
-  const onSubmit = async (values: SensitiveFormValues) => {
-    const updates = Object.entries(values).filter(
-      ([key, value]) =>
-        value !== defaultValues[key as keyof SensitiveFormValues]
-    )
-
-    try {
-      if (updates.length > 0) {
-        await updateOption.mutateAsync(
-          Object.fromEntries(
-            updates.map(([key, value]) => [key, String(value ?? '')])
-          )
+  const onSubmit = async ({ target, ...values }: SensitiveFormValues) => {
+    const options = Object.fromEntries(
+      Object.entries(values)
+        .filter(
+          ([key, value]) =>
+            value !== defaultValues[key as keyof FilteringSettings]
         )
-      }
-    } catch (error) {
-      handleServerError(error)
+        .map(([key, value]) => [key, String(value ?? '')])
+    )
+    const serializedTarget = serializeFilterTarget(target)
+    if (
+      serializedTarget &&
+      serializedTarget !== serializeFilterTarget(initialValues.target)
+    ) {
+      options.PromptTextFilterTarget = serializedTarget
+    }
+    if (Object.keys(options).length) {
+      // useSavePolicy handles server errors and refreshes the settings cache.
+      await updateOption.mutateAsync(options).catch(() => undefined)
     }
   }
 
@@ -173,6 +391,59 @@ export function RequestChecksSection({
               />
             </SettingsControlChildren>
           </SettingsControlGroup>
+
+          <FormField
+            control={form.control}
+            name='target.scope'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Filter scope')}</FormLabel>
+                <Select
+                  items={scopes}
+                  value={field.value}
+                  onValueChange={field.onChange}
+                >
+                  <FormControl>
+                    <SelectTrigger className='w-full'>
+                      <SelectValue placeholder={t('Select')} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    {scopes.map(({ value, label }) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          {(['channel', 'token'] as const)
+            .filter((kind) => scope === kind || scope === 'channel_token')
+            .map((kind) => (
+              <FormField
+                key={kind}
+                control={form.control}
+                name={`target.${kind}_ids`}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {kind === 'channel' ? t('Channels') : t('API Keys')}
+                    </FormLabel>
+                    <FormControl>
+                      <FilterTargetSelect
+                        kind={kind}
+                        ids={field.value}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ))}
 
           <FormField
             control={form.control}

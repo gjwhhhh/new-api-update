@@ -44,20 +44,23 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
 			sqlDB.SetMaxOpenConns(1)
-			previousDB, previousType, previousSnapshot := DB, common.MainDatabaseType(), CurrentRequestPolicy()
+			previousDB, previousType := DB, common.MainDatabaseType()
+			previousSnapshot, previousFilter := requestPolicySnapshot.Load(), promptTextFilterPolicy.Load()
+			previousPolicyOptions := RequestPolicyOptions()
 			common.OptionMapRWMutex.Lock()
 			previousOptions := maps.Clone(common.OptionMap)
-			common.OptionMap = maps.Clone(previousSnapshot.Options)
+			common.OptionMap = maps.Clone(previousPolicyOptions)
 			common.OptionMapRWMutex.Unlock()
 			DB = db
 			common.SetMainDatabaseType(common.DatabaseType(dialect))
 			initCol()
 			t.Cleanup(func() {
-				require.NoError(t, db.Migrator().DropTable(&Option{}))
-				for k, v := range previousSnapshot.Options {
+				require.NoError(t, db.Migrator().DropTable(&Option{}, &Channel{}, &Token{}))
+				for k, v := range previousPolicyOptions {
 					require.NoError(t, updateOptionMap(k, v))
 				}
 				requestPolicySnapshot.Store(previousSnapshot)
+				promptTextFilterPolicy.Store(previousFilter)
 				common.OptionMapRWMutex.Lock()
 				common.OptionMap = previousOptions
 				common.OptionMapRWMutex.Unlock()
@@ -66,7 +69,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 				initCol()
 				require.NoError(t, sqlDB.Close())
 			})
-			require.NoError(t, db.AutoMigrate(&Option{}))
+			require.NoError(t, db.AutoMigrate(&Option{}, &Channel{}, &Token{}))
 			var version string
 			query := "SELECT version()"
 			if dialect == "sqlite" {
@@ -79,19 +82,19 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, 2, CurrentRequestPolicy().RetryTimes)
 			assert.Equal(t, 2, common.RetryTimes, "the runtime global follows the same write")
 			require.NoError(t, UpdateOption("AutomaticRetryStatusCodes", "429,500-503"))
-			assert.Equal(t, "429,500-503", CurrentRequestPolicy().Options["AutomaticRetryStatusCodes"])
+			assert.Equal(t, "429,500-503", RequestPolicyOptions()["AutomaticRetryStatusCodes"])
 			assert.Equal(t, "429,500-503", operation_setting.AutomaticRetryStatusCodesToString())
 			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"request_policy_setting.mode": "off"}), "the removed mode switch is not a policy option")
 			assert.False(t, CurrentRequestPolicy().Affinity.Rules[0].SkipRetryOnFailure)
-			assert.Equal(t, rules, CurrentRequestPolicy().Options["channel_affinity_setting.rules"])
+			assert.Equal(t, rules, RequestPolicyOptions()["channel_affinity_setting.rules"])
 			loadOptionsFromDatabase()
 			loadOptionsFromDatabase()
-			assert.Equal(t, rules, CurrentRequestPolicy().Options["channel_affinity_setting.rules"], "legacy rule JSON survives reloads without dropping extension fields")
+			assert.Equal(t, rules, RequestPolicyOptions()["channel_affinity_setting.rules"], "legacy rule JSON survives reloads without dropping extension fields")
 			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"channel_affinity_setting.session_mode": "strict"}))
 			loadOptionsFromDatabase()
 			loadOptionsFromDatabase()
 			assert.Equal(t, "strict", CurrentRequestPolicy().Affinity.SessionMode)
-			assert.Equal(t, rules, CurrentRequestPolicy().Options["channel_affinity_setting.rules"], "a global mode never rewrites rule fields")
+			assert.Equal(t, rules, RequestPolicyOptions()["channel_affinity_setting.rules"], "a global mode never rewrites rule fields")
 			snapshot := CurrentRequestPolicy()
 			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"channel_affinity_setting.session_mode": "unknown"}))
 			assert.Same(t, snapshot, CurrentRequestPolicy())
@@ -117,6 +120,64 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "2", option.Value)
 			loadOptionsFromDatabase()
 			assert.Equal(t, "strict", CurrentRequestPolicy().Affinity.SessionMode, "a failed save keeps the persisted global mode")
+
+			legacy, err := buildPromptTextFilterPolicy(nil)
+			require.NoError(t, err)
+			assert.True(t, legacy.Target.Matches(0, 0), "missing scope preserves global filtering")
+			const optionKey = "PromptTextFilterTarget"
+			for _, value := range []string{`null`, `{"scope":"channel"}`, `{"scope":"token","token_ids":[-1]}`, `{"scope":"channel_token","channel_ids":[79]}`, `{"scope":"all","token_ids":[82]}`} {
+				assert.Error(t, UpdateRequestPolicyOptions(map[string]string{optionKey: value}))
+			}
+			target := `{"scope":"channel_token","channel_ids":[79,80],"token_ids":[82,83]}`
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{
+				optionKey: target, "CheckSensitiveEnabled": "true", "CheckSensitiveOnPromptEnabled": "true", "SensitiveWords": "  fixture  \r\n\nsecond",
+			}))
+			policy := CurrentPromptTextFilterPolicy()
+			assert.True(t, policy.Enabled)
+			assert.Equal(t, []string{"fixture", "second"}, policy.Keywords)
+			assert.True(t, policy.Target.Matches(80, 83))
+			assert.False(t, policy.Target.Matches(79, 84))
+			assert.False(t, policy.Target.Matches(81, 82))
+			assert.False(t, policy.Target.Matches(79, 0))
+			loadOptionsFromDatabase()
+			assert.Equal(t, target, RequestPolicyOptions()[optionKey])
+			assert.Equal(t, policy.Target, CurrentPromptTextFilterPolicy().Target)
+
+			const affinityKey = "channel_affinity_setting.rules"
+			const invalidRules = `[{"name":"legacy rule","model_regex":["["]}]`
+			require.NoError(t, db.Model(&Option{}).Where(map[string]any{"key": affinityKey}).Update("value", invalidRules).Error)
+			requestPolicySnapshot.Store(nil)
+			promptTextFilterPolicy.Store(nil)
+			loadOptionsFromDatabase()
+			require.Equal(t, policy, CurrentPromptTextFilterPolicy(), "cold startup loads a valid text filter despite invalid stored routing")
+			require.Error(t, UpdateRequestPolicyOptions(map[string]string{"SensitiveWords": "must not write", "RetryTimes": "5"}))
+			assert.Equal(t, []string{"fixture", "second"}, CurrentPromptTextFilterPolicy().Keywords)
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"SensitiveWords": "updated"}))
+			assert.Equal(t, []string{"updated"}, CurrentPromptTextFilterPolicy().Keywords)
+			assert.Equal(t, policy.Target, CurrentPromptTextFilterPolicy().Target)
+			assert.Equal(t, invalidRules, RequestPolicyOptions()[affinityKey])
+			require.NoError(t, db.Model(&Option{}).Where(map[string]any{"key": "SensitiveWords"}).Update("value", "synced").Error)
+			loadOptionsFromDatabase()
+			assert.Equal(t, []string{"synced"}, CurrentPromptTextFilterPolicy().Keywords)
+			assert.Equal(t, policy.Target, CurrentPromptTextFilterPolicy().Target)
+
+			require.NoError(t, db.Create(&Channel{Id: 79, Name: "Team A", Key: "channel credential", Status: 1}).Error)
+			require.NoError(t, db.Create(&Channel{Id: 80, Name: "Other channel", Key: "other credential", Status: 1}).Error)
+			require.NoError(t, db.Create(&Token{Id: 82, Name: "Team_One", Key: "token credential", Status: 1}).Error)
+			removed := Token{Id: 83, Name: "TeamXOne", Key: "removed credential", Status: 1}
+			require.NoError(t, db.Create(&removed).Error)
+			require.NoError(t, db.Delete(&removed).Error)
+			rows, err := FindPromptFilterTargets(t.Context(), "channel", "#79", nil)
+			require.NoError(t, err)
+			assert.Equal(t, []PromptFilterSelectorRow{{ID: 79, Name: "Team A", Status: 1}}, rows)
+			rows, err = FindPromptFilterTargets(t.Context(), "token", "team_", nil)
+			require.NoError(t, err)
+			assert.Equal(t, []PromptFilterSelectorRow{{ID: 82, Name: "Team_One", Status: 1}}, rows)
+			rows, err = FindPromptFilterTargets(t.Context(), "token", "", []int{82, 83, 84})
+			require.NoError(t, err)
+			encoded, err := common.Marshal(rows)
+			require.NoError(t, err)
+			assert.JSONEq(t, `[{"id":82,"name":"Team_One","status":1}]`, string(encoded))
 		})
 	}
 }

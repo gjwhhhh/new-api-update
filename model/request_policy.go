@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -15,22 +16,16 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"gorm.io/gorm"
 )
 
-// RequestPolicySnapshot is the validated read model behind the request policy
-// settings API. It is rebuilt from the option map on every option write, so
-// the runtime globals updated by the same write never disagree with it.
+// RequestPolicySnapshot holds the last valid routing and channel health settings.
 type RequestPolicySnapshot struct {
 	Affinity        operation_setting.ChannelAffinitySetting
 	RetryTimes      int
 	RetryCodes      []operation_setting.StatusCodeRange
 	DisableCodes    []operation_setting.StatusCodeRange
 	DisableKeywords []string
-	CheckText       bool
-	TextKeywords    []string
 	AutoDisable     bool
-	Options         map[string]string
 }
 
 var requestPolicySnapshot atomic.Pointer[RequestPolicySnapshot]
@@ -48,7 +43,9 @@ func requestPolicyDefaultOptions() map[string]string {
 			panic(err)
 		}
 		for field, value := range fields {
-			defaults[prefix+field] = value
+			if key := prefix + field; IsRequestPolicyOption(key) {
+				defaults[key] = value
+			}
 		}
 	}
 	defaults["RetryTimes"] = strconv.Itoa(common.RetryTimes)
@@ -59,17 +56,18 @@ func requestPolicyDefaultOptions() map[string]string {
 	defaults["CheckSensitiveEnabled"] = strconv.FormatBool(setting.CheckSensitiveEnabled)
 	defaults["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	defaults["SensitiveWords"] = setting.SensitiveWordsToString()
+	defaults["PromptTextFilterTarget"] = `{"scope":"all"}`
 	defaults["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	defaults["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	return defaults
 }
 
 func IsRequestPolicyOption(key string) bool {
-	if strings.HasPrefix(key, "channel_affinity_setting.") {
+	if isPromptTextFilterOption(key) || strings.HasPrefix(key, "channel_affinity_setting.") {
 		return true
 	}
 	switch key {
-	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
+	case "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
 		return true
 	}
 	return false
@@ -82,22 +80,15 @@ func CurrentRequestPolicy() *RequestPolicySnapshot {
 	// Startup and test fixtures may not have loaded options yet.
 	snapshot, err := BuildRequestPolicy(nil)
 	if err != nil {
-		return &RequestPolicySnapshot{Options: map[string]string{}}
+		return &RequestPolicySnapshot{}
 	}
 	return snapshot
 }
 
 func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, error) {
-	defaults := requestPolicyDefaults
-
-	raw := make(map[string]string)
-	for key, value := range defaults {
-		if IsRequestPolicyOption(key) {
-			raw[key] = value
-		}
-	}
+	raw := maps.Clone(requestPolicyDefaults)
 	maps.Copy(raw, options)
-	snapshot := &RequestPolicySnapshot{Options: raw}
+	snapshot := &RequestPolicySnapshot{}
 	affinityFields := map[string]string{}
 	for key, value := range raw {
 		if field, ok := strings.CutPrefix(key, "channel_affinity_setting."); ok {
@@ -143,15 +134,9 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		return nil, err
 	}
 	snapshot.DisableKeywords = strings.Split(raw["AutomaticDisableKeywords"], "\n")
-	for _, key := range []string{"CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "AutomaticEnableChannelEnabled", "monitor_setting.auto_test_channel_enabled"} {
+	for _, key := range []string{"AutomaticEnableChannelEnabled", "monitor_setting.auto_test_channel_enabled"} {
 		if _, err := strconv.ParseBool(raw[key]); err != nil {
 			return nil, fmt.Errorf("invalid boolean: %s", key)
-		}
-	}
-	snapshot.CheckText = raw["CheckSensitiveEnabled"] == "true" && raw["CheckSensitiveOnPromptEnabled"] == "true"
-	for word := range strings.SplitSeq(raw["SensitiveWords"], "\n") {
-		if word = strings.TrimSpace(word); word != "" {
-			snapshot.TextKeywords = append(snapshot.TextKeywords, word)
 		}
 	}
 	if err := operation_setting.ValidateChannelTestConcurrency(raw["monitor_setting.channel_test_concurrency"]); err != nil {
@@ -202,57 +187,47 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 	return snapshot, nil
 }
 
-func refreshRequestPolicySnapshot() error {
+// RequestPolicyOptions returns the saved settings, including values that need
+// repair. Runtime consumers use the separately validated snapshots instead.
+func RequestPolicyOptions() map[string]string {
+	requestPolicyOptionMutex.Lock()
+	defer requestPolicyOptionMutex.Unlock()
+	return requestPolicyOptions()
+}
+
+// requestPolicyOptions must be called with requestPolicyOptionMutex held.
+func requestPolicyOptions() map[string]string {
+	options := maps.Clone(requestPolicyDefaults)
 	common.OptionMapRWMutex.RLock()
-	options := make(map[string]string)
+	defer common.OptionMapRWMutex.RUnlock()
 	for key, value := range common.OptionMap {
 		if IsRequestPolicyOption(key) {
 			options[key] = value
 		}
 	}
-	common.OptionMapRWMutex.RUnlock()
+	return options
+}
+
+func refreshRequestPolicySnapshot() error {
+	options := requestPolicyOptions()
+	filter, filterErr := buildPromptTextFilterPolicy(options)
+	if filterErr == nil {
+		promptTextFilterPolicy.Store(filter)
+	}
 	snapshot, err := BuildRequestPolicy(options)
 	if err == nil {
 		requestPolicySnapshot.Store(snapshot)
 	}
-	return err
+	return errors.Join(filterErr, err)
 }
 
-// UpdateRequestPolicyOptions validates the entire resulting policy before any
+// UpdateRequestPolicyOptions validates the affected policy groups before any
 // write. Unknown JSON rule fields stay in the original option string.
 func UpdateRequestPolicyOptions(values map[string]string) error {
-	requestPolicyOptionMutex.Lock()
-	defer requestPolicyOptionMutex.Unlock()
-	options := maps.Clone(CurrentRequestPolicy().Options)
-	for key, value := range values {
+	for key := range values {
 		if !IsRequestPolicyOption(key) {
 			return fmt.Errorf("not a request policy option: %s", key)
 		}
-		options[key] = value
 	}
-	snapshot, err := BuildRequestPolicy(options)
-	if err != nil {
-		return err
-	}
-	if err := DB.Transaction(func(tx *gorm.DB) error {
-		for key, value := range values {
-			option := Option{Key: key}
-			if err := tx.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&option).Update("value", value).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	for key, value := range values {
-		if err := updateOptionMap(key, value); err != nil {
-			return err
-		}
-	}
-	requestPolicySnapshot.Store(snapshot)
-	return nil
+	return UpdateOptionsBulk(values)
 }

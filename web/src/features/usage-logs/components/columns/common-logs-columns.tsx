@@ -47,6 +47,7 @@ import {
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { taskUsageUnitLabel } from '@/features/pricing/lib/task-price-display'
 import type { BillingUsageSchema } from '@/features/pricing/types'
+import { promptTextFilterScopeLabel } from '@/features/system-settings/request-policies/policy-label'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
@@ -157,7 +158,14 @@ function buildTypeDetailSegments(
           (event) => event.error_code === code && event.error_source === 'local'
         ))
     ) {
-      return [{ text: t('Local sensitive word rejection'), danger: true }]
+      const scope = promptTextFilterScopeLabel(
+        t,
+        other?.prompt_text_filter_scope ?? ''
+      )
+      return [
+        { text: t('Local sensitive word rejection'), danger: true },
+        ...(scope ? [{ text: scope, muted: true }] : []),
+      ]
     }
   }
 

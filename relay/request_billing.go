@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 )
@@ -19,12 +18,13 @@ import (
 // PrepareRequestBilling estimates and reserves one request's charge. Transports
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
-func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
-	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
-	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
-	if info.Request != nil && (needSensitiveCheck || constant.CountToken) {
-		meta = info.Request.GetTokenCountMeta()
-	} else {
+func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, filter *PromptTextFilter) *types.NewAPIError {
+	meta := filter.meta
+	if meta == nil && constant.CountToken {
+		meta = filter.TokenCountMeta()
+	}
+	if meta == nil {
+		meta = &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
 		// Avoid building CombineText when only the pricing quantities are needed.
 		switch request := info.Request.(type) {
 		case *dto.GeneralOpenAIRequest:
@@ -34,13 +34,7 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		case *dto.ClaudeRequest:
 			meta.MaxTokens = int(lo.FromPtr(request.MaxTokens))
 		case *dto.ImageRequest:
-			meta = request.GetTokenCountMeta()
-		}
-	}
-
-	if needSensitiveCheck && meta != nil {
-		if err := service.CheckRelayPromptSensitive(c, info.Request, meta.CombineText); err != nil {
-			return err
+			meta = filter.TokenCountMeta()
 		}
 	}
 

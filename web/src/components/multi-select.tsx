@@ -71,6 +71,14 @@ interface MultiSelectProps {
   emptyText?: string
   /** Optional `id` to wire labels/aria-describedby to the input. */
   id?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean
+  'data-form-root'?: string
+  /** When provided, the caller supplies already-filtered options. */
+  remoteSearch?: {
+    onSearchChange: (value: string) => void
+    onOpenChange: (open: boolean) => void
+  }
   /** Disable the entire control. */
   disabled?: boolean
   /**
@@ -214,6 +222,7 @@ export function MultiSelect(props: MultiSelectProps) {
   const handleInputValueChange = (value: string) => {
     if (!props.allowCreate) {
       setInputValue(value)
+      props.remoteSearch?.onSearchChange(value)
       return
     }
     const parsed = splitDraft(value)
@@ -251,6 +260,7 @@ export function MultiSelect(props: MultiSelectProps) {
     // feel snappier and matches popular chip-style multiselects.
     if (next.length > props.selected.length) {
       setInputValue('')
+      props.remoteSearch?.onSearchChange('')
     }
   }
 
@@ -295,12 +305,16 @@ export function MultiSelect(props: MultiSelectProps) {
     <Combobox
       multiple
       items={items}
+      filter={props.remoteSearch ? null : undefined}
       value={props.selected}
       onValueChange={handleValueChange}
       inputValue={inputValue}
       onInputValueChange={handleInputValueChange}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        props.remoteSearch?.onOpenChange(nextOpen)
+      }}
       disabled={props.disabled}
     >
       <ComboboxChips
@@ -405,6 +419,9 @@ export function MultiSelect(props: MultiSelectProps) {
         </ComboboxValue>
         <ComboboxChipsInput
           id={props.id}
+          data-form-root={props['data-form-root']}
+          aria-describedby={props['aria-describedby']}
+          aria-invalid={props['aria-invalid']}
           placeholder={
             props.selected.length === 0 && !props.renderSelectedSummary
               ? placeholder
@@ -412,7 +429,7 @@ export function MultiSelect(props: MultiSelectProps) {
           }
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          aria-label={placeholder}
+          aria-label={props.remoteSearch && props.id ? undefined : placeholder}
         />
       </ComboboxChips>
 

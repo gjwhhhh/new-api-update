@@ -605,6 +605,103 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	assert.Zero(t, fixture.connections.Load())
 }
 
+func TestResponsesPromptTextFilterChecksActualChannelAndNewTurns(t *testing.T) {
+	const word = "fixture-scoped-word"
+	var wsCalls, firstHTTP, fallbackHTTP atomic.Int32
+	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				return
+			}
+			result := fmt.Sprintf(`{"type":"response.completed","response":{"id":"scoped-%d","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`, wsCalls.Add(1))
+			if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(result))) {
+				return
+			}
+		}
+	})
+	fixture.httpUpstream = func(w http.ResponseWriter, _ *http.Request) {
+		firstHTTP.Add(1)
+		http.Error(w, "retryable test response", http.StatusServiceUnavailable)
+	}
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fallbackHTTP.Add(1)
+		http.Error(w, "unexpected fallback", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(fallback.Close)
+	require.NoError(t, model.DB.Model(&model.Ability{}).Where("channel_id = ?", fixture.channel.Id).Update("priority", 10).Error)
+	channel := &model.Channel{Name: "filtered fallback", Key: "fixture", Status: common.ChannelStatusEnabled, Type: constant.ChannelTypeOpenAI, Group: "default", Models: "ws-billing", BaseURL: &fallback.URL}
+	require.NoError(t, model.DB.Create(channel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{ChannelId: channel.Id, Model: "ws-billing", Group: "default", Enabled: true, Priority: common.GetPointer(int64(5))}).Error)
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	common.OptionMapRWMutex.Lock()
+	oldOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = oldOptions
+		common.OptionMapRWMutex.Unlock()
+	})
+	previous := model.RequestPolicyOptions()
+	t.Cleanup(func() { require.NoError(t, model.UpdateRequestPolicyOptions(previous)) })
+	setFilter := func(channelID int) {
+		t.Helper()
+		require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{
+			"CheckSensitiveEnabled": "true", "CheckSensitiveOnPromptEnabled": "true",
+			"SensitiveWords": word, "RetryTimes": "1", "AutomaticRetryStatusCodes": "503",
+			"PromptTextFilterTarget": fmt.Sprintf(`{"scope":"channel_token","channel_ids":[%d],"token_ids":[%d]}`, channelID, fixture.token.Id),
+		}))
+	}
+	wsRequest := func(input string) map[string]any {
+		t.Helper()
+		payload := fmt.Sprintf(`{"type":"response.create","model":"ws-billing","input":%q}`, input)
+		require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(payload)))
+		return readResponsesWSTestEvent(t, fixture.client)
+	}
+	setFilter(channel.Id)
+	require.Equal(t, "response.completed", wsRequest(word)["type"], "the keyword outside the channel scope is allowed")
+	setFilter(fixture.channel.Id)
+	rejection := wsRequest(strings.ToUpper(word))
+	require.Equal(t, "error", rejection["type"])
+	require.IsType(t, map[string]any{}, rejection["error"])
+	assert.Equal(t, "sensitive_words_detected", rejection["error"].(map[string]any)["code"])
+	assert.NotContains(t, fmt.Sprint(rejection), word)
+	require.Equal(t, "response.completed", wsRequest("clean")["type"], "a local rejection must not poison the connection")
+	assert.EqualValues(t, 2, wsCalls.Load())
+
+	setFilter(channel.Id)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, fixture.gatewayURL+"/v1/responses",
+		strings.NewReader(fmt.Sprintf(`{"model":"ws-billing","stream":true,"input":%q}`, word)))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Contains(t, string(body), `"code":"sensitive_words_detected"`)
+	assert.NotContains(t, string(body), word)
+	assert.EqualValues(t, 1, firstHTTP.Load())
+	assert.Zero(t, fallbackHTTP.Load(), "the retry must never reach the scoped channel")
+	var logs []model.Log
+	require.NoError(t, model.LOG_DB.Where("token_id = ? AND error_code = ?", fixture.token.Id, "sensitive_words_detected").Order("id").Find(&logs).Error)
+	require.Len(t, logs, 2)
+	assert.Equal(t, fixture.channel.Id, logs[0].ChannelId)
+	assert.Contains(t, logs[0].Other, `"protocol":"websocket"`)
+	assert.Equal(t, channel.Id, logs[1].ChannelId)
+	assert.Contains(t, logs[1].Other, `"protocol":"sse"`)
+	for _, row := range logs {
+		assert.Contains(t, row.Other, `"prompt_text_filter_scope":"channel_token"`)
+		assert.NotContains(t, row.Content+row.Other, word)
+	}
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		var token model.Token
+		assert.NoError(collect, model.DB.First(&token, fixture.token.Id).Error)
+		assert.Equal(collect, 1000, token.RemainQuota, "only the two successful turns should be charged")
+	}, 3*time.Second, 10*time.Millisecond)
+}
+
 func TestResponsesInterruptedStreamHealth(t *testing.T) {
 	for _, scenario := range []string{"websocket timeout", "sse timeout", "sse client cancel"} {
 		t.Run(scenario, func(t *testing.T) {

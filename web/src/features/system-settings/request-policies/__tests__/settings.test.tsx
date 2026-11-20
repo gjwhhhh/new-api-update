@@ -147,8 +147,32 @@ beforeEach(() => {
       data: { options: {} },
     },
   })
-  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+  vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
     if (url === '/api/option/') return { data: optionsResponse() }
+    if (url === '/api/option/request_policy/filter_targets') {
+      const params: URLSearchParams = config?.params
+      const rows =
+        params.get('kind') === 'token'
+          ? [{ id: 82, name: 'Shared key', status: 1 }]
+          : [
+              { id: 79, name: 'Primary', status: 1 },
+              { id: 80, name: 'Fallback', status: 1 },
+            ]
+      const search = params.get('q')?.toLowerCase()
+      const ids = params.getAll('id')
+      return {
+        data: {
+          success: true,
+          data: rows.filter(({ id, name }) =>
+            ids.length
+              ? ids.includes(String(id))
+              : !search ||
+                name.toLowerCase().includes(search) ||
+                String(id) === search.replace(/^#/, '')
+          ),
+        },
+      }
+    }
     if (url === '/api/option/request_policy') {
       return {
         data: {
@@ -264,6 +288,115 @@ describe('request policy settings', () => {
       await queryClient.invalidateQueries({ queryKey: ['system-options'] })
     })
     expect(keywords).toHaveValue('unsaved')
+  })
+
+  it('loads missing saved labels once and saves keyword edits without rewriting the scope', async () => {
+    settings.PromptTextFilterTarget =
+      '{ "scope": "channel", "channel_ids": [79], "token_ids": null }'
+    await renderPolicies('/system-settings/request-policies/filtering')
+    expect(await screen.findByText('Primary (#79)')).toBeVisible()
+    const lookups = () =>
+      vi
+        .mocked(api.get)
+        .mock.calls.flatMap(([url, config]) =>
+          url === '/api/option/request_policy/filter_targets'
+            ? ((config?.params as URLSearchParams | undefined)?.getAll('id') ??
+              [])
+            : []
+        )
+    expect(lookups()).toEqual(['79'])
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Blocked keywords' }),
+      {
+        target: { value: 'changed' },
+      }
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        { options: { SensitiveWords: 'changed' } }
+      )
+    )
+    expect(lookups()).toEqual(['79'])
+  })
+
+  it('requires an explicit scope selection when the saved scope is invalid', async () => {
+    settings.PromptTextFilterTarget = '{"scope":"channel","channel_ids":[]}'
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const scope = await screen.findByRole('combobox', { name: 'Filter scope' })
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Blocked keywords' }),
+      {
+        target: { value: 'changed' },
+      }
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    expect(await screen.findByText('Required')).toBeVisible()
+    expect(scope).toHaveAttribute('aria-invalid', 'true')
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('searches and saves multiple channels and a token as one scoped policy', async () => {
+    const user = userEvent.setup()
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await user.click(
+      await screen.findByRole('combobox', { name: 'Filter scope' })
+    )
+    await user.click(
+      await screen.findByRole('option', {
+        name: 'Selected channels and tokens',
+      })
+    )
+    const save = screen.getByRole('button', { name: 'Save sensitive words' })
+    await user.click(save)
+    expect(
+      await screen.findAllByText('Select at least one target')
+    ).toHaveLength(2)
+    expect(api.patch).not.toHaveBeenCalled()
+
+    const channels = screen.getByRole('combobox', { name: 'Channels' })
+    await user.click(channels)
+    await user.type(channels, '#79')
+    await user.click(
+      await screen.findByRole('option', { name: 'Primary (#79)' })
+    )
+    await user.click(channels)
+    await user.type(channels, 'fall')
+    await user.click(
+      await screen.findByRole('option', { name: 'Fallback (#80)' })
+    )
+    await user.click(screen.getByRole('combobox', { name: 'API Keys' }))
+    await user.click(
+      await screen.findByRole('option', { name: 'Shared key (#82)' })
+    )
+    expect(channels).toBeInTheDocument()
+    expect(screen.getByText('Primary (#79)')).toBeVisible()
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.some(
+          ([url, config]) =>
+            url === '/api/option/request_policy/filter_targets' &&
+            (config?.params as URLSearchParams | undefined)?.has('id')
+        )
+    ).toBe(false)
+    await user.click(save)
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            PromptTextFilterTarget:
+              '{"scope":"channel_token","channel_ids":[79,80],"token_ids":[82]}',
+          },
+        }
+      )
+    )
   })
 
   it('invalid retry status ranges show validation and do not write options', async () => {

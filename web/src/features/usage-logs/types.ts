@@ -119,6 +119,7 @@ export interface ToolSurchargeItem {
 export interface LogOtherData {
   error_code?: string
   error_source?: string
+  prompt_text_filter_scope?: string
   protocol?: string
   status_code?: number
   admin_info?: {

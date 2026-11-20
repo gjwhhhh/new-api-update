@@ -341,23 +341,37 @@ func UpdateOptionsBulk(values map[string]string) error {
 			return err
 		}
 	}
-	var policySnapshot *RequestPolicySnapshot
+	var updateRouting, updateFilter bool
 	for key := range values {
-		if IsRequestPolicyOption(key) {
-			requestPolicyOptionMutex.Lock()
-			defer requestPolicyOptionMutex.Unlock()
-			options := maps.Clone(CurrentRequestPolicy().Options)
-			for key, value := range values {
-				if IsRequestPolicyOption(key) {
-					options[key] = value
-				}
+		if isPromptTextFilterOption(key) {
+			updateFilter = true
+		} else if IsRequestPolicyOption(key) {
+			updateRouting = true
+		}
+	}
+	var policySnapshot *RequestPolicySnapshot
+	var filterPolicy *PromptTextFilterPolicy
+	if updateRouting || updateFilter {
+		requestPolicyOptionMutex.Lock()
+		defer requestPolicyOptionMutex.Unlock()
+		options := requestPolicyOptions()
+		for key, value := range values {
+			if IsRequestPolicyOption(key) {
+				options[key] = value
 			}
-			var err error
+		}
+		var err error
+		if updateRouting {
 			policySnapshot, err = BuildRequestPolicy(options)
 			if err != nil {
 				return err
 			}
-			break
+		}
+		if updateFilter {
+			filterPolicy, err = buildPromptTextFilterPolicy(options)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -372,6 +386,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 	}
 	if policySnapshot != nil {
 		requestPolicySnapshot.Store(policySnapshot)
+	}
+	if filterPolicy != nil {
+		promptTextFilterPolicy.Store(filterPolicy)
 	}
 	return nil
 }

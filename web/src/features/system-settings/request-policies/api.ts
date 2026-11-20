@@ -49,3 +49,24 @@ export async function savePolicyConfig(options: Record<string, string>) {
   )
   return requireServerSuccess(response.data).data
 }
+
+export type FilterTargetKind = 'channel' | 'token'
+export type FilterTarget = { id: number; name: string; status: number }
+
+export async function getFilterTargets(
+  kind: FilterTargetKind,
+  lookup: string | number[],
+  signal: AbortSignal
+) {
+  const params = new URLSearchParams({ kind })
+  if (typeof lookup === 'string') {
+    if (lookup) params.set('q', lookup)
+  } else {
+    for (const id of lookup) params.append('id', String(id))
+  }
+  const response = await api.get<Response<FilterTarget[]>>(
+    '/api/option/request_policy/filter_targets',
+    { params, signal }
+  )
+  return requireServerSuccess(response.data).data
+}

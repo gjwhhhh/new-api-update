@@ -142,11 +142,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}()
 
-	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
-		return
-	}
+	filter := relay.NewPromptTextFilter(request)
+	billingPrepared := false
 	defer func() {
-		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
+		if billingPrepared {
+			newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
+		}
 	}()
 
 	retryParam := &service.RetryParam{
@@ -173,6 +174,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if blocked := service.CheckCyberSessionChannel(c, channel.Id); blocked != nil {
 			newAPIError = blocked
 			break
+		}
+		if newAPIError = filter.Check(c, channel.Id); newAPIError != nil {
+			// A previous upstream attempt must not override the final local rejection.
+			common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, nil)
+			break
+		}
+		if !billingPrepared {
+			if newAPIError = relay.PrepareRequestBilling(c, relayInfo, filter); newAPIError != nil {
+				return
+			}
+			billingPrepared = true
 		}
 		service.AppendUsedChannel(c, channel.Id)
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {

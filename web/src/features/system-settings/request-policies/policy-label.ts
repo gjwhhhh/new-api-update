@@ -18,6 +18,24 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
 
+export function promptTextFilterScopeLabel(
+  t: (key: string) => string,
+  scope: string
+) {
+  switch (scope) {
+    case 'all':
+      return t('All requests')
+    case 'channel':
+      return t('Selected channels')
+    case 'token':
+      return t('Selected tokens')
+    case 'channel_token':
+      return t('Selected channels and tokens')
+    default:
+      return undefined
+  }
+}
+
 // Labels for the decision events recorded by the backend request policy state
 // (reasons, sources and health), the session behaviors, and the auto-disable
 // sources reported by the channel operations summary.

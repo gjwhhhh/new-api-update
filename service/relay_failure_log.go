@@ -184,6 +184,7 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 		}
 		if localSensitive {
 			other.SetPublic("error_source", "local")
+			other.SetPublic("prompt_text_filter_scope", c.GetString(relaySensitiveScopeKey))
 		}
 		started := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		elapsed := 0

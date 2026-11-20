@@ -229,6 +229,7 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 
 func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState, create responsesWSCreateRequest) (apiErr *types.NewAPIError) {
 	policy := service.RequestPolicy(c)
+	filter := NewPromptTextFilter(&create.Request)
 	modelName := create.Request.Model
 	started := time.Now()
 	var info *relaycommon.RelayInfo
@@ -266,10 +267,13 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr = s.restoreConnectionContext(c, modelName); apiErr != nil {
 			return apiErr
 		}
+		if apiErr = filter.Check(c, s.lockedChannelID); apiErr != nil {
+			return apiErr
+		}
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
-		if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
+		if apiErr = PrepareRequestBilling(c, info, filter); apiErr != nil {
 			return apiErr
 		}
 		billingPrepared = true
@@ -293,12 +297,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if blocked := service.CheckCyberSessionChannel(c, channel.Id); blocked != nil {
 				return blocked
 			}
+			if apiErr = filter.Check(c, channel.Id); apiErr != nil {
+				return apiErr
+			}
 			service.AppendUsedChannel(c, channel.Id)
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
 				common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
-				if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
+				if apiErr = PrepareRequestBilling(c, info, filter); apiErr != nil {
 					return apiErr
 				}
 				billingPrepared = true

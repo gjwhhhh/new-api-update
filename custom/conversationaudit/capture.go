@@ -79,8 +79,17 @@ func CaptureResponsesWSFailures() gin.HandlerFunc {
 func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		protocol := protocolForRequest(c.Request)
-		if !isEnabled() || protocol == protocolUnknown {
+		if !isEnabled() {
 			c.Next()
+			return
+		}
+		if protocol == protocolUnknown {
+			c.Next()
+			if _, ok := service.RelayPromptSensitiveMatch(c); ok {
+				if failure, failed := service.FinalRelayFailure(c); failed {
+					persist(c, "", "", failure.Code, "unsupported_request_protocol", false, false, false, "failed", c.Writer.Status())
+				}
+			}
 			return
 		}
 
@@ -144,7 +153,8 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 			status = "truncated"
 		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
-		if request.hasPersistableRequest() || (status == "failed" && (websocketFailuresOnly || !request.isResponsesContinuation() || response.errorCode == relaycommon.CyberPolicyCode)) {
+		_, localSensitiveMatch := service.RelayPromptSensitiveMatch(c)
+		if request.hasPersistableRequest() || (status == "failed" && (websocketFailuresOnly || !request.isResponsesContinuation() || localSensitiveMatch || response.errorCode == relaycommon.CyberPolicyCode)) {
 			if request.body == "" && response.body == "" && captureError == "" {
 				captureError = "no_visible_text"
 			}

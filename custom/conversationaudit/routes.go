@@ -3,12 +3,14 @@ package conversationaudit
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -21,7 +23,7 @@ func Register(apiRouter *gin.RouterGroup) {
 }
 
 func registerRoutes(apiRouter *gin.RouterGroup) {
-	auditRoute := apiRouter.Group("/custom/conversation-audits")
+	auditRoute := apiRouter.Group("/custom/conversation-audits", middleware.DisableCache())
 	auditRoute.Use(middleware.AdminAuth())
 	{
 		auditRoute.GET("", listAudits)
@@ -97,6 +99,16 @@ func getAuditDetail(c *gin.Context) {
 		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
 		return
 	}
+	var sensitiveMatch *service.RelaySensitiveMatch
+	if payload, ok := strings.CutPrefix(requestContent, sensitiveAuditPrefix); ok {
+		var request sensitiveAuditRequest
+		if common.UnmarshalJsonStr(payload, &request) != nil {
+			respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
+			return
+		}
+		requestContent = request.Request
+		sensitiveMatch = &request.Match
+	}
 	responseContent, err := decryptAuditContent(&audit, "response")
 	if err != nil {
 		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
@@ -112,15 +124,16 @@ func getAuditDetail(c *gin.Context) {
 		responsePartCount++
 	}
 	recordAdminAudit(c, "conversation_audit.view", audit.RequestID)
+	detail := gin.H{
+		"audit": audit, "request": requestContent, "response": responseContent,
+		"response_segments": responseSegments, "response_part_count": responsePartCount,
+	}
+	if sensitiveMatch != nil {
+		detail["local_sensitive_match"] = sensitiveMatch
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": gin.H{
-			"audit":               audit,
-			"request":             requestContent,
-			"response":            responseContent,
-			"response_segments":   responseSegments,
-			"response_part_count": responsePartCount,
-		},
+		"data":    detail,
 	})
 }
 

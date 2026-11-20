@@ -3549,6 +3549,7 @@
     "Local Estimate (billing-usage-gemini)": "Ước tính cục bộ (billing-usage-gemini)",
     "Local Estimate (billing-usage-openai)": "Ước tính cục bộ (billing-usage-openai)",
     "Local models": "Mô hình cục bộ",
+    "Local sensitive word rejection": "Từ chối cục bộ do từ nhạy cảm",
     "Locations": "Vị trí",
     "Locked": "Đã khóa",
     "log": "nhật ký",

@@ -73,7 +73,7 @@
       </table>
       <div class="pager"><button class="secondary" id="previous" type="button">上一页</button><span id="page">第 1 页</span><button class="secondary" id="next" type="button">下一页</button></div>
     </main>
-    <dialog id="detail"><div class="dialog-head"><h2>会话详情</h2><button class="secondary" id="close" type="button">关闭</button></div><p id="meta"></p><h3>请求</h3><pre id="request"></pre><h3>回复</h3><pre id="response"></pre></dialog>
+    <dialog id="detail"><div class="dialog-head"><h2>会话详情</h2><button class="secondary" id="close" type="button">关闭</button></div><p id="meta"></p><section id="sensitiveMatch" hidden><h3>本地敏感词命中</h3><pre id="sensitiveMatchText"></pre></section><h3>请求</h3><pre id="request"></pre><h3>回复</h3><pre id="response"></pre></dialog>
     <script>
       const state = { page: 1, total: 0, pageSize: 20, accessToken: '' };
       const rows = document.getElementById('rows');
@@ -184,6 +184,16 @@
         const failureNote = failed ? ` · 失败${payload.data.audit.error_code ? ` (${payload.data.audit.error_code})` : ''}` : '';
         const noBodyNote = !payload.data.request && !payload.data.response && !responsePartCount && payload.data.audit.capture_error ? ` · 无正文 (${payload.data.audit.capture_error})` : '';
         document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}${failureNote}${fullPayloadNote}${mergeNote}${truncation ? ` · ${truncation}` : ''}${noBodyNote}`;
+        const match = payload.data.local_sensitive_match;
+        const sourceLabels = {
+          current_user_text: '本轮用户文本', input_context: '请求携带的上下文', tool_context: '工具调用或结果',
+          instructions: '指令', metadata: '元数据', text_settings: '文本设置', tool_choice: '工具选择',
+          prompt_settings: '提示词配置', tool_definitions: '工具定义',
+        };
+        document.getElementById('sensitiveMatch').hidden = !match;
+        document.getElementById('sensitiveMatchText').textContent = match
+          ? `规则：${match.rule}\n命中词：${match.word}${match.truncated ? '（已截断）' : ''}\n来源：${Object.hasOwn(sourceLabels, match.source) ? sourceLabels[match.source] : '未知'}`
+          : '';
         document.getElementById('request').textContent = fullPayload ? rawPayloadText(payload.data.request) : auditText(payload.data.request, 'user_input');
         document.getElementById('response').textContent = fullPayload ? rawPayloadText(payload.data.response) : mergedResponseText(payload.data.response, payload.data.response_segments);
         detail.showModal();

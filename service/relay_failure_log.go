@@ -146,9 +146,11 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 		}
 		counters := relayFailureLogMetrics[failure.Protocol]
 		isCyber := failure.Code == relaycommon.CyberPolicyCode
+		_, localSensitive := RelayPromptSensitiveMatch(c)
+		localSensitive = localSensitive && failure.Code == string(types.ErrorCodeSensitiveWordsDetected)
 		if isCyber {
 			counters.cyber.Add(1)
-		} else if failure.Code != CyberSessionBlockedCode && !constant.ErrorLogEnabled {
+		} else if !localSensitive && failure.Code != CyberSessionBlockedCode && !constant.ErrorLogEnabled {
 			counters.ignored.Add(1)
 			return
 		}
@@ -179,6 +181,9 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 				source = "code"
 			}
 			other.SetAdmin("cyber_match_source", source)
+		}
+		if localSensitive {
+			other.SetPublic("error_source", "local")
 		}
 		started := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		elapsed := 0

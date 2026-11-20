@@ -3549,6 +3549,7 @@
     "Local Estimate (billing-usage-gemini)": "Локальная оценка (billing-usage-gemini)",
     "Local Estimate (billing-usage-openai)": "Локальная оценка (billing-usage-openai)",
     "Local models": "Локальные модели",
+    "Local sensitive word rejection": "Локальная блокировка по стоп-слову",
     "Locations": "Местоположения",
     "Locked": "Заблокировано",
     "log": "записи",

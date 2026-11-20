@@ -145,11 +145,20 @@ function buildTypeDetailSegments(
     return [{ text: t('Async task refund') }]
   }
 
-  if (
-    log.type === 5 &&
-    (log.error_code ?? other?.error_code) === 'cyber_policy'
-  ) {
-    return [{ text: t('Cyber policy rejection'), danger: true }]
+  if (log.type === 5) {
+    const code = log.error_code ?? other?.error_code
+    if (code === 'cyber_policy') {
+      return [{ text: t('Cyber policy rejection'), danger: true }]
+    }
+    if (
+      code === 'sensitive_words_detected' &&
+      (other?.error_source === 'local' ||
+        other?.admin_info?.request_policy?.some(
+          (event) => event.error_code === code && event.error_source === 'local'
+        ))
+    ) {
+      return [{ text: t('Local sensitive word rejection'), danger: true }]
+    }
   }
 
   if (log.type !== 2) return []

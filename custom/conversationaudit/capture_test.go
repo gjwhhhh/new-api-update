@@ -4,16 +4,138 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}))
+	oldLogDB, oldLogging, oldWords := model.LOG_DB, constant.ErrorLogEnabled, setting.SensitiveWords
+	oldRedis := common.RedisEnabled
+	oldLogType := common.LogDatabaseType()
+	model.LOG_DB, constant.ErrorLogEnabled = db, false
+	common.RedisEnabled = false
+	const word = "fixture-trigger"
+	setting.SensitiveWords = []string{word}
+	t.Cleanup(func() {
+		model.LOG_DB, constant.ErrorLogEnabled, setting.SensitiveWords = oldLogDB, oldLogging, oldWords
+		common.RedisEnabled = oldRedis
+		common.SetLogDatabaseType(oldLogType)
+	})
+	if dsn := os.Getenv("TEST_SENSITIVE_LOG_DSN"); dsn != "" {
+		t.Setenv("LOG_SQL_DSN", dsn)
+		oldMaster := common.IsMasterNode
+		common.IsMasterNode = true
+		t.Cleanup(func() { common.IsMasterNode = oldMaster })
+		require.NoError(t, model.InitLogDB())
+		logConn, err := model.LOG_DB.DB()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, logConn.Close()) })
+	}
+	user := model.User{Username: "fixture-user", AffCode: "fix1", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	admin := model.User{Username: "fixture-admin", AffCode: "fix2", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&admin).Error)
+	userSession, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "fixture")
+	require.NoError(t, err)
+	adminSession, err := service.CreateLoginSession(admin.Id, "password", "127.0.0.1", "fixture")
+	require.NoError(t, err)
+	engine := gin.New()
+	engine.POST("/v1/responses", func(c *gin.Context) {
+		c.Set("id", user.Id)
+		c.Set(common.RequestIdKey, c.GetHeader("X-Test-Request-ID"))
+	}, service.RelayFailureLog(""), CaptureMiddleware(), func(c *gin.Context) {
+		var request dto.OpenAIResponsesRequest
+		require.NoError(t, c.ShouldBindJSON(&request))
+		apiErr := service.CheckRelayPromptSensitive(c, &request, request.GetTokenCountMeta().CombineText)
+		require.NotNil(t, apiErr)
+		service.SetRelayFinalError(c, apiErr)
+		c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+	})
+	registerRoutes(engine.Group("/api"))
+	for _, tc := range []struct {
+		id, contentType, input, source, captureError, userText string
+	}{
+		{"tool", "application/json", `{"previous_response_id":"resp_parent","input":[{"type":"function_call_output","output":"fixture-trigger private tool result"}]}`, "tool_context", "no_visible_text", ""},
+		{"tool-definition", "application/json", `{"input":[{"type":"function_call_output","output":"private tool result"}],"tools":[{"description":"fixture-trigger private definition"}]}`, "tool_definitions", "no_new_user_text", ""},
+		{"current-user", "application/json", `{"input":"fixture-trigger current request"}`, "current_user_text", "", word + " current request"},
+		{"unsupported-content-type", "application/octet-stream", `{"input":"fixture-trigger current request"}`, "current_user_text", "unsupported_request_protocol", ""},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(tc.input))
+			request.Header.Set("Content-Type", tc.contentType)
+			request.Header.Set("X-Test-Request-ID", tc.id)
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, request)
+			assert.Equal(t, http.StatusInternalServerError, response.Code)
+			assert.Contains(t, response.Body.String(), "sensitive_words_detected")
+			assert.NotContains(t, response.Body.String(), word)
+
+			var log model.Log
+			require.NoError(t, model.LOG_DB.Where("request_id = ?", tc.id).Take(&log).Error)
+			assert.Equal(t, "sensitive_words_detected", log.ErrorCode)
+			assert.Contains(t, log.Other, `"error_source":"local"`)
+			assert.NotContains(t, log.Content+log.Other, word)
+
+			var audit ConversationAudit
+			require.NoError(t, db.Where("request_id = ?", tc.id).First(&audit).Error)
+			assert.Equal(t, "failed", audit.Status)
+			assert.Equal(t, tc.captureError, audit.CaptureError)
+			assert.NotEmpty(t, audit.RequestCiphertext)
+			assert.NotContains(t, audit.RequestCiphertext, word)
+
+			endpoint := "/api/custom/conversation-audits/" + tc.id
+			for _, denied := range []struct {
+				token  string
+				status int
+			}{{"", http.StatusUnauthorized}, {userSession.AccessToken, http.StatusForbidden}} {
+				deniedRequest := httptest.NewRequest(http.MethodGet, endpoint, nil)
+				if denied.token != "" {
+					deniedRequest.Header.Set("Authorization", "Bearer "+denied.token)
+				}
+				result := httptest.NewRecorder()
+				engine.ServeHTTP(result, deniedRequest)
+				assert.Equal(t, denied.status, result.Code)
+				assert.NotContains(t, result.Body.String(), word)
+			}
+
+			detail := httptest.NewRecorder()
+			detailRequest := httptest.NewRequest(http.MethodGet, endpoint, nil)
+			detailRequest.Header.Set("Authorization", "Bearer "+adminSession.AccessToken)
+			engine.ServeHTTP(detail, detailRequest)
+			require.Equal(t, http.StatusOK, detail.Code, detail.Body.String())
+			assert.Contains(t, detail.Header().Get("Cache-Control"), "no-store")
+			var payload struct {
+				Data struct {
+					Request string                      `json:"request"`
+					Match   service.RelaySensitiveMatch `json:"local_sensitive_match"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(detail.Body.Bytes(), &payload))
+			assert.Equal(t, service.RelaySensitiveMatch{Rule: "local_prompt_sensitive_words", Word: word, Source: tc.source}, payload.Data.Match)
+			if tc.userText != "" {
+				assert.Equal(t, tc.userText, decodedPayloadField(t, payload.Data.Request, "user_input"))
+			} else {
+				assert.Empty(t, payload.Data.Request)
+				assert.NotContains(t, detail.Body.String(), "private tool result")
+				assert.NotContains(t, detail.Body.String(), "private definition")
+			}
+		})
+	}
+}
 
 func TestCaptureCyberRejectionWithoutVisibleText(t *testing.T) {
 	db := setupResponseTurnTest(t)

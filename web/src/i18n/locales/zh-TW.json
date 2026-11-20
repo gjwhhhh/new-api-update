@@ -3549,6 +3549,7 @@
     "Local Estimate (billing-usage-gemini)": "本地估算（billing-usage-gemini）",
     "Local Estimate (billing-usage-openai)": "本地估算（billing-usage-openai）",
     "Local models": "本地模型",
+    "Local sensitive word rejection": "本機敏感詞拒絕",
     "Locations": "位置",
     "Locked": "鎖定",
     "log": "日誌的完整詳情",

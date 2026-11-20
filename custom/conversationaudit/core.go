@@ -17,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -389,6 +390,15 @@ func decrypt(version, nonceText, ciphertextText, aad string) (string, error) {
 	return string(plaintext), nil
 }
 
+// Captured request bodies are JSON; the NUL prefix distinguishes this encrypted
+// envelope from both legacy audit bodies and arbitrary client JSON fields.
+const sensitiveAuditPrefix = "\x00sensitive-audit-v1\n"
+
+type sensitiveAuditRequest struct {
+	Match   service.RelaySensitiveMatch `json:"match"`
+	Request string                      `json:"request,omitempty"`
+}
+
 func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated, fullPayload bool, status string, statusCode int, identities ...responseIdentity) *ConversationAudit {
 	cfg := currentConfig()
 	var identity responseIdentity
@@ -401,6 +411,18 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 	requestID := c.GetString(common.RequestIdKey)
 	if requestID == "" {
 		return nil
+	}
+	if match, ok := service.RelayPromptSensitiveMatch(c); ok && status == "failed" {
+		envelope := sensitiveAuditRequest{Match: match, Request: requestBody}
+		encoded, err := common.Marshal(envelope)
+		if err == nil && len(encoded)+len(sensitiveAuditPrefix) > cfg.MaxContentBytes {
+			envelope.Request = ""
+			encoded, err = common.Marshal(envelope)
+			requestTruncated = true
+		}
+		if err == nil {
+			requestBody = sensitiveAuditPrefix + string(encoded)
+		}
 	}
 	now := time.Now().Unix()
 	audit := &ConversationAudit{

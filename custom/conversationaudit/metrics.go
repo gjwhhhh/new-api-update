@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -75,5 +76,5 @@ func getAuditMetrics(c *gin.Context) {
 	if pending.Count > 0 {
 		oldestSeconds = max(0, time.Now().Unix()-pending.Oldest)
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"phases": phases, "quantile_sample_limit": auditTimingSamples, "pending_count": pending.Count, "oldest_pending_seconds": oldestSeconds}})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"phases": phases, "quantile_sample_limit": auditTimingSamples, "pending_count": pending.Count, "oldest_pending_seconds": oldestSeconds, "relay_failure_logs": service.RelayFailureLogMetrics(), "cyber_session_guard": service.CyberSessionGuardMetrics()}})
 }

@@ -60,7 +60,7 @@ func NormalizeLogPresetFilters(filters LogPresetFilters, scope string) (string, 
 	normalized := LogPresetFilters{}
 	for field, value := range filters {
 		switch field {
-		case "model", "group", "token", "requestId", "upstreamRequestId", "type":
+		case "model", "group", "token", "requestId", "upstreamRequestId", "errorCode", "type":
 		case "username", "excludeUsername", "channel":
 			if scope != "all" {
 				return "", ErrLogPresetInvalid

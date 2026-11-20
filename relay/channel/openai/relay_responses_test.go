@@ -87,6 +87,56 @@ func newResponsesStreamTestContext(t *testing.T, body string) (*gin.Context, *ht
 	return c, recorder, resp, info
 }
 
+func TestCyberStreamRejectionPreservesCodeAndDeliveredOutput(t *testing.T) {
+	const chatDelta = `{"id":"chatcmpl-test","choices":[{"index":0,"delta":{"content":"partial test output"}}]}`
+	for _, tc := range []struct {
+		name    string
+		handler func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError)
+		format  types.RelayFormat
+		delta   string
+		failure string
+	}{
+		{"responses", OaiResponsesStreamHandler, types.RelayFormatOpenAIResponses, `{"type":"response.output_text.delta","delta":"partial test output"}`, `{"type":"error","message":"private detail","error":{"code":"cyber_policy"}}`},
+		{"chat", OaiStreamHandler, types.RelayFormatOpenAI, chatDelta, `{"error":{"type":"content_policy_violation","message":"private detail","code":"cyber_policy"}}`},
+		{"chat-to-responses", OaiChatToResponsesStreamHandler, types.RelayFormatOpenAIResponses, chatDelta, `{"error":{"message":"private detail","code":"cyber_policy"}}`},
+	} {
+		for _, partial := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/partial=%t", tc.name, partial), func(t *testing.T) {
+				body := "data: " + tc.failure + "\n\ndata: [DONE]\n\n"
+				if partial {
+					body = "data: " + tc.delta + "\n\n" + body
+				}
+				c, recorder, resp, info := newResponsesStreamTestContext(t, body)
+				info.RelayFormat = tc.format
+				usage, err := tc.handler(c, info, resp)
+				outcome := info.StreamStatus.OutcomeSnapshot()
+				assert.Equal(t, relaycommon.ResponseOutcomeFailed, outcome.Response)
+				assert.Equal(t, "cyber_policy", outcome.ErrorCode)
+				if !partial {
+					require.NotNil(t, err)
+					assert.Equal(t, types.ErrorCode("cyber_policy"), err.GetErrorCode())
+					assert.Equal(t, http.StatusForbidden, err.StatusCode)
+					assert.True(t, types.IsSkipRetryError(err))
+					assert.Nil(t, usage)
+					assert.Empty(t, recorder.Body.String())
+					return
+				}
+				require.Nil(t, err)
+				require.NotNil(t, usage)
+				assert.Contains(t, recorder.Body.String(), "partial test output")
+				if tc.name == "chat-to-responses" {
+					assert.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.output_text.delta\n"))
+				} else {
+					assert.Equal(t, 1, strings.Count(recorder.Body.String(), "partial test output"))
+				}
+				assert.Contains(t, recorder.Body.String(), "cyber_policy")
+				assert.NotContains(t, recorder.Body.String(), "private detail")
+				assert.NotContains(t, recorder.Body.String(), "[DONE]")
+			})
+		}
+	}
+}
+
 func TestOaiResponsesStreamHandlerTreatsTopLevelErrorAsChannelFailure(t *testing.T) {
 	body := "data: {\"type\":\"error\",\"error\":{\"message\":\"upstream stalled\",\"type\":\"server_error\",\"code\":\"upstream_stalled\"}}\n"
 	c, recorder, resp, info := newResponsesStreamTestContext(t, body)

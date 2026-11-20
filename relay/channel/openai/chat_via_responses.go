@@ -37,8 +37,13 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
-	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil {
+		if oaiError.Code == relaycommon.CyberPolicyCode {
+			return nil, service.CyberPolicyError(resp.StatusCode)
+		}
+		if oaiError.Type != "" {
+			return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		}
 	}
 
 	info.ObserveResponseModel(responsesResp.Model)
@@ -106,8 +111,11 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 				}
 			}
 		case "error", "response.failed", "response.error":
-			oaiErr := responsesStreamEventError(&streamResp)
+			oaiErr := responsesStreamEventError(&streamResp, data)
 			streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+			if oaiErr.Code == relaycommon.CyberPolicyCode {
+				streamErr = service.CyberPolicyError(resp.StatusCode)
+			}
 		}
 		if streamErr != nil || finalResponse != nil {
 			break
@@ -274,12 +282,17 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if streamResp.Response != nil {
 			info.ObserveResponseModel(streamResp.Response.Model)
 		}
-		if upstreamError := responsesStreamEventError(&streamResp); upstreamError != nil {
+		if upstreamError := responsesStreamEventError(&streamResp, data); upstreamError != nil {
 			upstreamFailed = true
 			if streamResp.Response != nil {
 				failedUsage = streamResp.Response.Usage
 			}
 			streamErr = types.WithOpenAIError(*upstreamError, http.StatusInternalServerError)
+			if upstreamError.Code == relaycommon.CyberPolicyCode {
+				streamErr = service.CyberPolicyError(resp.StatusCode)
+				info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", streamErr.StatusCode)
+				service.SetRelayFinalError(c, streamErr)
+			}
 			stopStream(sr, streamErr)
 			return
 		}

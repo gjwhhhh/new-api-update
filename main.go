@@ -351,6 +351,7 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
+	service.InitCyberSessionGuard()
 
 	perfmetrics.Init()
 

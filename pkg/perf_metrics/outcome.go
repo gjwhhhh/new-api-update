@@ -83,6 +83,9 @@ func rootAPIError(apiErr *types.NewAPIError) *types.NewAPIError {
 }
 
 func classifyFailure(local bool, code, errorType string, status int) Outcome {
+	if code == relaycommon.CyberPolicyCode {
+		return OutcomeIgnored
+	}
 	code, errorType = strings.ToLower(code), strings.ToLower(errorType)
 	if local {
 		if strings.HasPrefix(code, "violation_fee.") {

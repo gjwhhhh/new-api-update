@@ -88,6 +88,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			service.SetRelayFinalError(c, newAPIError)
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
@@ -186,6 +187,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, nil)
+		relayInfo.StreamStatus = nil
 		relayInfo.BeginChannelAttempt(time.Now())
 
 		switch relayFormat {
@@ -199,6 +202,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 		relayInfo.FinishChannelAttempt(time.Now())
+		if relayInfo.StreamStatus != nil {
+			common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, relayInfo.StreamStatus)
+		}
 
 		if newAPIError == nil {
 			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus)
@@ -210,7 +216,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 		// Record every real upstream attempt, while group availability records only
 		// the final request outcome below.
-		perfmetrics.RecordChannelRelaySample(relayInfo, false, 0)
+		if newAPIError.GetErrorCode() != relaycommon.CyberPolicyCode {
+			perfmetrics.RecordChannelRelaySample(relayInfo, false, 0)
+		}
 
 		retryableUpstreamStreamFailure := newAPIError.GetErrorCode() == types.ErrorCodeChannelUpstreamStreamTerminated && !types.IsSkipRetryError(newAPIError)
 		if retryableUpstreamStreamFailure {

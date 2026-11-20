@@ -202,6 +202,9 @@ export function buildApiParams(config: {
     ...(searchParams.upstreamRequestId
       ? { upstream_request_id: String(searchParams.upstreamRequestId) }
       : {}),
+    ...(searchParams.errorCode
+      ? { error_code: String(searchParams.errorCode) }
+      : {}),
     ...buildTimeRangeParams(searchParams, false),
   }
 

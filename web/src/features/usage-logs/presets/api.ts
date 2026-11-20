@@ -30,7 +30,8 @@ export type PresetFilters = Partial<
     | 'excludeUsername'
     | 'channel'
     | 'requestId'
-    | 'upstreamRequestId',
+    | 'upstreamRequestId'
+    | 'errorCode',
     string
   >
 >

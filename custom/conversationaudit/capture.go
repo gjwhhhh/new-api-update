@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -67,6 +69,14 @@ type capturePayload struct {
 // upstream BodyStorage, so reading an audit payload never consumes the body
 // needed by distributor retries or provider adaptors.
 func CaptureMiddleware() gin.HandlerFunc {
+	return captureMiddleware(false)
+}
+
+func CaptureResponsesWSFailures() gin.HandlerFunc {
+	return captureMiddleware(true)
+}
+
+func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		protocol := protocolForRequest(c.Request)
 		if !isEnabled() || protocol == protocolUnknown {
@@ -75,28 +85,46 @@ func CaptureMiddleware() gin.HandlerFunc {
 		}
 
 		cfg := currentConfig()
-		if !cfg.CaptureFullPayload {
+		captureFullPayload := cfg.CaptureFullPayload && !websocketFailuresOnly
+		if !captureFullPayload {
 			if exceeded, requestBytes, known := auditParseLimitState(c, cfg.MaxParseBytes); known && exceeded {
 				c.Next()
+				persistFailureWithoutBody(c, captureErrorRequestParseLimitExceeded)
 				logCaptureDiagnostic(c, protocol, "skipped", captureErrorRequestParseLimitExceeded, "not_applicable", requestBytes, 0, 0)
 				return
 			}
 		}
 
 		parseStarted := time.Now()
-		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, cfg.CaptureFullPayload)
+		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, captureFullPayload)
 		observeAuditPhase("request_parse", parseStarted, request.captureError != "")
-		if !cfg.CaptureFullPayload && request.captureError == captureErrorRequestParseLimitExceeded {
+		if !captureFullPayload && request.captureError == captureErrorRequestParseLimitExceeded {
 			c.Next()
+			persistFailureWithoutBody(c, request.captureError)
 			logCaptureDiagnostic(c, protocol, "skipped", captureErrorRequestParseLimitExceeded, "not_applicable", request.requestBytes, 0, 0)
 			return
 		}
 
-		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes, cfg.CaptureFullPayload)
-		writer := &captureWriter{ResponseWriter: c.Writer, collector: collector}
-		c.Writer = writer
+		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes, captureFullPayload)
+		if websocketFailuresOnly {
+			service.SetRelayAuditFrameObserver(c, func(frame []byte) {
+				if len(frame) > maxSSEFrameBytes {
+					collector.captureError = joinCaptureErrors(collector.captureError, "response_frame_too_large")
+					return
+				}
+				collector.streaming = true
+				collector.consumeSSEPayload(frame)
+			})
+		} else {
+			c.Writer = &captureWriter{ResponseWriter: c.Writer, collector: collector}
+		}
 
 		c.Next()
+		if websocketFailuresOnly {
+			if _, failed := service.FinalRelayFailure(c); !failed {
+				return
+			}
+		}
 
 		response := collector.FinalizeCapture()
 		status := response.status
@@ -106,11 +134,20 @@ func CaptureMiddleware() gin.HandlerFunc {
 		if c.Writer.Status() >= http.StatusBadRequest {
 			status = "failed"
 		}
+		if failure, ok := service.FinalRelayFailure(c); ok {
+			status = "failed"
+			if response.errorCode == "" || failure.Code == relaycommon.CyberPolicyCode {
+				response.errorCode = failure.Code
+			}
+		}
 		if (request.truncated || response.truncated) && status == "completed" {
 			status = "truncated"
 		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
-		if request.hasPersistableRequest() {
+		if request.hasPersistableRequest() || (status == "failed" && (websocketFailuresOnly || !request.isResponsesContinuation() || response.errorCode == relaycommon.CyberPolicyCode)) {
+			if request.body == "" && response.body == "" && captureError == "" {
+				captureError = "no_visible_text"
+			}
 			audit := persist(
 				c,
 				request.body,
@@ -159,6 +196,12 @@ func CaptureMiddleware() gin.HandlerFunc {
 			return
 		}
 		persistOrphanResponse(c, protocol, request, response, captureError, status)
+	}
+}
+
+func persistFailureWithoutBody(c *gin.Context, reason string) {
+	if failure, ok := service.FinalRelayFailure(c); ok {
+		persist(c, "", "", failure.Code, reason, true, false, false, "failed", c.Writer.Status())
 	}
 }
 

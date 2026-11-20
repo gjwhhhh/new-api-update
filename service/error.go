@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
@@ -114,6 +115,14 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 	}
 
 	if common.GetJsonType(errResponse.Error) == "object" {
+		// Recognize policy rejections even when the upstream omits the message.
+		var policyError struct {
+			Code string `json:"code"`
+		}
+		if common.Unmarshal(errResponse.Error, &policyError) == nil && policyError.Code == relaycommon.CyberPolicyCode {
+			return CyberPolicyError(resp.StatusCode)
+		}
+
 		// General format error (OpenAI, Anthropic, Gemini, etc.)
 		oaiError := errResponse.TryToOpenAIError()
 		if oaiError != nil {
@@ -135,6 +144,16 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
 	return
+}
+
+func CyberPolicyError(status int) *types.NewAPIError {
+	if status < 400 || status > 599 {
+		status = http.StatusForbidden
+	}
+	return types.WithOpenAIError(types.OpenAIError{
+		Type: "content_policy_violation", Code: relaycommon.CyberPolicyCode,
+		Message: "Request rejected by an upstream content policy",
+	}, status, types.ErrOptionWithSkipRetry())
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {

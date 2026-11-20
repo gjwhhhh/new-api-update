@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/tokenkit"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {
@@ -119,17 +120,26 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var usage = &dto.Usage{}
 	var lastStreamData string
 	var secondLastStreamData string // 保留倒数第二个stream data；部分兼容网关把完整usage放在倒数第二个事件
+	var cyberErr *types.NewAPIError
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
 
-	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+	helper.StreamScannerHandlerWithOptions(c, resp, info, helper.StreamScannerOptions{DeferDownstreamStart: true}, func(data string, sr *helper.StreamResult, committer *helper.StreamCommitter) {
 		if lastStreamData != "" {
 			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
 				sr.Error(err)
 			}
 		}
+		if gjson.Get(data, "error.code").Str == relaycommon.CyberPolicyCode && gjson.Valid(data) {
+			cyberErr = service.CyberPolicyError(resp.StatusCode)
+			info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", cyberErr.StatusCode)
+			service.SetRelayFinalError(c, cyberErr)
+			sr.Stop(cyberErr)
+			return
+		}
 		if len(data) > 0 {
+			committer.Commit()
 			if lastStreamData != "" {
 				secondLastStreamData = lastStreamData
 			}
@@ -144,6 +154,10 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	})
 
 	info.StreamStatus.RequireTerminal()
+	if cyberErr != nil && !c.Writer.Written() {
+		return nil, cyberErr
+	}
+	helper.SetEventStreamHeaders(c)
 
 	// 处理最后的响应
 	shouldSendLastResp := true
@@ -175,7 +189,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	}
 
-	if info.RelayFormat == types.RelayFormatOpenAI {
+	if info.RelayFormat == types.RelayFormatOpenAI && cyberErr == nil {
 		if shouldSendLastResp {
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 		}
@@ -192,6 +206,15 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
 	}
 
+	if cyberErr != nil {
+		c.Set(string(constant.ContextKeyStreamTerminalErrorSent), true)
+		if info.RelayFormat == types.RelayFormatClaude {
+			_ = helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: cyberErr.ToClaudeError()})
+		} else {
+			_ = helper.ObjectData(c, gin.H{"error": cyberErr.ToOpenAIError()})
+		}
+		return usage, nil
+	}
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
 	return usage, nil
@@ -279,8 +302,13 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
-	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil {
+		if oaiError.Code == relaycommon.CyberPolicyCode {
+			return nil, service.CyberPolicyError(resp.StatusCode)
+		}
+		if oaiError.Type != "" {
+			return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		}
 	}
 
 	info.ObserveResponseModel(simpleResponse.Model)

@@ -25,6 +25,9 @@ const (
 // how the transport ended. Adaptors mark it from the events they already parse.
 type ResponseOutcome string
 
+// CyberPolicyCode is a structured upstream rejection, not a transport error.
+const CyberPolicyCode = "cyber_policy"
+
 const (
 	ResponseOutcomeUnknown    ResponseOutcome = ""
 	ResponseOutcomeCompleted  ResponseOutcome = "completed"

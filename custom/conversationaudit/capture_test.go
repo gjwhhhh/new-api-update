@@ -9,10 +9,61 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCaptureCyberRejectionWithoutVisibleText(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("id", 1)
+		c.Set(common.RequestIdKey, "cyber-without-text")
+	})
+	engine.POST("/v1/responses", CaptureMiddleware(), func(c *gin.Context) {
+		service.SetRelayFinalError(c, service.CyberPolicyError(http.StatusForbidden))
+		c.Status(http.StatusForbidden)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":[{"type":"function_call_output","call_id":"test","output":"not user text"}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(httptest.NewRecorder(), request)
+	var audit ConversationAudit
+	require.NoError(t, db.Where("request_id = ?", "cyber-without-text").First(&audit).Error)
+	assert.Equal(t, "failed", audit.Status)
+	assert.Equal(t, "cyber_policy", audit.ErrorCode)
+	assert.Equal(t, "no_new_user_text", audit.CaptureError)
+	assert.Empty(t, audit.RequestCiphertext)
+	assert.Empty(t, audit.ResponseCiphertext)
+}
+
+func TestCaptureResponsesWSFailuresKeepsOnlyFailedSummary(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	engine := gin.New()
+	engine.POST("/v1/responses", func(c *gin.Context) {
+		c.Set("id", 1)
+		c.Set(common.RequestIdKey, c.GetHeader("X-Test-Request-ID"))
+	}, CaptureResponsesWSFailures(), func(c *gin.Context) {
+		service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.output_text.delta","delta":"visible reply"}`))
+		if c.GetString(common.RequestIdKey) == "failed-ws-turn" {
+			service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.failed","response":{"id":"failed-turn","error":{"code":"cyber_policy","message":"not visible"}}}`))
+			service.SetRelayFinalError(c, service.CyberPolicyError(http.StatusForbidden))
+		}
+	})
+	for _, id := range []string{"failed-ws-turn", "successful-ws-turn"} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"turn input"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Test-Request-ID", id)
+		engine.ServeHTTP(httptest.NewRecorder(), request)
+	}
+	var audits []ConversationAudit
+	require.NoError(t, db.Find(&audits).Error)
+	require.Len(t, audits, 1)
+	assert.Equal(t, "failed-ws-turn", audits[0].RequestID)
+	assert.Equal(t, "cyber_policy", audits[0].ErrorCode)
+	assert.Equal(t, "visible reply", decodedPayloadField(t, mustDecryptAuditContent(t, &audits[0], "response"), "assistant_text"))
+}
 
 func TestExtractLastMessageTextStoresOnlyCurrentUserInput(t *testing.T) {
 	raw := []byte(`{"messages":[{"role":"system","content":"private system"},{"role":"user","content":"old question"},{"role":"assistant","content":"old answer"},{"role":"user","content":[{"type":"text","text":"current question"},{"type":"image_url","image_url":{"url":"data:image/png;base64,secret"}}]}]}`)

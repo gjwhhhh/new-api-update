@@ -664,6 +664,32 @@ export function DetailsDialog(props: DetailsDialogProps) {
               mono
             />
           )}
+          {props.log.type === 5 &&
+            (props.log.error_code || other?.error_code) && (
+              <DetailRow
+                label={t('Error code')}
+                value={props.log.error_code || other?.error_code}
+                mono
+              />
+            )}
+          {props.log.type === 5 && other?.protocol && (
+            <DetailRow label={t('Protocol')} value={other.protocol} mono />
+          )}
+          {props.log.type === 5 && other?.status_code && (
+            <DetailRow
+              label={t('HTTP status')}
+              value={String(other.status_code)}
+              mono
+            />
+          )}
+          {props.log.type === 5 && props.isAdmin && props.log.request_id && (
+            <a
+              className='text-primary text-sm underline-offset-4 hover:underline'
+              href={`/conversation-audit/?request_id=${encodeURIComponent(props.log.request_id)}`}
+            >
+              {t('View conversation audit')}
+            </a>
+          )}
 
           {props.isAdmin && props.log.channel > 0 && (
             <DetailRow

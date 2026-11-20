@@ -32,8 +32,13 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil {
+		if oaiError.Code == relaycommon.CyberPolicyCode {
+			return nil, service.CyberPolicyError(resp.StatusCode)
+		}
+		if oaiError.Type != "" {
+			return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		}
 	}
 
 	info.ObserveResponseModel(responsesResponse.Model)
@@ -129,7 +134,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		if upstreamError := responsesStreamEventError(&streamResponse); upstreamError != nil {
+		if upstreamError := responsesStreamEventError(&streamResponse, data); upstreamError != nil {
 			accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
 			businessRejection := isResponsesStreamBusinessRejection(upstreamError)
 			if businessRejection {
@@ -140,6 +145,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				streamResponse.Type,
 				hasCommittedEvent || businessRejection,
 			)
+			if upstreamError.Code == relaycommon.CyberPolicyCode {
+				streamErr = service.CyberPolicyError(resp.StatusCode)
+				info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", streamErr.StatusCode)
+				service.SetRelayFinalError(c, streamErr)
+			}
 			if hasCommittedEvent {
 				c.Set(string(constant.ContextKeyStreamTerminalErrorSent), true)
 				terminalEvent := responsesStreamTerminalEvent(streamResponse.Type, streamErr)

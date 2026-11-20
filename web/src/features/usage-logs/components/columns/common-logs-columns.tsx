@@ -145,6 +145,13 @@ function buildTypeDetailSegments(
     return [{ text: t('Async task refund') }]
   }
 
+  if (
+    log.type === 5 &&
+    (log.error_code ?? other?.error_code) === 'cyber_policy'
+  ) {
+    return [{ text: t('Cyber policy rejection'), danger: true }]
+  }
+
   if (log.type !== 2) return []
 
   const isViolation = isViolationFeeLog(other)

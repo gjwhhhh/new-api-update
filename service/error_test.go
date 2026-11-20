@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,6 +120,38 @@ func TestRelayErrorHandlerKeepsOpenAIErrorMessage(t *testing.T) {
 
 	require.NotNil(t, newAPIError)
 	require.Equal(t, message, newAPIError.Error())
+}
+
+func TestRelayErrorHandlerMatchesCyberPolicyByExactCode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		code types.ErrorCode
+	}{
+		{"code only", `{"error":{"code":"cyber_policy"}}`, "cyber_policy"},
+		{"code with message", `{"error":{"code":"cyber_policy","message":"private detail"}}`, "cyber_policy"},
+		{"code with non-string message", `{"error":{"code":"cyber_policy","message":{}}}`, "cyber_policy"},
+		{"message only", `{"error":{"message":"cyber_policy"}}`, "unknown_error"},
+		{"status only", `{}`, types.ErrorCodeBadResponseStatusCode},
+		{"different code", `{"error":{"code":"CYBER_POLICY","message":"cyber_policy"}}`, "CYBER_POLICY"},
+		{"malformed body", `{"error":{"code":"cyber_policy"}`, types.ErrorCodeBadResponseStatusCode},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(strings.NewReader(tc.body)),
+			}
+			apiErr := RelayErrorHandler(t.Context(), resp, true)
+			require.NotNil(t, apiErr)
+			require.Equal(t, tc.code, apiErr.GetErrorCode())
+			assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
+			assert.Equal(t, tc.code == "cyber_policy", types.IsSkipRetryError(apiErr))
+			if tc.code == "cyber_policy" {
+				assert.Equal(t, "content_policy_violation", apiErr.ToOpenAIError().Type)
+				assert.Equal(t, "Request rejected by an upstream content policy", apiErr.Error())
+			}
+		})
+	}
 }
 
 func TestRelayErrorHandlerKeepsInvalidJSONBodyInDebugLog(t *testing.T) {

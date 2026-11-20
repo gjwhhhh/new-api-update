@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -69,7 +70,7 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	// Responses can report transient failures after an SSE connection has been
 	// established. Keep recognizing those failures for retry and diagnostics,
 	// but do not let a single stream termination automatically disable a channel.
-	if err.GetErrorCode() == types.ErrorCodeChannelUpstreamStreamTerminated {
+	if err.GetErrorCode() == types.ErrorCodeChannelUpstreamStreamTerminated || err.GetErrorCode() == relaycommon.CyberPolicyCode {
 		return false
 	}
 	if types.IsChannelError(err) {

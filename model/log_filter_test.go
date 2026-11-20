@@ -24,7 +24,7 @@ func TestGetAllLogsExcludesUsernames(t *testing.T) {
 		{Username: "root", ModelName: "gpt-4", CreatedAt: 102},
 	}).Error)
 
-	logs, total, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "", "alice, bob")
+	logs, total, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "", "alice, bob", "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, logs, 1)
@@ -39,7 +39,7 @@ func TestGetAllLogsExcludesUsernameLikePattern(t *testing.T) {
 		{Username: "bob", ModelName: "gpt-4", CreatedAt: 102},
 	}).Error)
 
-	logs, total, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "", "%al%")
+	logs, total, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "", "%al%", "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, logs, 1)

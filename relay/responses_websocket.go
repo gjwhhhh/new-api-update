@@ -208,6 +208,10 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		}
 	}()
 	request := s.request.Clone(s.ctx)
+	// Middleware and passthrough must read the same normalized request body.
+	if parseErr == nil {
+		message = create.Body
+	}
 	request.Body = io.NopCloser(bytes.NewReader(message))
 	request.ContentLength = int64(len(message))
 	request.Header.Set("Content-Type", "application/json")
@@ -215,11 +219,10 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		if parseErr != nil {
 			return newResponsesWSInvalidRequestError(parseErr)
 		}
-		c.Request.Body = io.NopCloser(bytes.NewReader(create.Body))
-		c.Request.ContentLength = int64(len(create.Body))
 		return s.runCall(c, state, create)
 	})
-	if apiErr != nil && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
+	if apiErr != nil && (apiErr.StatusCode == http.StatusUnauthorized ||
+		apiErr.StatusCode == http.StatusForbidden && apiErr.GetErrorCode() != service.CyberSessionBlockedCode) {
 		state.closeAfter = true
 	}
 }
@@ -416,6 +419,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						}
 						continue
 					}
+					if rejection.Error == nil {
+						// Some gateways use a flat terminal error frame.
+						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
+					}
+					service.ObserveRelayAuditFrame(c, incoming.body)
 					if accepted {
 						if rejection.Error != nil {
 							code := ""
@@ -431,10 +439,8 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						ConsumeResponsesQuota(c, info, accumulator.Finish())
 						return nil
 					}
-					if rejection.Error == nil {
-						// An error frame without an error object still describes the
-						// rejected request; keep the client-facing type stable.
-						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
+					if rejection.Error.Code == relaycommon.CyberPolicyCode {
+						return service.CyberPolicyError(rejection.Status)
 					}
 					rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
 					if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
@@ -452,10 +458,14 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						responseID = event.Response.ID
 					}
 				}
+				if event.Type == "response.output_text.delta" {
+					service.ObserveRelayAuditFrame(c, incoming.body)
+				}
 				accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
 			}
 			switch event.Type {
 			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
+				service.ObserveRelayAuditFrame(c, incoming.body)
 				if event.Response != nil {
 					s.lastResponseID = event.Response.ID
 				}

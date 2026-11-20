@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -31,8 +32,13 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if err := common.Unmarshal(body, &chatResp); err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	if oaiError := chatResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	if oaiError := chatResp.GetOpenAIError(); oaiError != nil {
+		if oaiError.Code == relaycommon.CyberPolicyCode {
+			return nil, service.CyberPolicyError(resp.StatusCode)
+		}
+		if oaiError.Type != "" {
+			return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		}
 	}
 
 	info.ObserveResponseModel(chatResp.Model)
@@ -102,8 +108,8 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 		return true
 	}
-	failResponsesStream := func(err error) bool {
-		failureResults, handled := state.FailResponsesStream("server_error", err.Error(), "")
+	failResponsesStream := func(code, message string) bool {
+		failureResults, handled := state.FailResponsesStream(code, message, "")
 		if !handled {
 			return false
 		}
@@ -128,8 +134,23 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 		var errorResp dto.OpenAITextResponse
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
-			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-				if failResponsesStream(fmt.Errorf("%s", oaiError.Message)) {
+			oaiError := errorResp.GetOpenAIError()
+			if oaiError != nil && oaiError.Code == relaycommon.CyberPolicyCode {
+				upstreamFailure = service.CyberPolicyError(resp.StatusCode)
+				info.StreamStatus.MarkFailed(relaycommon.CyberPolicyCode, "content_policy_violation", upstreamFailure.StatusCode)
+				service.SetRelayFinalError(c, upstreamFailure)
+				if !c.Writer.Written() {
+					c.Writer.Header().Del("Content-Type")
+					streamErr = upstreamFailure
+				} else {
+					c.Set(string(constant.ContextKeyStreamTerminalErrorSent), true)
+					failResponsesStream(relaycommon.CyberPolicyCode, upstreamFailure.Error())
+				}
+				sr.Stop(upstreamFailure)
+				return
+			}
+			if oaiError != nil && oaiError.Type != "" {
+				if failResponsesStream("server_error", oaiError.Message) {
 					// The client got response.failed, so the request is never
 					// retried; the recorded error keeps the stream failed.
 					upstreamFailure = types.WithOpenAIError(*oaiError, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
@@ -145,7 +166,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var chunk dto.ChatCompletionsStreamResponse
 		if err := common.UnmarshalJsonStr(data, &chunk); err != nil {
 			logger.LogError(c, "failed to unmarshal chat stream response: "+err.Error())
-			if failResponsesStream(err) {
+			if failResponsesStream("server_error", err.Error()) {
 				upstreamFailure = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 				sr.Stop(upstreamFailure)
 				return
@@ -158,7 +179,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		info.ObserveResponseModel(chunk.Model)
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &chunk)
 		if err != nil {
-			if failResponsesStream(err) {
+			if failResponsesStream("server_error", err.Error()) {
 				upstreamFailure = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 				sr.Stop(upstreamFailure)
 				return
@@ -196,13 +217,16 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		state.SetUsage(usage)
 	}
+	if upstreamFailure != nil && upstreamFailure.GetErrorCode() == relaycommon.CyberPolicyCode {
+		return usage, nil
+	}
 	if info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
 		return usage, nil
 	}
 
 	finalResults, err := service.FinalizeStreamResponse(c, info, state)
 	if err != nil {
-		if failResponsesStream(err) {
+		if failResponsesStream("server_error", err.Error()) {
 			return usage, streamErr
 		}
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)

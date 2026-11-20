@@ -56,6 +56,7 @@ export interface CommonLogFilters extends CommonFilters {
   excludeUsername?: string
   requestId?: string
   upstreamRequestId?: string
+  errorCode?: string
 }
 
 /**
@@ -116,6 +117,9 @@ export interface ToolSurchargeItem {
 }
 
 export interface LogOtherData {
+  error_code?: string
+  protocol?: string
+  status_code?: number
   admin_info?: {
     request_policy?: PolicyEvent[]
     is_multi_key?: boolean
@@ -433,6 +437,7 @@ export interface GetLogsParams {
   group?: string
   request_id?: string
   upstream_request_id?: string
+  error_code?: string
 }
 
 export interface GetLogsResponse {

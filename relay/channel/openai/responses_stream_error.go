@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -23,12 +24,12 @@ func isResponsesStreamPreCommitEvent(eventType string) bool {
 	}
 }
 
-func responsesStreamEventError(event *dto.ResponsesStreamResponse) *types.OpenAIError {
+func responsesStreamEventError(event *dto.ResponsesStreamResponse, raw ...string) *types.OpenAIError {
 	if event == nil {
 		return nil
 	}
 
-	if event.Type == "error" && (event.Code != "" || event.Message != "" || event.Param != "") {
+	if event.Type == "error" && event.Code != "" {
 		return &types.OpenAIError{Type: "upstream_error", Message: event.Message, Code: event.Code, Param: event.Param}
 	}
 
@@ -38,10 +39,26 @@ func responsesStreamEventError(event *dto.ResponsesStreamResponse) *types.OpenAI
 		return nil
 	}
 
+	var responseError *types.OpenAIError
 	if event.Response != nil {
-		if upstreamError := event.Response.GetOpenAIError(); upstreamError != nil && (upstreamError.Type != "" || upstreamError.Message != "" || upstreamError.Code != nil) {
-			return upstreamError
+		responseError = event.Response.GetOpenAIError()
+		if responseError != nil && responseError.Code != nil && responseError.Code != "" {
+			return responseError
 		}
+	}
+	if len(raw) != 0 {
+		var envelope struct {
+			Error *types.OpenAIError `json:"error"`
+		}
+		if common.UnmarshalJsonStr(raw[0], &envelope) == nil && envelope.Error != nil {
+			return envelope.Error
+		}
+	}
+	if responseError != nil && (responseError.Type != "" || responseError.Message != "") {
+		return responseError
+	}
+	if event.Type == "error" && (event.Message != "" || event.Param != "") {
+		return &types.OpenAIError{Type: "upstream_error", Message: event.Message, Param: event.Param}
 	}
 
 	return &types.OpenAIError{
@@ -70,6 +87,8 @@ func isResponsesStreamBusinessRejection(upstreamError *types.OpenAIError) bool {
 	}
 	code := strings.ToLower(fmt.Sprint(upstreamError.Code))
 	switch code {
+	case relaycommon.CyberPolicyCode:
+		return upstreamError.Code == relaycommon.CyberPolicyCode
 	case "context_length_exceeded", "invalid_request", "invalid_argument",
 		"sensitive_words_detected", "prompt_blocked", "content_filter",
 		"content_policy_violation", "safety":

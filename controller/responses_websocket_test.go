@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/alicebob/miniredis/v2"
@@ -273,6 +274,7 @@ func TestResponsesWSRequestRunnerSharesRedisSuccessLimitWithHTTP(t *testing.T) {
 }
 
 type responsesWSBillingTest struct {
+	redisServer  *miniredis.Miniredis
 	httpUpstream http.HandlerFunc
 	httpDone     chan struct{}
 	user         *model.User
@@ -360,6 +362,7 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 
 	fixture := &responsesWSBillingTest{user: user, token: token, done: make(chan struct{}), upstreamDone: make(chan struct{}), httpDone: make(chan struct{}, 1)}
 	redisServer := miniredis.RunT(t)
+	fixture.redisServer = redisServer
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	common.RDB, common.RedisEnabled = redisClient, true
 	t.Cleanup(func() { require.NoError(t, redisClient.Close()) })
@@ -402,12 +405,13 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 		require.NoError(t, model.DB.Delete(channel).Error)
 	})
 	engine := gin.New()
+	var clientClosed sync.Once
 	engine.GET("/v1/responses", middleware.TokenAuth(), func(c *gin.Context) {
-		defer close(fixture.done)
+		defer clientClosed.Do(func() { close(fixture.done) })
 		c.Set(common.RequestIdKey, "responses-ws-billing")
 		ResponsesWebSocket(c)
 	})
-	engine.POST("/v1/responses", middleware.TokenAuth(), middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
+	engine.POST("/v1/responses", middleware.BodyStorageCleanup(), middleware.TokenAuth(), service.RelayFailureLog(""), service.CyberSessionGuard, middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
 		defer func() { fixture.httpDone <- struct{}{} }()
 		c.Set(common.RequestIdKey, "responses-http-billing")
 		Relay(c, types.RelayFormatOpenAIResponses)
@@ -420,6 +424,159 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 	fixture.client = client
 	t.Cleanup(func() { fixture.closeAndWait(t) })
 	return fixture
+}
+
+func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
+	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
+	const otherSession = "0a1df426-f649-4f19-b33a-b790dd406fc8"
+	const rejected = `{"type":"response.failed","response":{"id":"rejected","status":"failed","error":{"code":"cyber_policy"}}}`
+	const completed = `{"type":"response.completed","response":{"id":"next","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`
+	for _, tc := range []struct{ name, mode, ttl string }{
+		{"off", "off", "30"}, {"shadow", "shadow", "30"}, {"temporary", "enforce", "30"}, {"permanent", "enforce", "0"}, {"redis unavailable", "enforce", "30"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(service.InitCyberSessionGuard)
+			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
+				for turn := 0; ; turn++ {
+					if _, _, err := ws.ReadMessage(); err != nil {
+						return
+					}
+					event := strings.Replace(completed, `"next"`, fmt.Sprintf(`"next-%d"`, turn), 1)
+					if turn == 0 {
+						event = rejected
+					}
+					if err := ws.WriteMessage(websocket.TextMessage, []byte(event)); err != nil {
+						return
+					}
+				}
+			}, completed)
+			t.Setenv("CYBER_SESSION_GUARD_MODE", tc.mode)
+			t.Setenv("CYBER_SESSION_GUARD_TOKEN_IDS", fmt.Sprint(fixture.token.Id))
+			t.Setenv("CYBER_SESSION_GUARD_TTL_SECONDS", tc.ttl)
+			service.InitCyberSessionGuard()
+			metricsBefore := service.CyberSessionGuardMetrics()
+			assert.Equal(t, tc.mode, metricsBefore["mode"])
+			if tc.name == "redis unavailable" {
+				fixture.redisServer.SetError("ERR simulated Redis outage")
+			}
+			wsTurn := func(cacheKey string) map[string]any {
+				body := fmt.Sprintf(`{"type":"response.create","model":"ws-billing","input":"test","prompt_cache_key":%q}`, cacheKey)
+				require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(body)))
+				return readResponsesWSTestEvent(t, fixture.client)
+			}
+			assert.Equal(t, "response.failed", wsTurn(session)["type"])
+			if tc.name == "redis unavailable" {
+				fixture.redisServer.SetError("")
+				assert.Equal(t, "response.completed", wsTurn(session)["type"])
+				return
+			}
+			active := tc.mode == "enforce"
+			next := wsTurn(session) // Admission of this round waits for the first round's middleware.
+			if !active {
+				assert.Equal(t, "response.completed", next["type"])
+				want := metricsBefore["would_block"].(uint64)
+				if tc.mode == "shadow" {
+					want++
+				}
+				assert.Equal(t, want, service.CyberSessionGuardMetrics()["would_block"])
+				return
+			}
+			assert.Equal(t, float64(http.StatusForbidden), next["status"])
+			require.IsType(t, map[string]any{}, next["error"])
+			assert.Equal(t, "cyber_session_blocked", next["error"].(map[string]any)["code"])
+			req, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":"ws-billing","input":"test","prompt_cache_key":%q}`, session)))
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+			require.NoError(t, err)
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+			assert.Contains(t, string(body), "cyber_session_blocked")
+			if tc.ttl == "0" {
+				assert.Empty(t, resp.Header.Get("Retry-After"))
+			} else {
+				assert.NotEmpty(t, resp.Header.Get("Retry-After"))
+			}
+			assert.Equal(t, "response.completed", wsTurn(otherSession)["type"])
+			fixture.redisServer.FastForward(time.Hour)
+			if tc.ttl == "0" {
+				assert.Equal(t, float64(http.StatusForbidden), wsTurn(session)["status"])
+				keys, err := common.RDB.Keys(t.Context(), "new-api:cyber-session:v1:enforce:*").Result()
+				require.NoError(t, err)
+				require.Len(t, keys, 1)
+				assert.NotContains(t, keys[0], session)
+				require.NoError(t, common.RDB.Del(t.Context(), keys[0]).Err())
+			}
+			assert.Equal(t, "response.completed", wsTurn(session)["type"])
+			fixture.closeAndWait(t)
+			failures, _, err := model.GetUserLogs(fixture.user.Id, model.LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "", "cyber_session_blocked")
+			require.NoError(t, err)
+			require.NotEmpty(t, failures)
+			assert.NotContains(t, failures[0].Other, session)
+			assert.NotContains(t, failures[0].Other, "session_fingerprint", "non-admin usage logs must not expose the guard fingerprint")
+		})
+	}
+}
+
+func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
+	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
+	const delta = `{"type":"response.output_text.delta","delta":"partial output"}`
+	const rejected = `{"type":"response.failed","response":{"id":"rejected","status":"failed","error":{"type":"invalid_request","code":"cyber_policy"}}}`
+	t.Cleanup(service.InitCyberSessionGuard)
+	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {
+		t.Error("the blocked session must not reach the WebSocket upstream")
+	}, delta, rejected)
+	fixture.closeAndWait(t)
+	t.Setenv("CYBER_SESSION_GUARD_MODE", "enforce")
+	t.Setenv("CYBER_SESSION_GUARD_TOKEN_IDS", fmt.Sprint(fixture.token.Id))
+	t.Setenv("CYBER_SESSION_GUARD_TTL_SECONDS", "600")
+	service.InitCyberSessionGuard()
+
+	httpClient := &http.Client{Timeout: 3 * time.Second}
+	post := func() (int, string) {
+		t.Helper()
+		payload := fmt.Sprintf(`{"model":"ws-billing","input":"test","stream":true,"prompt_cache_key":%q}`, session)
+		req, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(payload))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+		req.Header.Set("Content-Type", "application/json")
+		response, err := httpClient.Do(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+		return response.StatusCode, string(body)
+	}
+	status, body := post()
+	require.Equal(t, http.StatusOK, status)
+	assert.Contains(t, body, "partial output")
+	assert.Contains(t, body, `"code":"cyber_policy"`)
+	assert.NotContains(t, body, "[DONE]")
+	<-fixture.httpDone
+	logs, total, err := model.GetUserLogs(fixture.user.Id, model.LogTypeError, 0, 0, "", "", 0, 10, "", "responses-http-billing", "", "cyber_policy")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, logs, 1)
+	assert.Contains(t, logs[0].Other, `"protocol":"sse"`)
+
+	status, body = post()
+	require.Equal(t, http.StatusForbidden, status)
+	assert.Contains(t, body, `"code":"cyber_session_blocked"`)
+	assert.Empty(t, fixture.httpDone, "the blocked request must not enter the HTTP relay")
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(fixture.gatewayURL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer sk-" + fixture.token.Key}})
+	require.NoError(t, err)
+	defer client.Close()
+	payload := fmt.Sprintf(`{"type":"response.create","response":{"model":"ws-billing","input":"test","prompt_cache_key":%q}}`, session)
+	require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(payload)))
+	rejection := readResponsesWSTestEvent(t, client)
+	require.Equal(t, float64(http.StatusForbidden), rejection["status"])
+	require.IsType(t, map[string]any{}, rejection["error"])
+	assert.Equal(t, "cyber_session_blocked", rejection["error"].(map[string]any)["code"])
+	assert.Zero(t, fixture.connections.Load())
 }
 
 func TestResponsesInterruptedStreamHealth(t *testing.T) {
@@ -892,10 +1049,13 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 			{name: "failed-estimated-output", expression: `tier("output", c * 2000)`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null}}`, delta: true, failed: true},
 			{name: "error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`, sseTerminal: `{"type":"error","code":"server_error","message":"Internal server error","param":null,"sequence_number":2}`, failed: true},
 			{name: "business-error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Input too long"}}`, sseTerminal: `{"type":"error","code":"context_length_exceeded","message":"Input too long","param":null,"sequence_number":2}`, failed: true, ignored: true},
+			{name: "cyber-before-output", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","error":{"code":"cyber_policy","message":"sensitive upstream detail"}}}`, failed: true, ignored: true},
+			{name: "cyber-after-output", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","error":{"code":"cyber_policy"}}}`, sseTerminal: `{"type":"error","error":{"code":"cyber_policy"}}`, delta: true, failed: true, ignored: true},
 			{name: "completed-at-output-limit", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.incomplete","response":{"id":"first","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1000,"output_tokens":1,"total_tokens":1001}}}`},
 			{name: "completed-zero-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.completed","response":{"id":"first","status":"completed","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`},
 		} {
 			t.Run(transport+"/"+tc.name, func(t *testing.T) {
+				isCyber := strings.HasPrefix(tc.name, "cyber-")
 				events := []string{`{"type":"response.created","response":{"id":"first","status":"in_progress"}}`}
 				if tc.delta {
 					events = append(events, `{"type":"response.output_text.delta","delta":"hello"}`)
@@ -943,12 +1103,21 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, response.Body.Close())
 					if tc.failed && !tc.delta {
-						assert.Equal(t, http.StatusBadGateway, response.StatusCode)
-						assert.Contains(t, string(body), string(types.ErrorCodeChannelUpstreamStreamTerminated))
+						if isCyber {
+							assert.Equal(t, http.StatusForbidden, response.StatusCode)
+							assert.Contains(t, string(body), "cyber_policy")
+						} else {
+							assert.Equal(t, http.StatusBadGateway, response.StatusCode)
+							assert.Contains(t, string(body), string(types.ErrorCodeChannelUpstreamStreamTerminated))
+						}
 					} else {
 						assert.Equal(t, http.StatusOK, response.StatusCode)
 						if tc.failed {
-							assert.Contains(t, string(body), "event: response.failed")
+							if isCyber {
+								assert.Contains(t, string(body), "cyber_policy")
+							} else {
+								assert.Contains(t, string(body), "event: response.failed")
+							}
 						} else {
 							assert.Contains(t, string(body), terminal)
 						}
@@ -979,6 +1148,15 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 				assert.Equal(t, "planner", limited["stream_id"])
 				assert.Equal(t, "limited", limited["event_id"])
 				fixture.closeAndWait(t)
+				if isCyber {
+					failures, total, err := model.GetUserLogs(fixture.user.Id, model.LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "", "cyber_policy")
+					require.NoError(t, err)
+					require.Len(t, failures, 1)
+					assert.EqualValues(t, 1, total)
+					assert.Equal(t, fixture.channel.Id, failures[0].ChannelId)
+					assert.NotEmpty(t, failures[0].RequestId)
+					assert.NotContains(t, failures[0].Content+failures[0].Other, "sensitive upstream detail")
+				}
 				assertResponsesWSAccounting(t, fixture, quotas)
 				var logs []model.Log
 				require.NoError(t, model.LOG_DB.Where("token_id = ? AND type = ?", fixture.token.Id, model.LogTypeConsume).Order("id").Find(&logs).Error)
@@ -1022,13 +1200,21 @@ func TestResponsesHTTPHealthCountsFinalResult(t *testing.T) {
 		ignored               bool
 	}{
 		{"business rejection", "context_length_exceeded", 400, 1, false, true},
+		{"cyber rejection", "cyber_policy", 403, 1, false, true},
+		{"ordinary forbidden", "permission_denied", 403, 1, false, false},
 		{"credentials rejected as 400", "invalid_api_key", 400, 1, false, false},
 		{"retry succeeds", "server_error", 500, 2, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			previousErrorLog := constant.ErrorLogEnabled
+			constant.ErrorLogEnabled = true
+			t.Cleanup(func() { constant.ErrorLogEnabled = previousErrorLog })
 			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
 			oldRetries := common.RetryTimes
 			common.RetryTimes = 1
+			if tc.code == "permission_denied" {
+				common.RetryTimes = 0
+			}
 			t.Cleanup(func() { common.RetryTimes = oldRetries })
 			var attempts atomic.Int64
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1057,6 +1243,15 @@ func TestResponsesHTTPHealthCountsFinalResult(t *testing.T) {
 				t.Fatal("HTTP request did not finish")
 			}
 			fixture.closeAndWait(t)
+			failures, total, err := model.GetUserLogs(fixture.user.Id, model.LogTypeError, 0, 0, "", "", 0, 10, "", "", "", "")
+			require.NoError(t, err)
+			if tc.success {
+				assert.Zero(t, total, "a recovered attempt is not a final failure")
+			} else {
+				require.Len(t, failures, 1)
+				assert.EqualValues(t, 1, total)
+				assert.Equal(t, tc.code, failures[0].ErrorCode)
+			}
 			assert.Equal(t, int64(tc.attempts), attempts.Load())
 			if !tc.success {
 				assert.Equal(t, tc.firstStatus, response.StatusCode)

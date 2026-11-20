@@ -97,6 +97,7 @@ function buildSearchSourceKey(values: {
   excludeUsername?: unknown
   requestId?: unknown
   upstreamRequestId?: unknown
+  errorCode?: unknown
   type?: unknown
 }) {
   return [
@@ -110,6 +111,7 @@ function buildSearchSourceKey(values: {
     values.excludeUsername,
     values.requestId,
     values.upstreamRequestId,
+    values.errorCode,
     Array.isArray(values.type) ? values.type.join(',') : values.type,
   ]
     .map((value) => String(value ?? ''))
@@ -164,6 +166,7 @@ export function CommonLogsFilterBar<TData>(
       excludeUsername: searchParams.excludeUsername,
       requestId: searchParams.requestId,
       upstreamRequestId: searchParams.upstreamRequestId,
+      errorCode: searchParams.errorCode,
       type: searchParams.type,
     }
     const filters: CommonLogFilters = {
@@ -179,6 +182,7 @@ export function CommonLogsFilterBar<TData>(
       excludeUsername: searchParams.excludeUsername || undefined,
       requestId: searchParams.requestId || undefined,
       upstreamRequestId: searchParams.upstreamRequestId || undefined,
+      errorCode: searchParams.errorCode || undefined,
     }
     return {
       sourceKey: buildSearchSourceKey(sourceValues),
@@ -196,6 +200,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.excludeUsername,
     searchParams.requestId,
     searchParams.upstreamRequestId,
+    searchParams.errorCode,
     searchParams.type,
   ])
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
@@ -284,7 +289,8 @@ export function CommonLogsFilterBar<TData>(
     !!filters.excludeUsername ||
     !!filters.channel ||
     !!filters.requestId ||
-    !!filters.upstreamRequestId
+    !!filters.upstreamRequestId ||
+    !!filters.errorCode
 
   const hasTypeFilter = logType !== LOG_TYPE_ALL_VALUE
   const hasAdditionalFilters =
@@ -297,6 +303,7 @@ export function CommonLogsFilterBar<TData>(
     isAdmin ? filters.channel : undefined,
     filters.requestId,
     filters.upstreamRequestId,
+    filters.errorCode,
   ].filter(Boolean).length
   const sensitiveInputClass = sensitiveVisible
     ? undefined
@@ -511,6 +518,16 @@ export function CommonLogsFilterBar<TData>(
           placeholder={t('Upstream Request ID')}
           value={filters.upstreamRequestId || ''}
           onChange={(e) => handleChange('upstreamRequestId', e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+      </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          aria-label={t('Error code')}
+          placeholder={t('Error code')}
+          value={filters.errorCode || ''}
+          maxLength={96}
+          onChange={(e) => handleChange('errorCode', e.target.value)}
           onKeyDown={handleKeyDown}
         />
       </LogsFilterField>

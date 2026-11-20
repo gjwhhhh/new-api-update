@@ -395,7 +395,7 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 	if len(identities) > 0 {
 		identity = identities[0]
 	}
-	if !cfg.Enabled || (requestBody == "" && responseBody == "" && identity.parentResponseID == "") {
+	if !cfg.Enabled || (requestBody == "" && responseBody == "" && identity.parentResponseID == "" && status != "failed") {
 		return nil
 	}
 	requestID := c.GetString(common.RequestIdKey)

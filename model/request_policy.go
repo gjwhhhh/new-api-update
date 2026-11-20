@@ -57,6 +57,7 @@ func requestPolicyDefaultOptions() map[string]string {
 	defaults["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	defaults["SensitiveWords"] = setting.SensitiveWordsToString()
 	defaults["PromptTextFilterTarget"] = `{"scope":"all"}`
+	defaults["PromptTextFilterExempt"] = `{}`
 	defaults["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	defaults["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	return defaults

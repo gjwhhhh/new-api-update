@@ -40,7 +40,7 @@ export type HealthSettings = {
 export type FilteringSettings = Pick<
   SecuritySettings,
   'CheckSensitiveEnabled' | 'CheckSensitiveOnPromptEnabled' | 'SensitiveWords'
-> & { PromptTextFilterTarget: string }
+> & { PromptTextFilterTarget: string; PromptTextFilterExempt: string }
 export type RequestPolicySettings = RetrySettings &
   HealthSettings &
   FilteringSettings &
@@ -70,4 +70,5 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   CheckSensitiveOnPromptEnabled: false,
   SensitiveWords: '',
   PromptTextFilterTarget: '{"scope":"all"}',
+  PromptTextFilterExempt: '{}',
 }

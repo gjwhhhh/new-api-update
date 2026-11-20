@@ -341,6 +341,58 @@ describe('request policy settings', () => {
     expect(api.patch).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['{"channel_ids":[79]}', 'Primary (#79)', 'Exempt channels'],
+    ['{"token_ids":[82]}', 'Shared key (#82)', 'Exempt API keys'],
+  ])(
+    'reopens and clears a single-dimension whitelist %s',
+    async (value, label, selector) => {
+      settings.PromptTextFilterExempt = value
+      const user = userEvent.setup()
+      await renderPolicies('/system-settings/request-policies/filtering')
+      expect(await screen.findByText(label)).toBeVisible()
+      await user.click(screen.getByRole('combobox', { name: selector }))
+      await user.keyboard('{Backspace}{Escape}')
+      expect(screen.queryByText(label)).not.toBeInTheDocument()
+      await user.click(
+        screen.getByRole('button', { name: 'Save sensitive words' })
+      )
+      await waitFor(() =>
+        expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+          '/api/option/request_policy',
+          {
+            options: { PromptTextFilterExempt: '{}' },
+          }
+        )
+      )
+    }
+  )
+
+  it('adds an exemption dimension without dropping the saved channel', async () => {
+    settings.PromptTextFilterExempt = '{"channel_ids":[79]}'
+    const user = userEvent.setup()
+    await renderPolicies('/system-settings/request-policies/filtering')
+    expect(await screen.findByText('Primary (#79)')).toBeVisible()
+    await user.click(screen.getByRole('combobox', { name: 'Exempt API keys' }))
+    await user.click(
+      await screen.findByRole('option', { name: 'Shared key (#82)' })
+    )
+    await user.keyboard('{Escape}')
+    await user.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            PromptTextFilterExempt: '{"channel_ids":[79],"token_ids":[82]}',
+          },
+        }
+      )
+    )
+  })
+
   it('searches and saves multiple channels and a token as one scoped policy', async () => {
     const user = userEvent.setup()
     await renderPolicies('/system-settings/request-policies/filtering')

@@ -33,6 +33,7 @@ const POLICY_SECTIONS = [
           CheckSensitiveOnPromptEnabled: settings.CheckSensitiveOnPromptEnabled,
           SensitiveWords: settings.SensitiveWords,
           PromptTextFilterTarget: settings.PromptTextFilterTarget,
+          PromptTextFilterExempt: settings.PromptTextFilterExempt,
         }}
       />
     ),

@@ -18,6 +18,12 @@ type PromptTextFilterPolicy struct {
 	Enabled  bool
 	Keywords []string
 	Target   PromptTextFilterTarget
+	Exempt   PromptTextFilterExempt
+}
+
+// Exempted reports whether the channel or token is exempt from prompt filtering.
+func (p *PromptTextFilterPolicy) Exempted(channelID, tokenID int) bool {
+	return p != nil && p.Exempt.Matches(channelID, tokenID)
 }
 
 var promptTextFilterPolicy atomic.Pointer[PromptTextFilterPolicy]
@@ -38,7 +44,7 @@ func CurrentPromptTextFilterPolicy() *PromptTextFilterPolicy {
 
 func isPromptTextFilterOption(key string) bool {
 	switch key {
-	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "PromptTextFilterTarget":
+	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "PromptTextFilterTarget", "PromptTextFilterExempt":
 		return true
 	default:
 		return false
@@ -65,12 +71,37 @@ func buildPromptTextFilterPolicy(options map[string]string) (*PromptTextFilterPo
 	if err := policy.Target.validate(); err != nil {
 		return nil, err
 	}
+	if err := common.UnmarshalJsonStr(value("PromptTextFilterExempt"), &policy.Exempt); err != nil {
+		return nil, fmt.Errorf("invalid prompt text filter exempt list: %w", err)
+	}
+	if err := policy.Exempt.validate(); err != nil {
+		return nil, err
+	}
 	for word := range strings.SplitSeq(value("SensitiveWords"), "\n") {
 		if word = strings.TrimSpace(word); word != "" {
 			policy.Keywords = append(policy.Keywords, word)
 		}
 	}
 	return policy, nil
+}
+
+type PromptTextFilterExempt struct {
+	ChannelIDs []int `json:"channel_ids,omitempty"`
+	TokenIDs   []int `json:"token_ids,omitempty"`
+}
+
+func (exempt PromptTextFilterExempt) validate() error {
+	for _, ids := range [][]int{exempt.ChannelIDs, exempt.TokenIDs} {
+		if len(ids) > MaxPromptFilterTargets || slices.ContainsFunc(ids, func(id int) bool { return id <= 0 }) {
+			return fmt.Errorf("prompt text filter exempt IDs must be positive and number at most %d per dimension", MaxPromptFilterTargets)
+		}
+	}
+	return nil
+}
+
+func (exempt PromptTextFilterExempt) Matches(channelID, tokenID int) bool {
+	return (channelID > 0 && slices.Contains(exempt.ChannelIDs, channelID)) ||
+		(tokenID > 0 && slices.Contains(exempt.TokenIDs, tokenID))
 }
 
 type PromptTextFilterTarget struct {

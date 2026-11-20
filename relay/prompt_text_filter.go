@@ -25,8 +25,9 @@ func NewPromptTextFilter(request dto.Request) *PromptTextFilter {
 
 func (f *PromptTextFilter) Check(c *gin.Context, channelID int) *types.NewAPIError {
 	policy := f.policy
+	tokenID := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
 	if f.checked || f.request == nil || !policy.Enabled || len(policy.Keywords) == 0 ||
-		!policy.Target.Matches(channelID, common.GetContextKeyInt(c, constant.ContextKeyTokenId)) {
+		!policy.Target.Matches(channelID, tokenID) || policy.Exempted(channelID, tokenID) {
 		return nil
 	}
 	// Only an allowed request can retry; a clean scan need not be repeated.

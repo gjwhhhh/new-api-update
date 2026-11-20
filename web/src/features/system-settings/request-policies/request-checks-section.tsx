@@ -90,6 +90,38 @@ function parseFilterTarget(raw: string) {
   }
 }
 
+const exemptSchema = z.object({
+  channel_ids: targetIDs,
+  token_ids: targetIDs,
+})
+const savedExemptSchema = exemptSchema.extend({
+  channel_ids: savedIDs,
+  token_ids: savedIDs,
+})
+
+function parseFilterExempt(raw: string) {
+  try {
+    return savedExemptSchema.parse(JSON.parse(raw || '{}'))
+  } catch {
+    return { channel_ids: [] as number[], token_ids: [] as number[] }
+  }
+}
+
+function serializeFilterExempt(exempt: {
+  channel_ids: number[]
+  token_ids: number[]
+}) {
+  const channel_ids = [...new Set(exempt.channel_ids)].toSorted((a, b) => a - b)
+  const token_ids = [...new Set(exempt.token_ids)].toSorted((a, b) => a - b)
+  if (!channel_ids.length && !token_ids.length) {
+    return '{}'
+  }
+  return JSON.stringify({
+    channel_ids: channel_ids.length ? channel_ids : undefined,
+    token_ids: token_ids.length ? token_ids : undefined,
+  })
+}
+
 const sensitiveSchema = z.object({
   CheckSensitiveEnabled: z.boolean(),
   CheckSensitiveOnPromptEnabled: z.boolean(),
@@ -120,6 +152,7 @@ const sensitiveSchema = z.object({
         }
       }
     }),
+  exempt: exemptSchema,
 })
 
 type SensitiveFormValues = z.infer<typeof sensitiveSchema>
@@ -259,6 +292,7 @@ export function RequestChecksSection({
     CheckSensitiveOnPromptEnabled,
     SensitiveWords,
     PromptTextFilterTarget,
+    PromptTextFilterExempt,
   } = defaultValues
   const initialValues = useMemo(
     () => ({
@@ -266,12 +300,14 @@ export function RequestChecksSection({
       CheckSensitiveOnPromptEnabled,
       SensitiveWords,
       target: parseFilterTarget(PromptTextFilterTarget),
+      exempt: parseFilterExempt(PromptTextFilterExempt),
     }),
     [
       CheckSensitiveEnabled,
       CheckSensitiveOnPromptEnabled,
       SensitiveWords,
       PromptTextFilterTarget,
+      PromptTextFilterExempt,
     ]
   )
   const form = useForm<SensitiveFormValues>({
@@ -288,7 +324,7 @@ export function RequestChecksSection({
     form.reset(initialValues)
   }, [initialValues, form])
 
-  const onSubmit = async ({ target, ...values }: SensitiveFormValues) => {
+  const onSubmit = async ({ target, exempt, ...values }: SensitiveFormValues) => {
     const options = Object.fromEntries(
       Object.entries(values)
         .filter(
@@ -303,6 +339,10 @@ export function RequestChecksSection({
       serializedTarget !== serializeFilterTarget(initialValues.target)
     ) {
       options.PromptTextFilterTarget = serializedTarget
+    }
+    const serializedExempt = serializeFilterExempt(exempt)
+    if (serializedExempt !== serializeFilterExempt(initialValues.exempt)) {
+      options.PromptTextFilterExempt = serializedExempt
     }
     if (Object.keys(options).length) {
       // useSavePolicy handles server errors and refreshes the settings cache.
@@ -444,6 +484,49 @@ export function RequestChecksSection({
                 )}
               />
             ))}
+
+          <div className='grid gap-2'>
+            <h4 className='text-sm font-medium'>{t('Exemption whitelist')}</h4>
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Selected channels or API keys skip prompt text filtering even when they are inside the filter scope. Matching either list is enough.'
+              )}
+            </p>
+          </div>
+          <FormField
+            control={form.control}
+            name='exempt.channel_ids'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Exempt channels')}</FormLabel>
+                <FormControl>
+                  <FilterTargetSelect
+                    kind='channel'
+                    ids={field.value}
+                    onChange={field.onChange}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='exempt.token_ids'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Exempt API keys')}</FormLabel>
+                <FormControl>
+                  <FilterTargetSelect
+                    kind='token'
+                    ids={field.value}
+                    onChange={field.onChange}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
           <FormField
             control={form.control}

@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -142,6 +143,24 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			loadOptionsFromDatabase()
 			assert.Equal(t, target, RequestPolicyOptions()[optionKey])
 			assert.Equal(t, policy.Target, CurrentPromptTextFilterPolicy().Target)
+
+			const exemptKey = "PromptTextFilterExempt"
+			const whitelist = `{"channel_ids":[79],"token_ids":[82]}`
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{exemptKey: whitelist}))
+			exemptPolicy := CurrentPromptTextFilterPolicy()
+			assert.True(t, exemptPolicy.Exempted(79, 83))
+			assert.True(t, exemptPolicy.Exempted(80, 82))
+			assert.False(t, exemptPolicy.Exempted(80, 83))
+			overLimit := `{"token_ids":[` + strings.Repeat("1,", MaxPromptFilterTargets) + `1]}`
+			for _, invalid := range []string{`{`, `{"token_ids":[0]}`, overLimit} {
+				require.Error(t, UpdateRequestPolicyOptions(map[string]string{exemptKey: invalid}))
+				assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			}
+			loadOptionsFromDatabase()
+			assert.Equal(t, whitelist, RequestPolicyOptions()[exemptKey])
+			assert.True(t, CurrentPromptTextFilterPolicy().Exempted(80, 82))
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{exemptKey: `{}`}))
+			assert.False(t, CurrentPromptTextFilterPolicy().Exempted(79, 82))
 
 			const affinityKey = "channel_affinity_setting.rules"
 			const invalidRules = `[{"name":"legacy rule","model_regex":["["]}]`

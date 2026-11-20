@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,7 +107,7 @@ func TestResponsesContinuationAppendsToSameUserTurn(t *testing.T) {
 	require.NoError(t, db.Where("id = ?", rootAudit.ID).First(&audit).Error)
 	assert.Equal(t, len(rootResponse)+len(continuationResponse), audit.ResponseLength)
 
-	segments, err := decryptAuditResponseSegments(&audit)
+	segments, _, err := decryptAuditResponseSegments(db, &audit, "", time.Now().Unix())
 	require.NoError(t, err)
 	require.Equal(t, []string{continuationResponse}, segments)
 	assert.Equal(t, "final visible part", decodedPayloadField(t, segments[0], "assistant_text"))
@@ -136,9 +137,116 @@ func TestResponsesContinuationAppendsToSameUserTurn(t *testing.T) {
 		"completed",
 		http.StatusOK,
 	)
-	segments, err = decryptAuditResponseSegments(&audit)
+	segments, _, err = decryptAuditResponseSegments(db, &audit, "", time.Now().Unix())
 	require.NoError(t, err)
 	assert.Len(t, segments, 1)
+}
+
+func TestAuditDetailResolvesLoggedRequest(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	oldRedis := common.RedisEnabled
+	oldLogDB, oldLogType := model.LOG_DB, common.LogDatabaseType()
+	common.RedisEnabled = false
+	model.LOG_DB = db
+	common.SetLogDatabaseType(common.DatabaseType(db.Dialector.Name()))
+	t.Cleanup(func() {
+		common.RedisEnabled = oldRedis
+		model.LOG_DB = oldLogDB
+		common.SetLogDatabaseType(oldLogType)
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}))
+	user := model.User{Username: "test-user", AffCode: "td1", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	admin := model.User{Username: "test-admin", AffCode: "td2", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&admin).Error)
+	userSession, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "fixture")
+	require.NoError(t, err)
+	adminSession, err := service.CreateLoginSession(admin.Id, "password", "127.0.0.1", "fixture")
+	require.NoError(t, err)
+
+	engine := gin.New()
+	registerRoutes(engine.Group("/api"))
+	lookup := func(id, token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/custom/conversation-audits/"+id, nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		result := httptest.NewRecorder()
+		engine.ServeHTTP(result, req)
+		return result
+	}
+
+	const pendingID = "pending-request"
+	const rootID = "root-request"
+	rootRequest := `{"schema_version":2,"user_input":"private question"}`
+	rootResponse := `{"schema_version":2,"assistant_text":"root reply"}`
+	pendingResponse := `{"schema_version":2,"assistant_text":"continuation reply"}`
+	pending := persist(newResponseTurnContext(pendingID, user.Id), "", pendingResponse, "server_error", "pending_response_continuation", false, true, false, "failed", http.StatusOK, responseIdentity{protocol: protocolOpenAIResponses, responseID: "resp_pending", parentResponseID: "resp_root"})
+	require.NotNil(t, pending)
+	pendingDetail := lookup(pendingID, adminSession.AccessToken)
+	require.Equal(t, http.StatusOK, pendingDetail.Code, pendingDetail.Body.String())
+	assert.Contains(t, pendingDetail.Body.String(), "continuation reply")
+	assert.Contains(t, pendingDetail.Body.String(), "pending_response_continuation")
+	assert.NotContains(t, pendingDetail.Body.String(), "matched_segment")
+	root := persist(newResponseTurnContext(rootID, user.Id), rootRequest, rootResponse, "", "", false, false, false, "completed", http.StatusOK, responseIdentity{protocol: protocolOpenAIResponses, responseID: "resp_root"})
+	require.NotNil(t, root)
+	reconcileResponseContinuations()
+	require.Equal(t, continuationAppended, appendResponseContinuation(newResponseTurnContext("tool-only", user.Id), protocolOpenAIResponses, "resp_pending", "", "", "", "resp_tool", false, "completed", http.StatusOK))
+
+	for _, tc := range []struct {
+		id    string
+		match *auditSegmentMatch
+	}{
+		{rootID, nil},
+		{pendingID, &auditSegmentMatch{ResponseIndex: 0, Truncated: true}},
+		{"tool-only", &auditSegmentMatch{ResponseIndex: -1}},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			result := lookup(tc.id, adminSession.AccessToken)
+			require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+			assert.Contains(t, result.Header().Get("Cache-Control"), "no-store")
+			var payload struct {
+				Data struct {
+					Audit    ConversationAudit  `json:"audit"`
+					Request  string             `json:"request"`
+					Response string             `json:"response"`
+					Segments []string           `json:"response_segments"`
+					Match    *auditSegmentMatch `json:"matched_segment"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(result.Body.Bytes(), &payload))
+			assert.Equal(t, rootID, payload.Data.Audit.RequestID)
+			assert.Equal(t, rootRequest, payload.Data.Request)
+			assert.Equal(t, rootResponse, payload.Data.Response)
+			assert.Equal(t, []string{pendingResponse}, payload.Data.Segments)
+			assert.Equal(t, tc.match, payload.Data.Match)
+		})
+	}
+	denied := lookup(pendingID, userSession.AccessToken)
+	assert.Equal(t, http.StatusForbidden, denied.Code)
+	assert.NotContains(t, denied.Body.String(), "continuation reply")
+	assert.Equal(t, http.StatusUnauthorized, lookup(pendingID, "").Code)
+	assert.Equal(t, http.StatusNotFound, lookup("unknown-request", adminSession.AccessToken).Code)
+	var viewEvents []model.AuditLog
+	require.NoError(t, db.Where("action = ?", "conversation_audit.view").Find(&viewEvents).Error)
+	require.Len(t, viewEvents, 4)
+	var viewedRequests []string
+	for _, event := range viewEvents {
+		assert.Equal(t, admin.Id, event.UserId)
+		require.NotNil(t, event.Other.Op)
+		encoded, err := common.Marshal(event.Other.Op.Params["request_id"])
+		require.NoError(t, err)
+		var viewedRequest string
+		require.NoError(t, common.Unmarshal(encoded, &viewedRequest))
+		viewedRequests = append(viewedRequests, viewedRequest)
+	}
+	assert.ElementsMatch(t, []string{rootID, pendingID, pendingID, "tool-only"}, viewedRequests)
+
+	require.NoError(t, db.Model(root).Update("key_version", "unavailable").Error)
+	assert.Equal(t, http.StatusServiceUnavailable, lookup(pendingID, adminSession.AccessToken).Code)
+	require.NoError(t, db.Model(root).Update("expires_at", time.Now().Unix()-1).Error)
+	assert.Equal(t, http.StatusNotFound, lookup(rootID, adminSession.AccessToken).Code)
+	assert.Equal(t, http.StatusNotFound, lookup(pendingID, adminSession.AccessToken).Code)
 }
 
 func TestCaptureMiddlewareAppendsResponsesToolContinuationToRootTurn(t *testing.T) {
@@ -183,7 +291,7 @@ func TestCaptureMiddlewareAppendsResponsesToolContinuationToRootTurn(t *testing.
 	require.NoError(t, db.Order("id ASC").Find(&audits).Error)
 	require.Len(t, audits, 1)
 	assert.Equal(t, "xxxxx", decodedPayloadField(t, mustDecryptAuditContent(t, &audits[0], "request"), "user_input"))
-	segments, err := decryptAuditResponseSegments(&audits[0])
+	segments, _, err := decryptAuditResponseSegments(db, &audits[0], "", time.Now().Unix())
 	require.NoError(t, err)
 	require.Len(t, segments, 1)
 	assert.Equal(t, "merged final answer", decodedPayloadField(t, segments[0], "assistant_text"))
@@ -330,7 +438,7 @@ func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testi
 	root := persist(newResponseTurnContext("late-root", 1), capturePayloadJSON(t, capturePayload{SchemaVersion: 2, CaptureMode: "latest_user_text", UserInput: "question"}), "", "", "", false, false, false, "completed", 200, responseIdentity{protocol: protocolOpenAIResponses, responseID: "resp_before_audit_release"})
 	require.NotNil(t, root)
 	reconcileResponseContinuations()
-	segments, err := decryptAuditResponseSegments(root)
+	segments, _, err := decryptAuditResponseSegments(db, root, "", time.Now().Unix())
 	require.NoError(t, err)
 	require.Len(t, segments, 2)
 	assert.Equal(t, "visible appended response", decodedPayloadField(t, segments[1], "assistant_text"))
@@ -512,7 +620,7 @@ func TestResponsesImmediateContinuationReconcilesAfterRootReturns(t *testing.T) 
 	assert.Equal(t, "delayed-root", audits[0].RequestID)
 	assert.Equal(t, "failed", audits[0].Status)
 	assert.Equal(t, "server_error", audits[0].ErrorCode)
-	segments, err := decryptAuditResponseSegments(&audits[0])
+	segments, _, err := decryptAuditResponseSegments(db, &audits[0], "", time.Now().Unix())
 	require.NoError(t, err)
 	require.Len(t, segments, 1)
 	assert.Equal(t, "partial answer", decodedPayloadField(t, segments[0], "assistant_text"))
@@ -544,7 +652,7 @@ func TestResponsesPendingChainRetryIsolationAndRotation(t *testing.T) {
 	require.NoError(t, db.Model(&ConversationAuditPendingResponse{}).Where("audit_id = ?", final.ID).Update("next_attempt_at", time.Now().Unix()-1).Error)
 	reconcileResponseContinuations()
 	require.NoError(t, db.First(root, root.ID).Error)
-	segments, err := decryptAuditResponseSegments(root)
+	segments, _, err := decryptAuditResponseSegments(db, root, "", time.Now().Unix())
 	require.NoError(t, err)
 	require.Equal(t, []string{finalBody}, segments)
 	assert.Equal(t, len(finalBody), root.ResponseLength)
@@ -630,7 +738,7 @@ func TestResponsesPendingFailureRetainsEncryptedContent(t *testing.T) {
 	require.NoError(t, db.Model(orphan).Update("response_ciphertext", ciphertext).Error)
 	require.NoError(t, db.Model(&ConversationAuditPendingResponse{}).Where("audit_id = ?", orphan.ID).Update("next_attempt_at", time.Now().Unix()-1).Error)
 	reconcileResponseContinuations()
-	segments, err := decryptAuditResponseSegments(root)
+	segments, _, err := decryptAuditResponseSegments(db, root, "", time.Now().Unix())
 	require.NoError(t, err)
 	assert.Equal(t, []string{body}, segments)
 }

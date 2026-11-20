@@ -35,6 +35,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useState } from 'react'
 import {
   Copy,
   Check,
@@ -56,6 +57,7 @@ import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { BILLING_PRICING_VARS } from '@/features/pricing/lib/billing-expr'
@@ -90,6 +92,7 @@ import {
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
+import { ConversationAuditPanel } from './conversation-audit-panel'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -476,6 +479,7 @@ interface DetailsDialogProps {
 
 export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
+  const [activeTab, setActiveTab] = useState('details')
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const other = parseLogOther(props.log.other)
   const typeConfig = getLogTypeConfig(props.log.type)
@@ -620,10 +624,18 @@ export function DetailsDialog(props: DetailsDialogProps) {
     other?.reasoning_effort
   )
 
-  return (
+  const auditRequestId =
+    props.isAdmin && (isConsume || props.log.type === 5)
+      ? props.log.request_id
+      : ''
+  const Overview = auditRequestId ? TabsContent : 'div'
+  const dialog = (
     <Dialog
       open={props.open}
-      onOpenChange={props.onOpenChange}
+      onOpenChange={(open) => {
+        if (!open) setActiveTab('details')
+        props.onOpenChange(open)
+      }}
       title={
         <>
           {t('Log Details')}
@@ -647,7 +659,20 @@ export function DetailsDialog(props: DetailsDialogProps) {
       contentHeight='min(72dvh, 720px)'
       bodyClassName='pr-2 sm:pr-4'
     >
-      <div className='w-full max-w-full min-w-0 space-y-2.5 overflow-x-hidden py-1 sm:space-y-3'>
+      {auditRequestId && (
+        <TabsList className='mb-2 h-auto max-w-full'>
+          <TabsTrigger value='details' className='whitespace-normal'>
+            {t('Details')}
+          </TabsTrigger>
+          <TabsTrigger value='conversation' className='whitespace-normal'>
+            {t('Conversation content')}
+          </TabsTrigger>
+        </TabsList>
+      )}
+      <Overview
+        value={auditRequestId ? 'details' : undefined}
+        className='w-full max-w-full min-w-0 space-y-2.5 overflow-x-hidden py-1 sm:space-y-3'
+      >
         {/* Overview section - key identifiers */}
         <div className='min-w-0 space-y-1'>
           {props.log.request_id && (
@@ -682,15 +707,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
               mono
             />
           )}
-          {props.log.type === 5 && props.isAdmin && props.log.request_id && (
-            <a
-              className='text-primary text-sm underline-offset-4 hover:underline'
-              href={`/conversation-audit/?request_id=${encodeURIComponent(props.log.request_id)}`}
-            >
-              {t('View conversation audit')}
-            </a>
-          )}
-
           {props.isAdmin && props.log.channel > 0 && (
             <DetailRow
               label={t('Channel')}
@@ -1380,8 +1396,25 @@ export function DetailsDialog(props: DetailsDialogProps) {
             </div>
           </div>
         )}
-      </div>
+      </Overview>
+      {auditRequestId && (
+        <TabsContent value='conversation'>
+          {props.open && activeTab === 'conversation' && (
+            <ConversationAuditPanel
+              key={auditRequestId}
+              requestId={auditRequestId}
+            />
+          )}
+        </TabsContent>
+      )}
     </Dialog>
+  )
+
+  if (!auditRequestId) return dialog
+  return (
+    <Tabs className='contents' value={activeTab} onValueChange={setActiveTab}>
+      {dialog}
+    </Tabs>
   )
 }
 

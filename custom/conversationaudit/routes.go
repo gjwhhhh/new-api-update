@@ -1,6 +1,7 @@
 package conversationaudit
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -89,8 +90,26 @@ func listAudits(c *gin.Context) {
 }
 
 func getAuditDetail(c *gin.Context) {
+	requestID := c.Param("request_id")
+	now := time.Now().Unix()
+	db := model.DB.WithContext(c.Request.Context())
 	var audit ConversationAudit
-	if err := model.DB.Where("request_id = ?", c.Param("request_id")).First(&audit).Error; err != nil {
+	err := db.Where("request_id = ? AND expires_at > ?", requestID, now).Take(&audit).Error
+	bySegment := errors.Is(err, gorm.ErrRecordNotFound)
+	if bySegment {
+		segmentAuditID := db.Model(&ConversationAuditResponseSegment{}).Select("audit_id").
+			Where("request_id = ? AND expires_at > ?", requestID, now)
+		err = db.Where("expires_at > ? AND id = (?)", now, segmentAuditID).Take(&audit).Error
+	}
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			respondError(c, http.StatusNotFound, "conversation audit was not found")
+		} else {
+			respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
+		}
+		return
+	}
+	if !bySegment && audit.RequestID != requestID {
 		respondError(c, http.StatusNotFound, "conversation audit was not found")
 		return
 	}
@@ -114,22 +133,29 @@ func getAuditDetail(c *gin.Context) {
 		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
 		return
 	}
-	responseSegments, err := decryptAuditResponseSegments(&audit)
+	responseSegments, matchedSegment, err := decryptAuditResponseSegments(db, &audit, requestID, now)
 	if err != nil {
 		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
+		return
+	}
+	if bySegment && matchedSegment == nil {
+		respondError(c, http.StatusNotFound, "conversation audit was not found")
 		return
 	}
 	responsePartCount := len(responseSegments)
 	if responseContent != "" {
 		responsePartCount++
 	}
-	recordAdminAudit(c, "conversation_audit.view", audit.RequestID)
+	recordAdminAudit(c, "conversation_audit.view", requestID)
 	detail := gin.H{
 		"audit": audit, "request": requestContent, "response": responseContent,
 		"response_segments": responseSegments, "response_part_count": responsePartCount,
 	}
 	if sensitiveMatch != nil {
 		detail["local_sensitive_match"] = sensitiveMatch
+	}
+	if matchedSegment != nil {
+		detail["matched_segment"] = matchedSegment
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -285,24 +311,37 @@ func decryptAuditContent(audit *ConversationAudit, kind string) (string, error) 
 	return decrypt(audit.KeyVersion, audit.ResponseNonce, audit.ResponseCiphertext, auditAAD(audit, kind))
 }
 
-func decryptAuditResponseSegments(audit *ConversationAudit) ([]string, error) {
+type auditSegmentMatch struct {
+	// Index in response_segments; -1 denotes a stored continuation without text.
+	ResponseIndex int  `json:"response_index"`
+	Truncated     bool `json:"truncated"`
+}
+
+func decryptAuditResponseSegments(db *gorm.DB, audit *ConversationAudit, requestID string, now int64) ([]string, *auditSegmentMatch, error) {
 	var segments []ConversationAuditResponseSegment
-	if err := model.DB.Where("audit_id = ?", audit.ID).Order("created_at ASC, id ASC").Find(&segments).Error; err != nil {
-		return nil, err
+	if err := db.Where("audit_id = ? AND expires_at > ?", audit.ID, now).Order("created_at ASC, id ASC").Find(&segments).Error; err != nil {
+		return nil, nil, err
 	}
 	plaintexts := make([]string, 0, len(segments))
-	for index := range segments {
-		segment := &segments[index]
+	var match *auditSegmentMatch
+	for i := range segments {
+		segment := &segments[i]
+		if segment.RequestID == requestID {
+			match = &auditSegmentMatch{ResponseIndex: -1, Truncated: segment.ResponseTruncated}
+		}
 		if segment.ResponseCiphertext == "" {
 			continue
 		}
 		plaintext, err := decrypt(segment.KeyVersion, segment.ResponseNonce, segment.ResponseCiphertext, auditResponseSegmentAAD(segment))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if segment.RequestID == requestID {
+			match.ResponseIndex = len(plaintexts)
 		}
 		plaintexts = append(plaintexts, plaintext)
 	}
-	return plaintexts, nil
+	return plaintexts, match, nil
 }
 
 func recordAdminAudit(c *gin.Context, action, requestID string) {

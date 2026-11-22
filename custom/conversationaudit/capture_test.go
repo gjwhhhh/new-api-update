@@ -162,6 +162,72 @@ func TestCaptureCyberRejectionWithoutVisibleText(t *testing.T) {
 	assert.Empty(t, audit.ResponseCiphertext)
 }
 
+func TestCaptureCyberRejectionBackfillsUserTextBeforeToolOutput(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("id", 1)
+		c.Set(common.RequestIdKey, "cyber-with-user-text")
+	})
+	engine.POST("/v1/responses", CaptureMiddleware(), func(c *gin.Context) {
+		service.SetRelayFinalError(c, service.CyberPolicyError(http.StatusForbidden))
+		c.Status(http.StatusForbidden)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"keep this user input"}]},{"type":"function_call_output","call_id":"test","output":"tool result"}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(httptest.NewRecorder(), request)
+
+	var audit ConversationAudit
+	require.NoError(t, db.Where("request_id = ?", "cyber-with-user-text").First(&audit).Error)
+	assert.Equal(t, "failed", audit.Status)
+	assert.Equal(t, "cyber_policy", audit.ErrorCode)
+	assert.Empty(t, audit.CaptureError)
+	assert.Equal(t, "keep this user input", decodedPayloadField(t, mustDecryptAuditContent(t, &audit, "request"), "user_input"))
+	assert.Empty(t, audit.ResponseCiphertext)
+}
+
+func TestCaptureCyberContinuationKeepsParentUserText(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	root := persist(
+		newResponseTurnContext("cyber-parent", 1),
+		capturePayloadJSON(t, capturePayload{SchemaVersion: 2, CaptureMode: "latest_user_text", UserInput: "parent user input"}),
+		"",
+		"",
+		"",
+		false,
+		false,
+		false,
+		"completed",
+		http.StatusOK,
+		responseIdentity{protocol: protocolOpenAIResponses, responseID: "resp-cyber-parent"},
+	)
+	require.NotNil(t, root)
+
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("id", 1)
+		c.Set(common.RequestIdKey, "cyber-continuation")
+	})
+	engine.POST("/v1/responses", CaptureMiddleware(), func(c *gin.Context) {
+		service.SetRelayFinalError(c, service.CyberPolicyError(http.StatusForbidden))
+		c.Status(http.StatusForbidden)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"previous_response_id":"resp-cyber-parent","input":[{"type":"function_call_output","call_id":"test","output":"tool result"}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(httptest.NewRecorder(), request)
+
+	var segment ConversationAuditResponseSegment
+	require.NoError(t, db.Where("request_id = ?", "cyber-continuation").First(&segment).Error)
+	assert.Equal(t, root.ID, segment.AuditID)
+	assert.Zero(t, segment.ResponseLength)
+
+	var audit ConversationAudit
+	require.NoError(t, db.First(&audit, root.ID).Error)
+	assert.Equal(t, "failed", audit.Status)
+	assert.Equal(t, "cyber_policy", audit.ErrorCode)
+	assert.Equal(t, "parent user input", decodedPayloadField(t, mustDecryptAuditContent(t, &audit, "request"), "user_input"))
+}
+
 func TestCaptureResponsesWSFailuresKeepsOnlyFailedSummary(t *testing.T) {
 	db := setupResponseTurnTest(t)
 	engine := gin.New()

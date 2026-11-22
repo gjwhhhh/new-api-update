@@ -154,8 +154,8 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
 		_, localSensitiveMatch := service.RelayPromptSensitiveMatch(c)
-		if localSensitiveMatch && !request.hasPersistableRequest() && !captureFullPayload {
-			if filled, truncated, fillError := captureSensitiveUserText(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes); fillError == "" && filled != "" {
+		if status == "failed" && !request.hasPersistableRequest() && !captureFullPayload {
+			if filled, truncated, fillError := captureLatestUserTextAnywhere(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes); fillError == "" && filled != "" {
 				request.body = filled
 				request.truncated = truncated
 				request.continuationParentResponseID = ""
@@ -165,7 +165,7 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 				captureError = joinCaptureErrors(request.captureError, response.captureError)
 			}
 		}
-		if request.hasPersistableRequest() || (status == "failed" && (websocketFailuresOnly || !request.isResponsesContinuation() || localSensitiveMatch || response.errorCode == relaycommon.CyberPolicyCode)) {
+		if request.hasPersistableRequest() || (status == "failed" && (websocketFailuresOnly || !request.isResponsesContinuation() || localSensitiveMatch)) {
 			if request.body == "" && response.body == "" && captureError == "" {
 				captureError = "no_visible_text"
 			}
@@ -373,9 +373,9 @@ func extractPreviousResponseID(raw []byte) string {
 	return strings.TrimSpace(envelope.PreviousResponseID)
 }
 
-// captureSensitiveUserText walks the request for the last user text when a local
-// sensitive rejection left the default latest-item capture empty.
-func captureSensitiveUserText(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int) (string, bool, string) {
+// captureLatestUserTextAnywhere walks the request for the last user text when a
+// failed request left the default latest-item capture empty.
+func captureLatestUserTextAnywhere(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int) (string, bool, string) {
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return "", false, "request_body_unavailable"

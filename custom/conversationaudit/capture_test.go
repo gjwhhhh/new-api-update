@@ -186,6 +186,31 @@ func TestCaptureCyberRejectionBackfillsUserTextBeforeToolOutput(t *testing.T) {
 	assert.Empty(t, audit.ResponseCiphertext)
 }
 
+func TestCaptureSuccessfulResponsesBackfillsUserTextBeforeToolOutput(t *testing.T) {
+	db := setupResponseTurnTest(t)
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("id", 1)
+		c.Set(common.RequestIdKey, "successful-user-before-tool")
+	})
+	engine.POST("/v1/responses", CaptureMiddleware(), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"id":     "resp-successful-tool-turn",
+			"status": "completed",
+			"output": []gin.H{{"type": "function_call", "name": "lookup"}},
+		})
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"successful user input"}]},{"type":"function_call_output","call_id":"test","output":"tool result"}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(httptest.NewRecorder(), request)
+
+	var audit ConversationAudit
+	require.NoError(t, db.Where("request_id = ?", "successful-user-before-tool").First(&audit).Error)
+	assert.Equal(t, "completed", audit.Status)
+	assert.Equal(t, "successful user input", decodedPayloadField(t, mustDecryptAuditContent(t, &audit, "request"), "user_input"))
+	assert.Empty(t, audit.ResponseCiphertext)
+}
+
 func TestCaptureCyberContinuationKeepsParentUserText(t *testing.T) {
 	db := setupResponseTurnTest(t)
 	root := persist(

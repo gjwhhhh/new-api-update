@@ -154,7 +154,7 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
 		_, localSensitiveMatch := service.RelayPromptSensitiveMatch(c)
-		if status == "failed" && !request.hasPersistableRequest() && !captureFullPayload {
+		if !request.hasPersistableRequest() && !captureFullPayload && !request.isResponsesContinuation() {
 			if filled, truncated, fillError := captureLatestUserTextAnywhere(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes); fillError == "" && filled != "" {
 				request.body = filled
 				request.truncated = truncated

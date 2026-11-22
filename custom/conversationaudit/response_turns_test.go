@@ -337,7 +337,7 @@ func TestCaptureMiddlewareFullPayloadPersistsOriginalTransaction(t *testing.T) {
 	assert.Equal(t, `{"id":"msg_test","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"visible"}]}`, mustDecryptAuditContent(t, &audit, "response"))
 }
 
-func TestCaptureMiddlewareSkipsOversizedRequestWithoutWriterOrPersist(t *testing.T) {
+func TestCaptureMiddlewareKeepsOversizedRequestAudit(t *testing.T) {
 	db := setupResponseTurnTest(t)
 	runtimeState.Lock()
 	runtimeState.config.MaxParseBytes = 2048
@@ -345,26 +345,53 @@ func TestCaptureMiddlewareSkipsOversizedRequestWithoutWriterOrPersist(t *testing
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	var sawCaptureWriter bool
-	var sawBodyStorage bool
 	router.Use(CaptureMiddleware())
 	router.POST("/v1/responses", func(c *gin.Context) {
-		_, sawCaptureWriter = c.Writer.(*captureWriter)
-		_, sawBodyStorage = common.PeekBodyStorage(c)
-		c.Data(http.StatusOK, "application/json", []byte(`{"id":"resp_skip","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible orphan that must not persist"}]}]}`))
+		id := c.GetHeader("X-Test-Request-ID")
+		c.Set(common.RequestIdKey, id)
+		if strings.HasPrefix(id, "oversized-") {
+			_, sawBodyStorage := common.PeekBodyStorage(c)
+			assert.False(t, sawBodyStorage)
+		}
+		if id == "oversized-visible" {
+			c.Data(http.StatusOK, "text/event-stream", []byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_visible\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"visible reply\"}]}]}}\n\n"))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"id": "resp_empty", "status": "completed"})
+	})
+
+	t.Run("ordinary request without visible content is skipped", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":[{"type":"function_call_output","output":"private tool result"}]}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Test-Request-ID", "tool-only")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var audit ConversationAudit
+		assert.ErrorIs(t, db.Where("request_id = ?", "tool-only").Take(&audit).Error, gorm.ErrRecordNotFound)
 	})
 
 	body := `{"input":[{"role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("x", 4096) + `"}]}]}`
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Test-Request-ID", "oversized-skip")
-	router.ServeHTTP(httptest.NewRecorder(), request)
-
-	assert.False(t, sawCaptureWriter)
-	assert.False(t, sawBodyStorage)
-	var count int64
-	require.NoError(t, db.Model(&ConversationAudit{}).Count(&count).Error)
-	assert.Zero(t, count)
+	for _, id := range []string{"oversized-visible", "oversized-empty", "oversized-visible"} {
+		// The repeated ID forces an audit insert error without changing the client reply.
+		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Test-Request-ID", id)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		var audit ConversationAudit
+		require.NoError(t, db.Where("request_id = ?", id).Take(&audit).Error)
+		assert.Equal(t, "completed", audit.Status)
+		assert.Equal(t, captureErrorRequestParseLimitExceeded, audit.CaptureError)
+		assert.Empty(t, audit.RequestCiphertext)
+		if id == "oversized-visible" {
+			assert.Contains(t, recorder.Body.String(), "visible reply")
+			assert.Equal(t, "visible reply", decodedPayloadField(t, mustDecryptAuditContent(t, &audit, "response"), "assistant_text"))
+		} else {
+			assert.Empty(t, audit.ResponseCiphertext)
+		}
+	}
 }
 
 func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testing.T) {
@@ -392,7 +419,9 @@ func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testi
 			return
 		}
 		if c.GetHeader("X-Test-Phase") == "orphan" {
-			c.Data(http.StatusOK, "application/json", []byte(`{"id":"resp_orphan","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible orphan response"}]}]}`))
+			c.Header("Content-Type", "text/event-stream")
+			_, err := c.Writer.WriteString("data: {\"type\":\"response.output_text.done\",\"text\":\"visible orphan response\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_orphan\"}}\n\n")
+			require.NoError(t, err)
 			return
 		}
 		c.Data(http.StatusOK, "application/json", []byte(`{"id":"resp_final","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"visible appended response"}]}]}`))
@@ -408,7 +437,7 @@ func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testi
 	require.NoError(t, db.Model(&ConversationAudit{}).Count(&emptyCount).Error)
 	assert.EqualValues(t, 1, emptyCount)
 
-	orphan := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"previous_response_id":"resp_before_audit_release","input":[{"type":"function_call_output","call_id":"call_1","output":"private tool output"}]}`))
+	orphan := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"previous_response_id":"resp_before_audit_release","input":[{"role":"user","content":"replayed user text"},{"type":"function_call_output","call_id":"call_1","output":"private tool output"}]}`))
 	orphan.Header.Set("Content-Type", "application/json")
 	orphan.Header.Set("X-Test-Request-ID", "unlinked-continuation")
 	orphan.Header.Set("X-Test-Phase", "orphan")
@@ -438,9 +467,12 @@ func TestCaptureMiddlewareStoresUnlinkedContinuationWithVisibleResponse(t *testi
 	root := persist(newResponseTurnContext("late-root", 1), capturePayloadJSON(t, capturePayload{SchemaVersion: 2, CaptureMode: "latest_user_text", UserInput: "question"}), "", "", "", false, false, false, "completed", 200, responseIdentity{protocol: protocolOpenAIResponses, responseID: "resp_before_audit_release"})
 	require.NotNil(t, root)
 	reconcileResponseContinuations()
-	segments, _, err := decryptAuditResponseSegments(db, root, "", time.Now().Unix())
+	segments, match, err := decryptAuditResponseSegments(db, root, "unlinked-continuation", time.Now().Unix())
 	require.NoError(t, err)
+	require.NotNil(t, match)
 	require.Len(t, segments, 2)
+	assert.Equal(t, "question", decodedPayloadField(t, mustDecryptAuditContent(t, root, "request"), "user_input"))
+	assert.Equal(t, "visible orphan response", decodedPayloadField(t, segments[match.ResponseIndex], "assistant_text"))
 	assert.Equal(t, "visible appended response", decodedPayloadField(t, segments[1], "assistant_text"))
 }
 

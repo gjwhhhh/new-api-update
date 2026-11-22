@@ -96,7 +96,7 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
   if (!result) return <p role='status'>{t('Loading...')}</p>
   if ('error' in result) {
     const messages = {
-      missing: t('No conversation content available'),
+      missing: t('Conversation audit record not found'),
       forbidden: t('Access denied'),
       unavailable: t('Could not load conversation content'),
     }
@@ -118,9 +118,11 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
     ? (segments[matched_segment.response_index] ?? '')
     : rootReply
   const combined = [rootReply, ...segments].filter(Boolean).join('\n\n')
-  const pending = audit.capture_error
-    ?.split(',')
-    .includes('pending_response_continuation')
+  const captureReasons = audit.capture_error?.split(',') ?? []
+  const pending = captureReasons.includes('pending_response_continuation')
+  const requestOverLimit = captureReasons.includes(
+    'request_parse_limit_exceeded'
+  )
   const statusLabel =
     {
       completed: t('Completed'),
@@ -162,7 +164,12 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
       </div>
 
       <DetailSection label={t('Request')}>
-        <p className={textClass}>{input || t('No captured text')}</p>
+        <p className={textClass}>
+          {input ||
+            (requestOverLimit
+              ? t('Request exceeded the audit size limit and was not captured')
+              : t('No captured text'))}
+        </p>
       </DetailSection>
       <DetailSection label={t('Response')}>
         <p className={textClass}>{reply || t('No captured text')}</p>

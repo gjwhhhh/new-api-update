@@ -159,7 +159,7 @@ describe('conversation content in usage log details', () => {
   })
 
   test.each([
-    [404, 'No conversation content available'],
+    [404, 'Conversation audit record not found'],
     [403, 'Access denied'],
     [503, 'Could not load conversation content'],
   ])(
@@ -171,4 +171,32 @@ describe('conversation content in usage log details', () => {
       expect(await screen.findByText(message)).toBeVisible()
     }
   )
+
+  test('explains why an oversized request has no input while showing its reply', async () => {
+    vi.spyOn(api, 'get').mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          audit: {
+            status: 'completed',
+            capture_error: 'request_parse_limit_exceeded',
+          },
+          request: '',
+          response: JSON.stringify({
+            schema_version: 2,
+            assistant_text: 'Visible reply',
+          }),
+          response_segments: [],
+        },
+      },
+    })
+    renderDetails(true, 2)
+    fireEvent.click(screen.getByRole('tab', { name: 'Conversation content' }))
+    expect(await screen.findByText('Visible reply')).toBeVisible()
+    expect(
+      screen.getByText(
+        'Request exceeded the audit size limit and was not captured'
+      )
+    ).toBeVisible()
+  })
 })

@@ -79,7 +79,8 @@ func CaptureResponsesWSFailures() gin.HandlerFunc {
 func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		protocol := protocolForRequest(c.Request)
-		if !isEnabled() {
+		cfg := currentConfig()
+		if !cfg.Enabled {
 			c.Next()
 			return
 		}
@@ -93,26 +94,10 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 			return
 		}
 
-		cfg := currentConfig()
 		captureFullPayload := cfg.CaptureFullPayload && !websocketFailuresOnly
-		if !captureFullPayload {
-			if exceeded, requestBytes, known := auditParseLimitState(c, cfg.MaxParseBytes); known && exceeded {
-				c.Next()
-				persistFailureWithoutBody(c, captureErrorRequestParseLimitExceeded)
-				logCaptureDiagnostic(c, protocol, "skipped", captureErrorRequestParseLimitExceeded, "not_applicable", requestBytes, 0, 0)
-				return
-			}
-		}
-
 		parseStarted := time.Now()
 		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, captureFullPayload)
 		observeAuditPhase("request_parse", parseStarted, request.captureError != "")
-		if !captureFullPayload && request.captureError == captureErrorRequestParseLimitExceeded {
-			c.Next()
-			persistFailureWithoutBody(c, request.captureError)
-			logCaptureDiagnostic(c, protocol, "skipped", captureErrorRequestParseLimitExceeded, "not_applicable", request.requestBytes, 0, 0)
-			return
-		}
 
 		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes, captureFullPayload)
 		if websocketFailuresOnly {
@@ -129,10 +114,9 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 		}
 
 		c.Next()
-		if websocketFailuresOnly {
-			if _, failed := service.FinalRelayFailure(c); !failed {
-				return
-			}
+		failure, failed := service.FinalRelayFailure(c)
+		if websocketFailuresOnly && !failed {
+			return
 		}
 
 		response := collector.FinalizeCapture()
@@ -143,27 +127,23 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 		if c.Writer.Status() >= http.StatusBadRequest {
 			status = "failed"
 		}
-		if failure, ok := service.FinalRelayFailure(c); ok {
+		if failed {
 			status = "failed"
 			if response.errorCode == "" || failure.Code == relaycommon.CyberPolicyCode {
 				response.errorCode = failure.Code
 			}
 		}
-		if (request.truncated || response.truncated) && status == "completed" {
-			status = "truncated"
-		}
 		captureError := joinCaptureErrors(request.captureError, response.captureError)
 		_, localSensitiveMatch := service.RelayPromptSensitiveMatch(c)
-		if !request.hasPersistableRequest() && !captureFullPayload && !request.isResponsesContinuation() {
+		if request.captureError == "no_new_user_text" && !request.isResponsesContinuation() {
 			if filled, truncated, fillError := captureLatestUserTextAnywhere(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes); fillError == "" && filled != "" {
 				request.body = filled
 				request.truncated = truncated
-				request.continuationParentResponseID = ""
-				if request.captureError == "no_new_user_text" || request.captureError == "" {
-					request.captureError = ""
-				}
-				captureError = joinCaptureErrors(request.captureError, response.captureError)
+				captureError = response.captureError
 			}
+		}
+		if (request.truncated || response.truncated) && status == "completed" {
+			status = "truncated"
 		}
 		if request.hasPersistableRequest() || (status == "failed" && (websocketFailuresOnly || !request.isResponsesContinuation() || localSensitiveMatch)) {
 			if request.body == "" && response.body == "" && captureError == "" {
@@ -212,17 +192,11 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 			return
 		}
 
-		if response.body == "" {
+		if response.body == "" && request.captureError != captureErrorRequestParseLimitExceeded {
 			logCaptureDiagnostic(c, protocol, "skipped", captureError, "not_applicable", request.requestBytes, 0, 0)
 			return
 		}
 		persistOrphanResponse(c, protocol, request, response, captureError, status)
-	}
-}
-
-func persistFailureWithoutBody(c *gin.Context, reason string) {
-	if failure, ok := service.FinalRelayFailure(c); ok {
-		persist(c, "", "", failure.Code, reason, true, false, false, "failed", c.Writer.Status())
 	}
 }
 
@@ -233,7 +207,7 @@ func persistOrphanResponse(c *gin.Context, protocol conversationProtocol, reques
 		response.body,
 		response.errorCode,
 		captureError,
-		false,
+		request.truncated,
 		response.truncated,
 		request.fullPayload,
 		status,
@@ -373,8 +347,7 @@ func extractPreviousResponseID(raw []byte) string {
 	return strings.TrimSpace(envelope.PreviousResponseID)
 }
 
-// captureLatestUserTextAnywhere walks the request for the last user text when a
-// failed request left the default latest-item capture empty.
+// captureLatestUserTextAnywhere finds user text before trailing tool or assistant items.
 func captureLatestUserTextAnywhere(c *gin.Context, protocol conversationProtocol, maxParseBytes, maxContentBytes int) (string, bool, string) {
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
@@ -948,6 +921,18 @@ func (c *responseCollector) appendText(key responsePartKey, text string) {
 	c.textBytes += len(part)
 }
 
+func (c *responseCollector) completeResponsesTextPart(key responsePartKey, text string) {
+	if part := c.parts[key]; part != nil {
+		// Only fill missing text; keep conflicting text already observed on the stream.
+		suffix, ok := strings.CutPrefix(text, part.String())
+		if !ok {
+			return
+		}
+		text = suffix
+	}
+	c.appendText(key, text)
+}
+
 func (c *responseCollector) joinParts() string {
 	keys := make([]responsePartKey, 0, len(c.parts))
 	for key := range c.parts {
@@ -1000,6 +985,7 @@ func (c *responseCollector) consumeSSEPayload(payload []byte) {
 		var event struct {
 			Type         string               `json:"type"`
 			Delta        string               `json:"delta"`
+			Text         string               `json:"text"`
 			OutputIndex  int                  `json:"output_index"`
 			ContentIndex int                  `json:"content_index"`
 			Response     responsesAuditResult `json:"response"`
@@ -1008,18 +994,25 @@ func (c *responseCollector) consumeSSEPayload(payload []byte) {
 		}
 		if common.Unmarshal(payload, &event) == nil {
 			c.applyResponsesResult(event.Response, event.Type)
-			if event.Type == "error" || event.Error.safeCode() != "" {
+			if code := event.Error.safeCode(); event.Type == "error" || event.Type == "response.error" || code != "" {
 				c.status = "failed"
-				c.errorCode = event.Error.safeCode()
-				if c.errorCode == "" {
-					c.errorCode = (auditError{Code: event.Code}).safeCode()
+				if code == "" {
+					code = (auditError{Code: event.Code}).safeCode()
+				}
+				if code != "" {
+					c.errorCode = code
 				}
 			}
 			if event.Response.ID != "" {
 				c.providerResponseID = event.Response.ID
 			}
-			if event.Type == "response.output_text.delta" {
+			switch event.Type {
+			case "response.output_text.delta":
 				c.appendText(responsePartKey{output: event.OutputIndex, content: event.ContentIndex}, event.Delta)
+			case "response.output_text.done":
+				c.completeResponsesTextPart(responsePartKey{output: event.OutputIndex, content: event.ContentIndex}, event.Text)
+			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.error", "response.cancelled", "response.canceled":
+				c.captureResponsesOutput(event.Response)
 			}
 		}
 	case protocolClaude:
@@ -1068,33 +1061,14 @@ func (c *responseCollector) consumeNonStreaming(raw []byte) {
 			}
 		}
 	case protocolOpenAIResponses:
-		var response struct {
-			responsesAuditResult
-			Output []struct {
-				Type    string `json:"type"`
-				Role    string `json:"role"`
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"output"`
-		}
+		var response responsesAuditResult
 		if common.Unmarshal(raw, &response) != nil {
 			c.captureError = joinCaptureErrors(c.captureError, "response_parse_failed")
 			return
 		}
-		c.applyResponsesResult(response.responsesAuditResult, "")
+		c.applyResponsesResult(response, "")
 		c.providerResponseID = response.ID
-		for outputIndex, output := range response.Output {
-			if output.Type != "message" || (output.Role != "" && output.Role != "assistant") {
-				continue
-			}
-			for contentIndex, content := range output.Content {
-				if content.Type == "output_text" {
-					c.appendText(responsePartKey{output: outputIndex, content: contentIndex}, content.Text)
-				}
-			}
-		}
+		c.captureResponsesOutput(response)
 	case protocolClaude:
 		var response struct {
 			Content []struct {
@@ -1165,6 +1139,32 @@ type responsesAuditResult struct {
 	IncompleteDetails struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details"`
+	Output json.RawMessage `json:"output"`
+}
+
+func (c *responseCollector) captureResponsesOutput(result responsesAuditResult) {
+	var outputs []json.RawMessage
+	if len(result.Output) == 0 || common.Unmarshal(result.Output, &outputs) != nil {
+		return
+	}
+	for outputIndex, rawOutput := range outputs {
+		var output struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if common.Unmarshal(rawOutput, &output) != nil || output.Type != "message" || (output.Role != "" && output.Role != "assistant") {
+			continue
+		}
+		for contentIndex, content := range output.Content {
+			if content.Type == "output_text" {
+				c.completeResponsesTextPart(responsePartKey{output: outputIndex, content: contentIndex}, content.Text)
+			}
+		}
+	}
 }
 
 func (c *responseCollector) applyResponsesResult(result responsesAuditResult, eventType string) {
@@ -1172,17 +1172,19 @@ func (c *responseCollector) applyResponsesResult(result responsesAuditResult, ev
 	switch eventType {
 	case "response.completed":
 		status = "completed"
-	case "response.failed":
+	case "response.failed", "response.error":
 		status = "failed"
 	case "response.incomplete":
 		status = "incomplete"
+	case "response.cancelled", "response.canceled":
+		status = "cancelled"
 	}
 	// A later event must not erase a failure already observed in this stream.
 	if c.status != "failed" {
 		switch status {
 		case "completed", "failed", "incomplete":
 			c.status = status
-		case "cancelled":
+		case "cancelled", "canceled":
 			c.status = "incomplete"
 		case "in_progress", "queued":
 			if eventType == "" {

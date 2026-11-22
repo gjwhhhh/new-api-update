@@ -472,8 +472,15 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 	if len(identities) > 0 {
 		identity = identities[0]
 	}
-	if !cfg.Enabled || (requestBody == "" && responseBody == "" && identity.parentResponseID == "" && status != "failed") {
+	if !cfg.Enabled {
 		return nil
+	}
+	if requestBody == "" && responseBody == "" && identity.parentResponseID == "" && status != "failed" {
+		// A metadata-only record is useful when an oversized request was skipped.
+		firstCaptureError, _, _ := strings.Cut(captureError, ",")
+		if firstCaptureError != captureErrorRequestParseLimitExceeded {
+			return nil
+		}
 	}
 	requestID := c.GetString(common.RequestIdKey)
 	if requestID == "" {

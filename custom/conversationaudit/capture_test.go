@@ -475,6 +475,37 @@ func TestResponsesSSEOrdersOutputTextByIndexes(t *testing.T) {
 	assert.Equal(t, "first\nsecond", decodedPayloadField(t, body, "assistant_text"))
 }
 
+func TestResponsesSSECompletesVisibleTextWithoutReplacingDeltas(t *testing.T) {
+	const parentPrefix = `{"type":"response.output_text.delta","delta":"第一段"}`
+	const textDone = `{"type":"response.output_text.done","text":"第一段结束"}`
+	const completed = `{"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"第一段结束"}]}]}}`
+	for _, tc := range []struct {
+		name, text, status string
+		events             []string
+	}{
+		{name: "text done without deltas", events: []string{textDone}, text: "第一段结束", status: "incomplete"},
+		{name: "text done fills a partial delta", events: []string{parentPrefix, textDone}, text: "第一段结束", status: "incomplete"},
+		{name: "terminal fills a partial delta", events: []string{parentPrefix, completed}, text: "第一段结束", status: "completed"},
+		{name: "terminal does not duplicate text done", events: []string{parentPrefix, textDone, completed}, text: "第一段结束", status: "completed"},
+		{name: "conflicting final text preserves delta", events: []string{`{"type":"response.output_text.delta","delta":"already sent"}`, textDone, completed}, text: "already sent", status: "completed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			collector := newResponseCollector(protocolOpenAIResponses, defaultMaxContentBytes, defaultMaxParseBytes, false)
+			for _, event := range tc.events {
+				collector.Write([]byte("data: "+event+"\n\n"), true)
+			}
+			captured := collector.FinalizeCapture()
+			assert.Equal(t, tc.status, captured.status)
+			assert.Equal(t, tc.text, decodedPayloadField(t, captured.body, "assistant_text"))
+			if tc.status == "incomplete" {
+				assert.Equal(t, "response_terminal_missing", captured.captureError)
+			} else {
+				assert.Empty(t, captured.captureError)
+			}
+		})
+	}
+}
+
 func TestClaudeAndGeminiStreamingStoreVisibleTextOnly(t *testing.T) {
 	testCases := []struct {
 		name     string

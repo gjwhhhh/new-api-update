@@ -476,7 +476,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						responseID = event.Response.ID
 					}
 				}
-				if event.Type == "response.output_text.delta" {
+				if event.Type == "response.output_text.delta" || event.Type == "response.output_text.done" {
 					service.ObserveRelayAuditFrame(c, incoming.body)
 				}
 				accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)

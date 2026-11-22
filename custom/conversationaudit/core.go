@@ -131,6 +131,7 @@ func (AuditSettings) TableName() string {
 type runtimeConfig struct {
 	Enabled            bool
 	CaptureFullPayload bool
+	CaptureWSSuccess   bool
 	DiagnosticsEnabled bool
 	RetentionDays      int
 	MaxContentBytes    int
@@ -223,6 +224,7 @@ func configFromEnv() runtimeConfig {
 	return runtimeConfig{
 		Enabled:            parseBoolEnv("CONVERSATION_AUDIT_ENABLED", false),
 		CaptureFullPayload: false,
+		CaptureWSSuccess:   parseBoolEnv("CONVERSATION_AUDIT_CAPTURE_WS_SUCCESS", false),
 		DiagnosticsEnabled: parseBoolEnv("CONVERSATION_AUDIT_DIAGNOSTICS", false),
 		RetentionDays:      boundedIntEnv("CONVERSATION_AUDIT_RETENTION_DAYS", defaultRetentionDays, 1, 3650),
 		MaxContentBytes:    boundedIntEnv("CONVERSATION_AUDIT_MAX_BYTES", defaultMaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),
@@ -260,6 +262,7 @@ func refreshSettings() {
 	cfg := runtimeConfig{
 		Enabled:            settings.Enabled,
 		CaptureFullPayload: settings.CaptureFullPayload,
+		CaptureWSSuccess:   envConfig.CaptureWSSuccess,
 		DiagnosticsEnabled: envConfig.DiagnosticsEnabled,
 		RetentionDays:      clamp(settings.RetentionDays, 1, 3650),
 		MaxContentBytes:    clamp(settings.MaxContentBytes, minimumMaxContentBytes, maximumMaxContentBytes),

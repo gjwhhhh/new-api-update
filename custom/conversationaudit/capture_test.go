@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
@@ -253,31 +254,75 @@ func TestCaptureCyberContinuationKeepsParentUserText(t *testing.T) {
 	assert.Equal(t, "parent user input", decodedPayloadField(t, mustDecryptAuditContent(t, &audit, "request"), "user_input"))
 }
 
-func TestCaptureResponsesWSFailuresKeepsOnlyFailedSummary(t *testing.T) {
+func TestCaptureResponsesWS(t *testing.T) {
 	db := setupResponseTurnTest(t)
 	engine := gin.New()
 	engine.POST("/v1/responses", func(c *gin.Context) {
 		c.Set("id", 1)
 		c.Set(common.RequestIdKey, c.GetHeader("X-Test-Request-ID"))
-	}, CaptureResponsesWSFailures(), func(c *gin.Context) {
-		service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.output_text.delta","delta":"visible reply"}`))
-		if c.GetString(common.RequestIdKey) == "failed-ws-turn" {
+	}, CaptureResponsesWS(), func(c *gin.Context) {
+		switch c.GetString(common.RequestIdKey) {
+		case "failed":
+			service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.output_text.delta","delta":"partial reply"}`))
 			service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.failed","response":{"id":"failed-turn","error":{"code":"cyber_policy","message":"not visible"}}}`))
 			service.SetRelayFinalError(c, service.CyberPolicyError(http.StatusForbidden))
+		case "disconnected":
+			service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.output_text.done","text":"finished text before disconnect"}`))
+		case "continuation":
+			service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.completed","response":{"id":"ws-child","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"child reply"}]}]}}`))
+		default:
+			service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.output_text.delta","delta":"first part"}`))
+			service.ObserveRelayAuditFrame(c, []byte(`{"type":"response.done","response":{"id":"ws-parent","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first part"},{"type":"output_text","text":"terminal-only part"}]},{"type":"custom_tool_call_output","output":"private tool result"}]}}`))
 		}
 	})
-	for _, id := range []string{"failed-ws-turn", "successful-ws-turn"} {
-		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"turn input"}`))
+	for _, tc := range []struct {
+		id, input, status, reply string
+		enabled                  bool
+	}{
+		{id: "failed", status: "failed", reply: "partial reply"},
+		{id: "disabled"},
+		{id: "enabled", enabled: true, status: "completed", reply: "first part\nterminal-only part"},
+		{id: "continuation", input: `{"previous_response_id":"ws-parent","input":[{"type":"function_call_output","output":"private tool result"}]}`, enabled: true, status: "completed", reply: "child reply"},
+		{id: "disconnected", enabled: true, status: "incomplete", reply: "finished text before disconnect"},
+	} {
+		runtimeState.Lock()
+		runtimeState.config.CaptureWSSuccess = tc.enabled
+		runtimeState.config.CaptureFullPayload = true // WebSockets must still use summary mode.
+		runtimeState.Unlock()
+		input := tc.input
+		if input == "" {
+			input = `{"input":"turn input","instructions":"private instructions"}`
+		}
+		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(input))
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-Test-Request-ID", id)
+		request.Header.Set("X-Test-Request-ID", tc.id)
 		engine.ServeHTTP(httptest.NewRecorder(), request)
+		var audit ConversationAudit
+		err := db.Where("request_id = ?", tc.id).Take(&audit).Error
+		if tc.id == "continuation" {
+			require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			var root ConversationAudit
+			require.NoError(t, db.Where("request_id = ?", "enabled").Take(&root).Error)
+			segments, match, err := decryptAuditResponseSegments(db, &root, tc.id, root.CreatedAt)
+			require.NoError(t, err)
+			require.NotNil(t, match)
+			require.Len(t, segments, 1)
+			assert.Equal(t, tc.reply, decodedPayloadField(t, segments[match.ResponseIndex], "assistant_text"))
+			continue
+		}
+		if tc.status == "" {
+			assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			continue
+		}
+		require.NoError(t, err)
+		assert.False(t, audit.FullPayload)
+		assert.Equal(t, tc.status, audit.Status)
+		assert.Equal(t, "turn input", decodedPayloadField(t, mustDecryptAuditContent(t, &audit, "request"), "user_input"))
+		assert.Equal(t, tc.reply, decodedPayloadField(t, mustDecryptAuditContent(t, &audit, "response"), "assistant_text"))
+		if tc.id == "failed" {
+			assert.Equal(t, "cyber_policy", audit.ErrorCode)
+		}
 	}
-	var audits []ConversationAudit
-	require.NoError(t, db.Find(&audits).Error)
-	require.Len(t, audits, 1)
-	assert.Equal(t, "failed-ws-turn", audits[0].RequestID)
-	assert.Equal(t, "cyber_policy", audits[0].ErrorCode)
-	assert.Equal(t, "visible reply", decodedPayloadField(t, mustDecryptAuditContent(t, &audits[0], "response"), "assistant_text"))
 }
 
 func TestExtractLastMessageTextStoresOnlyCurrentUserInput(t *testing.T) {

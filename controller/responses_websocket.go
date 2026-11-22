@@ -41,7 +41,7 @@ var responsesWSRequestEngine = sync.OnceValue(func() *gin.Engine {
 		c.Set(common.RequestIdKey, state.requestID)
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		c.Next()
-	}, middleware.BodyStorageCleanup(), middleware.TokenAuth(), service.RelayFailureLog("websocket"), conversationaudit.CaptureResponsesWSFailures(), service.CyberSessionGuard, middleware.ModelRequestRateLimit(), func(c *gin.Context) {
+	}, middleware.BodyStorageCleanup(), middleware.TokenAuth(), service.RelayFailureLog("websocket"), conversationaudit.CaptureResponsesWS(), service.CyberSessionGuard, middleware.ModelRequestRateLimit(), func(c *gin.Context) {
 		state := c.Request.Context().Value(responsesWSRequestContextKey{}).(*responsesWSRequestState)
 		state.apiError = state.handle(c)
 		service.SetRelayFinalError(c, state.apiError)

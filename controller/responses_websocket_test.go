@@ -3,6 +3,7 @@ package controller
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/custom/conversationaudit"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -924,6 +927,88 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 	assert.Equal(t, 3000, token.UsedQuota)
 	assert.Equal(t, 97000, user.Quota)
 	assert.Equal(t, 3000, user.UsedQuota)
+}
+
+func TestResponsesWebSocketAuditFromUsageLog(t *testing.T) {
+	// Audit registration starts a process-wide worker against the current DB.
+	// Isolate it from the other tests, which replace and close their own DBs.
+	const worker = "TEST_RESPONSES_WS_AUDIT_WORKER"
+	if os.Getenv(worker) != "1" {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestResponsesWebSocketAuditFromUsageLog$", "-test.v")
+		cmd.Env = append(os.Environ(), worker+"=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+
+	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
+		for round := 1; round <= 2; round++ {
+			if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {
+				return
+			}
+			for _, frame := range []string{
+				fmt.Sprintf(`{"type":"response.output_text.done","output_index":0,"content_index":0,"text":"visible reply %d"}`, round),
+				fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_audit_%d","status":"completed","usage":{"input_tokens":4,"output_tokens":3,"total_tokens":7}}}`, round),
+			} {
+				if !assert.NoError(t, ws.WriteMessage(websocket.TextMessage, []byte(frame))) {
+					return
+				}
+			}
+		}
+		_, _, _ = ws.ReadMessage() // Keep the upstream open until the client closes.
+	})
+	t.Setenv("CONVERSATION_AUDIT_ENABLED", "true")
+	t.Setenv("CONVERSATION_AUDIT_CAPTURE_WS_SUCCESS", "true")
+	t.Setenv("CONVERSATION_AUDIT_ACTIVE_KEY_VERSION", "v1")
+	t.Setenv("CONVERSATION_AUDIT_KEY_V1", base64.StdEncoding.EncodeToString([]byte("12345678901234567890123456789012")))
+	require.NoError(t, model.DB.AutoMigrate(&conversationaudit.AuditSettings{}, &conversationaudit.ConversationAudit{},
+		&conversationaudit.ConversationAuditResponseLink{}, &conversationaudit.ConversationAuditResponseSegment{},
+		&conversationaudit.ConversationAuditPendingResponse{}, &model.UserAccessToken{}, &model.AuditLog{}))
+	require.NoError(t, model.DB.Create(&conversationaudit.AuditSettings{
+		ID: 1, Enabled: true, CaptureFullPayload: true, RetentionDays: 30, MaxContentBytes: 262144, ActiveKeyVersion: "v1",
+	}).Error)
+	admin := model.User{Username: "ws-audit-admin", AffCode: "ws-aud", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, model.DB.Create(&admin).Error)
+	rawToken := model.AccessTokenPrefix + strings.Repeat("a", 43)
+	pat := model.UserAccessToken{UserId: admin.Id, Name: "audit test", TokenHash: model.AccessTokenFingerprint(rawToken), TokenHint: model.AccessTokenHint(rawToken), ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, pat.SetScopes([]string{"log:read"}))
+	require.NoError(t, model.DB.Create(&pat).Error)
+	lookup := gin.New()
+	conversationaudit.Register(lookup.Group("/api"))
+
+	for round := 1; round <= 2; round++ {
+		frame := fmt.Sprintf(`{"type":"response.create","model":"ws-billing","input":"question %d","instructions":"private instructions"}`, round)
+		require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(frame)))
+		require.Equal(t, "response.output_text.done", readResponsesWSTestEvent(t, fixture.client)["type"])
+		require.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
+	}
+	assert.EqualValues(t, 1, fixture.connections.Load())
+
+	var logs []model.Log
+	require.NoError(t, model.LOG_DB.Where("token_id = ? AND type = ?", fixture.token.Id, model.LogTypeConsume).Order("id").Find(&logs).Error)
+	require.Len(t, logs, 2)
+	for index, log := range logs {
+		require.NotEmpty(t, log.RequestId)
+		req := httptest.NewRequest(http.MethodGet, "/api/custom/conversation-audits/"+log.RequestId, nil)
+		req.Header.Set("Authorization", "Bearer "+rawToken)
+		result := httptest.NewRecorder()
+		lookup.ServeHTTP(result, req)
+		require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+		var detail struct {
+			Data struct {
+				Audit             conversationaudit.ConversationAudit
+				Request, Response string
+			}
+		}
+		require.NoError(t, common.Unmarshal(result.Body.Bytes(), &detail))
+		assert.Equal(t, log.RequestId, detail.Data.Audit.RequestID)
+		assert.Equal(t, "completed", detail.Data.Audit.Status)
+		assert.False(t, detail.Data.Audit.FullPayload)
+		assert.JSONEq(t, fmt.Sprintf(`{"schema_version":2,"capture_mode":"latest_user_text","user_input":"question %d"}`, index+1), detail.Data.Request)
+		assert.JSONEq(t, fmt.Sprintf(`{"schema_version":2,"capture_mode":"assistant_text","assistant_text":"visible reply %d"}`, index+1), detail.Data.Response)
+	}
 }
 
 // Both transports must reach the same upstream target with the same

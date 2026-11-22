@@ -72,11 +72,11 @@ func CaptureMiddleware() gin.HandlerFunc {
 	return captureMiddleware(false)
 }
 
-func CaptureResponsesWSFailures() gin.HandlerFunc {
+func CaptureResponsesWS() gin.HandlerFunc {
 	return captureMiddleware(true)
 }
 
-func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
+func captureMiddleware(websocket bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		protocol := protocolForRequest(c.Request)
 		cfg := currentConfig()
@@ -94,13 +94,15 @@ func captureMiddleware(websocketFailuresOnly bool) gin.HandlerFunc {
 			return
 		}
 
-		captureFullPayload := cfg.CaptureFullPayload && !websocketFailuresOnly
+		websocketFailuresOnly := websocket && !cfg.CaptureWSSuccess
+		captureFullPayload := cfg.CaptureFullPayload && !websocket
 		parseStarted := time.Now()
 		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, captureFullPayload)
 		observeAuditPhase("request_parse", parseStarted, request.captureError != "")
 
 		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes, captureFullPayload)
-		if websocketFailuresOnly {
+		if websocket {
+			collector.streaming = !websocketFailuresOnly
 			service.SetRelayAuditFrameObserver(c, func(frame []byte) {
 				if len(frame) > maxSSEFrameBytes {
 					collector.captureError = joinCaptureErrors(collector.captureError, "response_frame_too_large")

@@ -74,6 +74,12 @@ func SetRelayFinalError(c *gin.Context, err *types.NewAPIError) {
 	}
 }
 
+func GetRelayFinalError(c *gin.Context) *types.NewAPIError {
+	value, _ := c.Get(relayFinalErrorKey)
+	apiErr, _ := value.(*types.NewAPIError)
+	return apiErr
+}
+
 func SetRelayAuditFrameObserver(c *gin.Context, observer func([]byte)) {
 	c.Set(relayAuditFrameKey, observer)
 }
@@ -89,9 +95,8 @@ func ObserveRelayAuditFrame(c *gin.Context, frame []byte) {
 // FinalRelayFailure uses the upstream stream outcome before the HTTP status,
 // since a terminal failure can arrive after the response has been committed.
 func FinalRelayFailure(c *gin.Context) (RelayFailure, bool) {
-	value, _ := c.Get(relayFinalErrorKey)
-	apiErr, _ := value.(*types.NewAPIError)
-	value, _ = common.GetContextKey(c, constant.ContextKeyResponseStreamStatus)
+	apiErr := GetRelayFinalError(c)
+	value, _ := common.GetContextKey(c, constant.ContextKeyResponseStreamStatus)
 	stream, _ := value.(*relaycommon.StreamStatus)
 	outcome := stream.OutcomeSnapshot()
 	failure := RelayFailure{Protocol: c.GetString(relayFailureProtocolKey)}

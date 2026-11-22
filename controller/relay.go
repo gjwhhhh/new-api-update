@@ -567,6 +567,12 @@ func executeTaskSubmissionWith(
 				break
 			}
 		}
+		if blocked := service.CheckCyberSessionChannel(c, channel.Id); blocked != nil {
+			service.SetRelayFinalError(c, blocked)
+			service.RecordRequestPolicyTermination(c, blocked)
+			taskErr = service.TaskErrorWrapperLocal(blocked, relaycommon.CyberPolicyCode, blocked.StatusCode)
+			break
+		}
 		diagnostics.attempt(retryParam.GetRetry()+1, channel, relayInfo.LockedChannel != nil)
 
 		service.AppendUsedChannel(c, channel.Id)

@@ -1262,6 +1262,13 @@ func writeTaskPluginProtocolEvent(c *gin.Context, event dto.PluginResponsesStrea
 }
 
 func respondPluginProtocolSubmissionError(c *gin.Context, taskErr *dto.TaskError) {
+	var apiErr *types.NewAPIError
+	if taskErr != nil && errors.As(taskErr.Error, &apiErr) &&
+		(apiErr.GetErrorCode() == service.CyberSessionBlockedCode || apiErr.GetErrorCode() == relaycommon.CyberPolicyCode) {
+		service.SetRelayFinalError(c, apiErr)
+		c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+		return
+	}
 	status := http.StatusInternalServerError
 	if taskErr != nil && taskErr.StatusCode >= 400 && taskErr.StatusCode <= 599 {
 		status = taskErr.StatusCode

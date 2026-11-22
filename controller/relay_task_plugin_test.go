@@ -14,14 +14,17 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
@@ -657,4 +660,188 @@ func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 	assert.Equal(t, []string{"reserve", "refund"}, events)
 	assert.Equal(t, 1, billing.refunds)
 	assert.False(t, c.Writer.Written())
+}
+
+func TestTaskPluginResponsesCyberChannelGuard(t *testing.T) {
+	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
+	const newSession = "0a1df426-f649-4f19-b33a-b790dd406fc8"
+	for _, tc := range []struct {
+		name        string
+		ttl         string
+		session     string
+		channelID   int
+		retry       bool
+		wantBlocked bool
+	}{
+		{"temporary block", "30", session, 79, false, true},
+		{"permanent block", "0", session, 79, false, true},
+		{"retry selects blocked channel", "30", session, 80, true, true},
+		{"other channel", "30", session, 80, false, false},
+		{"new session", "30", newSession, 79, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database, dialect := openTaskDialectDatabase(t, &model.Task{}, &model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{})
+			oldDB, oldLogDB := model.DB, model.LOG_DB
+			oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+			oldRedis, oldRDB := common.RedisEnabled, common.RDB
+			oldMemory, oldConsume, oldErrorLog := common.MemoryCacheEnabled, common.LogConsumeEnabled, constant.ErrorLogEnabled
+			oldRetries := common.RetryTimes
+			oldMaster := common.IsMasterNode
+			common.OptionMapRWMutex.Lock()
+			oldOptions := common.OptionMap
+			common.OptionMap = map[string]string{}
+			common.OptionMapRWMutex.Unlock()
+			t.Cleanup(func() {
+				model.DB, model.LOG_DB = oldDB, oldLogDB
+				common.SetDatabaseTypes(oldMain, oldLog)
+				common.RedisEnabled, common.RDB = oldRedis, oldRDB
+				common.MemoryCacheEnabled, common.LogConsumeEnabled, constant.ErrorLogEnabled = oldMemory, oldConsume, oldErrorLog
+				common.RetryTimes = oldRetries
+				common.IsMasterNode = oldMaster
+				common.OptionMapRWMutex.Lock()
+				common.OptionMap = oldOptions
+				common.OptionMapRWMutex.Unlock()
+				service.InitCyberSessionGuard()
+			})
+			model.DB, model.LOG_DB = database, database
+			common.SetDatabaseTypes(dialect, dialect)
+			common.IsMasterNode = false
+			t.Setenv("LOG_SQL_DSN", "")
+			require.NoError(t, model.InitLogDB())
+			common.MemoryCacheEnabled, common.LogConsumeEnabled, constant.ErrorLogEnabled = false, false, false
+			common.RetryTimes = 1
+			server := miniredis.RunT(t)
+			client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+			t.Cleanup(func() { require.NoError(t, client.Close()) })
+			common.RedisEnabled, common.RDB = true, client
+			t.Setenv("CYBER_SESSION_GUARD_MODE", "enforce")
+			t.Setenv("CYBER_SESSION_GUARD_SCOPE", "channel")
+			t.Setenv("CYBER_SESSION_GUARD_CHANNEL_IDS", "79")
+			t.Setenv("CYBER_SESSION_GUARD_TTL_SECONDS", tc.ttl)
+			service.InitCyberSessionGuard()
+
+			channels := []model.Channel{
+				{Id: 79, Type: constant.ChannelTypeTaskPlugin, Name: "blocked", Key: "test-key", Status: common.ChannelStatusEnabled, Group: "default", Models: "video-model", Priority: common.GetPointer(int64(5))},
+				{Id: 80, Type: constant.ChannelTypeTaskPlugin, Name: "fallback", Key: "test-key", Status: common.ChannelStatusEnabled, Group: "default", Models: "video-model", Priority: common.GetPointer(int64(10))},
+			}
+			require.NoError(t, database.Create(&channels).Error)
+			for _, channel := range channels {
+				require.NoError(t, database.Create(&model.Ability{ChannelId: channel.Id, Model: "video-model", Group: "default", Enabled: true, Priority: channel.Priority}).Error)
+			}
+			require.NoError(t, database.Create(&model.User{Id: 71, Username: "cyber-plugin-test"}).Error)
+			pinned := compilePluginProtocolTestEndpoint(t, "cyber-plugin-test", `
+				export const protocols = {openai_responses: {
+					renderEvents: function() { throw new Error("unexpected observation"); },
+					renderFinal: function() { throw new Error("unexpected observation"); }
+				}};
+			`)
+			events := []string{}
+			billing := &taskSubmissionTestBilling{events: &events}
+			submittedChannels := []int{}
+			deps := pluginProtocolTestDeps()
+			deps.submit = func(c *gin.Context, info *relaycommon.RelayInfo) (*taskSubmissionOutcome, *dto.TaskError) {
+				info.Billing = billing
+				info.PublicTaskID = "task_public"
+				info.TokenGroup, info.UsingGroup = "default", "default"
+				info.ChannelMeta = &relaycommon.ChannelMeta{ChannelId: tc.channelID, ChannelType: constant.ChannelTypeTaskPlugin}
+				if !tc.retry {
+					info.LockedChannel = &channels[0]
+					if tc.channelID == 80 {
+						info.LockedChannel = &channels[1]
+					}
+				}
+				return executeTaskSubmissionWith(c, info, func(c *gin.Context, _ *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+					submittedChannels = append(submittedChannels, c.GetInt("channel_id"))
+					if tc.retry {
+						return nil, service.TaskErrorWrapperLocal(errors.New("retry upstream"), "upstream_unavailable", http.StatusServiceUnavailable)
+					}
+					return &relay.TaskSubmitResult{Platform: constant.TaskPlatform(pinned.Plugin.Meta.Key), UpstreamTaskID: "upstream-task"}, nil
+				})
+			}
+			engine := gin.New()
+			engine.POST("/v1/responses", func(c *gin.Context) {
+				c.Set(common.RequestIdKey, "cyber-plugin-"+tc.name)
+				common.SetContextKey(c, constant.ContextKeyUserId, 71)
+				common.SetContextKey(c, constant.ContextKeyTokenId, 81)
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+				common.SetContextKey(c, constant.ContextKeyUserChannelPriorities, map[int]int64{})
+				c.Set("channel_id", tc.channelID)
+				c.Next()
+			}, middleware.BodyStorageCleanup(), service.RelayFailureLog(""), service.CyberSessionGuard, func(c *gin.Context) {
+				if c.GetHeader("X-Test-Upstream-Rejection") != "" {
+					c.Set("channel_id", 79)
+					apiErr := service.CyberPolicyError(http.StatusForbidden)
+					service.SetRelayFinalError(c, apiErr)
+					c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+					return
+				}
+				c.Set("resolved_task_model", "video-model")
+				c.Set(pluginruntime.ContextKeyProtocolRequest, pluginruntime.ProtocolRequestContext{
+					Protocol: "openai_responses",
+					RouteRequestContext: pluginruntime.RouteRequestContext{
+						Body: map[string]any{"kind": "json", "value": map[string]any{"model": "video-model", "background": true}},
+					},
+				})
+				serveTaskPluginProtocol(c, pinned, deps)
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":"video-model","prompt_cache_key":%q}`, session)))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Test-Upstream-Rejection", "true")
+			seed := httptest.NewRecorder()
+			engine.ServeHTTP(seed, request)
+			require.Equal(t, http.StatusForbidden, seed.Code)
+			bans, _, err := service.ListCyberBans(t.Context(), 0)
+			require.NoError(t, err)
+			require.Len(t, bans, 1)
+			assert.Equal(t, tc.ttl == "0", bans[0].Permanent)
+
+			request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":"video-model","background":true,"prompt_cache_key":%q}`, tc.session)))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, request)
+			var taskCount int64
+			require.NoError(t, database.Model(&model.Task{}).Count(&taskCount).Error)
+			if !tc.wantBlocked {
+				assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				assert.Equal(t, []int{tc.channelID}, submittedChannels)
+				assert.Equal(t, int64(1), taskCount)
+				assert.Equal(t, []string{"reserve", "settle"}, events)
+				assert.Zero(t, billing.refunds)
+				return
+			}
+			assert.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+			var response struct {
+				Error struct {
+					Code string `json:"code"`
+					Type string `json:"type"`
+				} `json:"error"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.Equal(t, "cyber_policy", response.Error.Code)
+			assert.Equal(t, "content_policy_violation", response.Error.Type)
+			if tc.retry {
+				assert.Equal(t, []int{80}, submittedChannels)
+			} else {
+				assert.Empty(t, submittedChannels)
+			}
+			assert.Zero(t, taskCount)
+			assert.Equal(t, []string{"refund"}, events)
+			assert.Equal(t, 1, billing.refunds)
+			if tc.ttl == "0" {
+				assert.Empty(t, recorder.Header().Get("Retry-After"))
+			} else {
+				assert.NotEmpty(t, recorder.Header().Get("Retry-After"))
+			}
+			var logs []model.Log
+			require.NoError(t, database.Where("error_code = ?", service.CyberSessionBlockedCode).Find(&logs).Error)
+			require.Len(t, logs, 1)
+			assert.Equal(t, 79, logs[0].ChannelId)
+			assert.Contains(t, logs[0].Other, `"action":"blocked"`)
+			assert.NotContains(t, logs[0].Other, session)
+			after, _, err := service.ListCyberBans(t.Context(), 0)
+			require.NoError(t, err)
+			require.Len(t, after, 1)
+			assert.Equal(t, bans[0].Generation, after[0].Generation)
+		})
+	}
 }

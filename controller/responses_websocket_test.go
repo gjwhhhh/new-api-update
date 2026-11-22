@@ -437,7 +437,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 	const rejected = `{"type":"response.failed","response":{"id":"rejected","status":"failed","error":{"code":"cyber_policy"}}}`
 	const completed = `{"type":"response.completed","response":{"id":"next","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`
 	for _, tc := range []struct{ name, mode, ttl string }{
-		{"off", "off", "30"}, {"shadow", "shadow", "30"}, {"temporary", "enforce", "30"}, {"permanent", "enforce", "0"}, {"redis unavailable", "enforce", "30"}, {"message rejection", "enforce", "30"},
+		{"off", "off", "30"}, {"shadow", "shadow", "30"}, {"temporary", "enforce", "30"}, {"permanent", "enforce", "0"}, {"redis unavailable", "enforce", "30"}, {"message rejection", "enforce", "30"}, {"channel scope", "enforce", "30"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(service.InitCyberSessionGuard)
@@ -462,6 +462,10 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			t.Setenv("CYBER_SESSION_GUARD_TOKEN_IDS", fmt.Sprint(fixture.token.Id))
 			t.Setenv("CYBER_SESSION_GUARD_TTL_SECONDS", tc.ttl)
 			t.Setenv("CYBER_SESSION_GUARD_MATCH_MESSAGE", strconv.FormatBool(tc.name == "message rejection"))
+			if tc.name == "channel scope" {
+				t.Setenv("CYBER_SESSION_GUARD_SCOPE", "channel")
+				t.Setenv("CYBER_SESSION_GUARD_CHANNEL_IDS", fmt.Sprint(fixture.channel.Id))
+			}
 			service.InitCyberSessionGuard()
 			metricsBefore := service.CyberSessionGuardMetrics()
 			assert.Equal(t, tc.mode, metricsBefore["mode"])
@@ -496,7 +500,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			}
 			assert.Equal(t, float64(http.StatusForbidden), next["status"])
 			require.IsType(t, map[string]any{}, next["error"])
-			assert.Equal(t, "cyber_session_blocked", next["error"].(map[string]any)["code"])
+			assert.Equal(t, "cyber_policy", next["error"].(map[string]any)["code"])
 			req, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":"ws-billing","input":"test","prompt_cache_key":%q}`, session)))
 			require.NoError(t, err)
 			req.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
@@ -507,7 +511,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
 			assert.Equal(t, http.StatusForbidden, resp.StatusCode)
-			assert.Contains(t, string(body), "cyber_session_blocked")
+			assert.Contains(t, string(body), `"code":"cyber_policy"`)
 			if tc.ttl == "0" {
 				assert.Empty(t, resp.Header.Get("Retry-After"))
 			} else {
@@ -593,7 +597,7 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 
 	status, body = post()
 	require.Equal(t, http.StatusForbidden, status)
-	assert.Contains(t, body, `"code":"cyber_session_blocked"`)
+	assert.Contains(t, body, `"code":"cyber_policy"`)
 	assert.Empty(t, fixture.httpDone, "the blocked request must not enter the HTTP relay")
 
 	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(fixture.gatewayURL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer sk-" + fixture.token.Key}})
@@ -604,7 +608,7 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	rejection := readResponsesWSTestEvent(t, client)
 	require.Equal(t, float64(http.StatusForbidden), rejection["status"])
 	require.IsType(t, map[string]any{}, rejection["error"])
-	assert.Equal(t, "cyber_session_blocked", rejection["error"].(map[string]any)["code"])
+	assert.Equal(t, "cyber_policy", rejection["error"].(map[string]any)["code"])
 	assert.Zero(t, fixture.connections.Load())
 }
 

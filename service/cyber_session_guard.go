@@ -248,10 +248,15 @@ func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID in
 				} else {
 					c.Header("Retry-After", strconv.FormatInt(max(1, int64((remaining+time.Second-1)/time.Second)), 10))
 				}
-				return types.WithOpenAIError(types.OpenAIError{
+				clientError := types.OpenAIError{
 					Type: "content_policy_violation", Code: CyberSessionBlockedCode,
 					Message: message,
-				}, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+				}
+				apiErr := types.WithOpenAIError(clientError, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+				// Keep gateway blocks distinct from upstream rejections in relay handling and logs.
+				clientError.Code = relaycommon.CyberPolicyCode
+				apiErr.RelayError = clientError
+				return apiErr
 			}
 			cyberSessionCounters.wouldBlock.Add(1)
 			logger.LogInfo(c, "cyber_session_guard mode=shadow decision=would_block")

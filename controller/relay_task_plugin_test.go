@@ -809,7 +809,7 @@ func TestTaskPluginResponsesCyberChannelGuard(t *testing.T) {
 				assert.Zero(t, billing.refunds)
 				return
 			}
-			assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			assert.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
 			var response struct {
 				Error struct {
 					Code string `json:"code"`

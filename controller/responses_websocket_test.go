@@ -509,7 +509,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 				assert.Equal(t, want, service.CyberSessionGuardMetrics()["would_block"])
 				return
 			}
-			assert.Equal(t, float64(http.StatusBadRequest), next["status"])
+			assert.Equal(t, float64(http.StatusForbidden), next["status"])
 			require.IsType(t, map[string]any{}, next["error"])
 			assert.Equal(t, "cyber_policy", next["error"].(map[string]any)["code"])
 			req, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":"ws-billing","input":"test","prompt_cache_key":%q}`, session)))
@@ -521,7 +521,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
-			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 			assert.Contains(t, string(body), `"code":"cyber_policy"`)
 			if tc.ttl == "0" {
 				assert.Empty(t, resp.Header.Get("Retry-After"))
@@ -531,7 +531,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			assert.Equal(t, "response.completed", wsTurn(otherSession)["type"])
 			fixture.redisServer.FastForward(time.Hour)
 			if tc.ttl == "0" {
-				assert.Equal(t, float64(http.StatusBadRequest), wsTurn(session)["status"])
+				assert.Equal(t, float64(http.StatusForbidden), wsTurn(session)["status"])
 				bans, _, err := service.ListCyberBans(t.Context(), 0)
 				require.NoError(t, err)
 				require.Len(t, bans, 1)
@@ -607,7 +607,7 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	assert.Len(t, events[0].Fingerprint, 64)
 
 	status, body = post()
-	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, http.StatusForbidden, status)
 	assert.Contains(t, body, `"code":"cyber_policy"`)
 	assert.Empty(t, fixture.httpDone, "the blocked request must not enter the HTTP relay")
 
@@ -617,7 +617,7 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	payload := fmt.Sprintf(`{"type":"response.create","response":{"model":"ws-billing","input":"test","prompt_cache_key":%q}}`, session)
 	require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(payload)))
 	rejection := readResponsesWSTestEvent(t, client)
-	require.Equal(t, float64(http.StatusBadRequest), rejection["status"])
+	require.Equal(t, float64(http.StatusForbidden), rejection["status"])
 	require.IsType(t, map[string]any{}, rejection["error"])
 	assert.Equal(t, "cyber_policy", rejection["error"].(map[string]any)["code"])
 	assert.Zero(t, fixture.connections.Load())
@@ -1301,7 +1301,7 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					require.NoError(t, response.Body.Close())
 					if tc.failed && !tc.delta {
 						if isCyber {
-							assert.Equal(t, http.StatusBadRequest, response.StatusCode)
+							assert.Equal(t, http.StatusForbidden, response.StatusCode)
 							assert.Contains(t, string(body), "cyber_policy")
 						} else {
 							assert.Equal(t, http.StatusBadGateway, response.StatusCode)
@@ -1920,7 +1920,7 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	assert.Equal(t, 403, status, body)
 	assert.EqualValues(t, 9, fallbackCalls.Load())
 	status, body = request("")
-	assert.Equal(t, http.StatusBadRequest, status, body)
+	assert.Equal(t, http.StatusForbidden, status, body)
 	assert.Contains(t, body, `"code":"cyber_policy"`)
 	assert.NotContains(t, body, "cyber_fallback_")
 	assert.EqualValues(t, 9, fallbackCalls.Load(), "the rejected fallback must not be called again in this batch")
@@ -1938,7 +1938,7 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	require.NoError(t, common.Unmarshal(blockedResponse, &event))
 	expectedPayloads["responses-ws-billing-ws-2"] = [2]string{blockedFrame, string(blockedResponse) + "\n"}
 	assert.Equal(t, "error", event["type"])
-	assert.Equal(t, float64(http.StatusBadRequest), event["status"])
+	assert.Equal(t, float64(http.StatusForbidden), event["status"])
 	assert.Equal(t, "invalid_request", event["error"].(map[string]any)["type"])
 	assert.Equal(t, "cyber_policy", event["error"].(map[string]any)["code"])
 	assert.NotContains(t, string(blockedResponse), "cyber_fallback_")
@@ -2013,7 +2013,7 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	require.NotNil(t, savedPolicy.CaptureFullPayload)
 	assert.False(t, *savedPolicy.CaptureFullPayload)
 	status, body = request("")
-	assert.Equal(t, http.StatusBadRequest, status, body)
+	assert.Equal(t, http.StatusForbidden, status, body)
 	var summary conversationaudit.ConversationAudit
 	require.Eventually(t, func() bool {
 		return model.DB.Where("request_id = ?", fmt.Sprintf("cyber-http-%d", httpSequence)).Take(&summary).Error == nil

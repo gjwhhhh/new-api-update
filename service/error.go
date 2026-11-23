@@ -154,7 +154,7 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 
 func CyberPolicyError(status int) *types.NewAPIError {
 	if status < 400 || status > 599 {
-		status = http.StatusBadRequest
+		status = http.StatusForbidden
 	}
 	return types.WithOpenAIError(types.OpenAIError{
 		Type: "invalid_request", Code: relaycommon.CyberPolicyCode,

@@ -63,7 +63,7 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		return nil
 	}
 	if service.IsCyberFallback(c) {
-		return service.TaskErrorWrapperLocal(errors.New("origin task context cannot migrate to a fallback channel"), "cyber_fallback_stateful_context", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(errors.New("origin task context cannot migrate to a fallback channel"), "cyber_fallback_stateful_context", http.StatusConflict)
 	}
 
 	// 查找原始任务
@@ -154,7 +154,7 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 func ApplyChannelPin(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	if service.IsCyberFallback(c) {
 		if tasks, ok := common.GetContextKeyType[[]*model.Task](c, constant.ContextKeyOriginTasks); ok && len(tasks) > 0 {
-			return service.TaskErrorWrapperLocal(errors.New("origin task context cannot migrate to a fallback channel"), "cyber_fallback_stateful_context", http.StatusBadRequest)
+			return service.TaskErrorWrapperLocal(errors.New("origin task context cannot migrate to a fallback channel"), "cyber_fallback_stateful_context", http.StatusConflict)
 		}
 		if err := service.ValidateCyberFallbackChannel(c, c.GetInt("channel_id")); err != nil {
 			return service.TaskErrorWrapperLocal(err, string(err.GetErrorCode()), err.StatusCode)

@@ -155,7 +155,7 @@ func CyberSessionGuard(c *gin.Context) {
 		bindingOutOfScope = !slices.Contains(settings.ChannelIDs, originalChannel)
 	}
 	if binding != nil && (settings.Mode != cyberSessionEnforce || settings.BlockedAction != "reroute" || settings.FallbackChannelID != binding.channelID || c.GetInt("token_id") != binding.session.tokenID || (settings.Scope == "token" && !slices.Contains(settings.TokenIDs, binding.session.tokenID)) || bindingOutOfScope) {
-		apiErr := cyberFallbackError(c, "reconnect_required")
+		apiErr := cyberFallbackError(c, "reconnect_required", http.StatusForbidden)
 		SetRelayFinalError(c, apiErr)
 		c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 		return
@@ -187,7 +187,7 @@ func CyberSessionGuard(c *gin.Context) {
 		return
 	}
 	if binding != nil && (!common.RedisEnabled || common.RDB == nil || c.Request.ContentLength > cyberSessionCacheLimit) {
-		apiErr := cyberFallbackError(c, "state_unavailable")
+		apiErr := cyberFallbackError(c, "state_unavailable", http.StatusServiceUnavailable)
 		SetRelayFinalError(c, apiErr)
 		c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 		return
@@ -212,7 +212,7 @@ func CyberSessionGuard(c *gin.Context) {
 		body, readErr := storage.Bytes()
 		invalidSession := readErr != nil || digest == "" && gjson.GetBytes(body, "prompt_cache_key").Exists()
 		if invalidSession || digest != "" && digest != binding.session.digest {
-			apiErr := cyberFallbackError(c, "reconnect_required")
+			apiErr := cyberFallbackError(c, "reconnect_required", http.StatusForbidden)
 			SetRelayFinalError(c, apiErr)
 			c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 			return
@@ -322,7 +322,7 @@ func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID in
 					Type: "invalid_request", Code: CyberSessionBlockedCode,
 					Message: message,
 				}
-				apiErr := types.WithOpenAIError(clientError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+				apiErr := types.WithOpenAIError(clientError, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 				// Keep gateway blocks distinct from upstream rejections in relay handling and logs.
 				clientError.Code = relaycommon.CyberPolicyCode
 				apiErr.RelayError = clientError

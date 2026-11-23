@@ -79,13 +79,13 @@ func TestCyberFallbackPluginSubmissionAndTerminalOutcomes(t *testing.T) {
 			if tc.conflict {
 				legacyOriginError := relay.ResolveOriginTask(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{OriginTaskID: "task_origin"}})
 				require.NotNil(t, legacyOriginError)
-				assert.Equal(t, http.StatusBadRequest, legacyOriginError.StatusCode)
+				assert.Equal(t, http.StatusConflict, legacyOriginError.StatusCode)
 				assert.Equal(t, "cyber_policy", taskSubmissionAPIError(legacyOriginError).ToOpenAIError().Code)
 				assert.Equal(t, "stop", decideTaskRetry(c, legacyOriginError, 3).Action)
 				common.SetContextKey(c, constant.ContextKeyOriginTasks, []*model.Task{{TaskID: "task_origin"}})
 				pluginOriginError := relay.ApplyChannelPin(c, nil)
 				require.NotNil(t, pluginOriginError)
-				assert.Equal(t, http.StatusBadRequest, pluginOriginError.StatusCode)
+				assert.Equal(t, http.StatusConflict, pluginOriginError.StatusCode)
 				assert.Equal(t, "cyber_policy", taskSubmissionAPIError(pluginOriginError).ToOpenAIError().Code)
 				assert.Equal(t, "stop", decideTaskRetry(c, pluginOriginError, 3).Action)
 				common.SetContextKey(c, constant.ContextKeyOriginTasks, []*model.Task(nil))
@@ -105,7 +105,7 @@ func TestCyberFallbackPluginSubmissionAndTerminalOutcomes(t *testing.T) {
 			serveTaskPluginProtocol(c, pinned, deps)
 			if tc.conflict {
 				assert.Zero(t, submits)
-				assert.Equal(t, http.StatusBadRequest, recorder.Code)
+				assert.Equal(t, http.StatusConflict, recorder.Code)
 				assert.Contains(t, recorder.Body.String(), `"code":"cyber_policy"`)
 				assert.NotContains(t, recorder.Body.String(), "cyber_fallback_")
 			} else {
@@ -153,7 +153,7 @@ func TestCyberFallbackTaskErrorsExposeCyberPolicy(t *testing.T) {
 				} else {
 					respondTaskSubmissionError(c, taskErr)
 				}
-				assert.Equal(t, http.StatusBadRequest, recorder.Code)
+				assert.Equal(t, tc.status, recorder.Code)
 				var response struct {
 					Error struct {
 						Code string `json:"code"`

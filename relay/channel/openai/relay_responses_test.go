@@ -115,7 +115,7 @@ func TestCyberStreamRejectionPreservesCodeAndDeliveredOutput(t *testing.T) {
 				if !partial {
 					require.NotNil(t, err)
 					assert.Equal(t, types.ErrorCode("cyber_policy"), err.GetErrorCode())
-					assert.Equal(t, http.StatusBadRequest, err.StatusCode)
+					assert.Equal(t, http.StatusForbidden, err.StatusCode)
 					assert.True(t, types.IsSkipRetryError(err))
 					assert.Nil(t, usage)
 					assert.Empty(t, recorder.Body.String())

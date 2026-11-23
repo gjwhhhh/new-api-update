@@ -129,7 +129,7 @@ return result
 
 func prepareCyberFallbackBans(c *gin.Context, session cyberRequestSession, binding *CyberFallbackBinding) *types.NewAPIError {
 	if !common.RedisEnabled || common.RDB == nil {
-		return cyberFallbackError(c, "state_unavailable")
+		return cyberFallbackError(c, "state_unavailable", http.StatusServiceUnavailable)
 	}
 	keys := []string{session.redisKey(0)}
 	if session.policy.Scope == "channel" {
@@ -151,7 +151,7 @@ func prepareCyberFallbackBans(c *gin.Context, session cyberRequestSession, bindi
 		cyberSessionCounters.readError.Add(1)
 		// An established fallback connection already made a confirmed decision.
 		if binding != nil {
-			return cyberFallbackError(c, "state_unavailable")
+			return cyberFallbackError(c, "state_unavailable", http.StatusServiceUnavailable)
 		}
 		c.Set(cyberSessionSkipKey, "redis_unavailable")
 		return nil
@@ -188,18 +188,18 @@ func activateCyberFallback(c *gin.Context, session cyberRequestSession, ban cybe
 		TargetChannelID: session.policy.FallbackChannelID, Action: "reroute", Outcome: "selected", Reason: "existing_ban", RequestID: c.GetString(common.RequestIdKey), ban: ban, sameConnection: sameConnection}
 	c.Set(cyberFallbackKey, route)
 	if ban.unavailable {
-		return cyberFallbackError(c, "state_unavailable")
+		return cyberFallbackError(c, "state_unavailable", http.StatusServiceUnavailable)
 	}
 	value, _ := c.Get(cyberFallbackBansKey)
 	bans, _ := value.(map[string]cyberFallbackBan)
 	if targetBan, exists := bans[session.redisKey(route.TargetChannelID)]; exists && targetBan.key != ban.key {
-		return cyberFallbackError(c, "target_rejected")
+		return cyberFallbackError(c, "target_rejected", http.StatusForbidden)
 	}
 	if ban.denied {
-		return cyberFallbackError(c, "target_rejected")
+		return cyberFallbackError(c, "target_rejected", http.StatusForbidden)
 	}
 	if route.SourceChannelID > 0 && route.SourceChannelID == route.TargetChannelID {
-		return cyberFallbackError(c, "same_source")
+		return cyberFallbackError(c, "same_source", http.StatusForbidden)
 	}
 
 	GetChannelConstraints(c).AddFilter(dto.ChannelFilter{Kind: dto.FilterAllowedChannelIDs, AllowedChannelIDs: []int{route.TargetChannelID}})
@@ -207,7 +207,7 @@ func activateCyberFallback(c *gin.Context, session cyberRequestSession, ban cybe
 	return nil
 }
 
-func cyberFallbackError(c *gin.Context, reason string) *types.NewAPIError {
+func cyberFallbackError(c *gin.Context, reason string, status int) *types.NewAPIError {
 	if cyberFallback(c) == nil {
 		if binding, _ := c.Request.Context().Value(cyberFallbackContextKey{}).(*CyberFallbackBinding); binding != nil {
 			c.Set(cyberFallbackKey, &cyberFallbackRoute{BatchID: binding.ban.meta.ID, Fingerprint: binding.session.digest, SourceChannelID: binding.ban.meta.SourceChannelID, TargetChannelID: binding.channelID, Action: "reroute", RequestID: c.GetString(common.RequestIdKey), ban: binding.ban})
@@ -218,9 +218,9 @@ func cyberFallbackError(c *gin.Context, reason string) *types.NewAPIError {
 	}
 	cyberFallbackCounters.rejected.Add(1)
 	apiErr := types.WithOpenAIError(types.OpenAIError{Type: "invalid_request_error", Code: "cyber_fallback_" + reason,
-		Message: "This conversation cannot use the configured fallback channel (" + reason + "); contact an administrator"}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		Message: "This conversation cannot use the configured fallback channel (" + reason + "); contact an administrator"}, status, types.ErrOptionWithSkipRetry())
 	// Preserve the routing failure for retry decisions and audit attribution.
-	apiErr.RelayError = CyberPolicyError(http.StatusBadRequest).ToOpenAIError()
+	apiErr.RelayError = CyberPolicyError(status).ToOpenAIError()
 	return apiErr
 }
 
@@ -232,11 +232,11 @@ func ValidateCyberFallbackChannel(c *gin.Context, channelID int) *types.NewAPIEr
 	}
 	for _, pin := range GetChannelConstraints(c).Pins {
 		if pin.ChannelId != route.TargetChannelID {
-			return cyberFallbackError(c, "binding_conflict")
+			return cyberFallbackError(c, "binding_conflict", http.StatusConflict)
 		}
 	}
 	if channelID != route.TargetChannelID {
-		return cyberFallbackError(c, "reconnect_required")
+		return cyberFallbackError(c, "reconnect_required", http.StatusConflict)
 	}
 	return nil
 }
@@ -247,13 +247,13 @@ func selectCyberFallbackChannel(c *gin.Context, modelName string, retry *RetryPa
 	if common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
 		limit, _ := common.GetContextKeyType[map[string]bool](c, constant.ContextKeyTokenModelLimit)
 		if !limit[modelName] && !limit[ratio_setting.FormatMatchingModelName(modelName)] && !limit[ratio_setting.RoutingMatchModelName(modelName)] {
-			return nil, "", cyberChannelSelectError(cyberFallbackError(c, "model_forbidden"))
+			return nil, "", cyberChannelSelectError(cyberFallbackError(c, "model_forbidden", http.StatusForbidden))
 		}
 	}
 	if apiErr = ValidateCyberFallbackChannel(c, route.TargetChannelID); apiErr == nil && retry.GetRetry() == 0 {
 		preferred, found := GetPreferredChannelByAffinity(c, modelName, retry.TokenGroup)
 		if found && RequestPolicy(c).SessionMode == "strict" && preferred != route.TargetChannelID {
-			apiErr = cyberFallbackError(c, "binding_conflict")
+			apiErr = cyberFallbackError(c, "binding_conflict", http.StatusConflict)
 		}
 	}
 	if apiErr != nil {
@@ -262,7 +262,7 @@ func selectCyberFallbackChannel(c *gin.Context, modelName string, retry *RetryPa
 	// A token pin must not bypass the original group/model pool on rerouting.
 	ch, group, err := cacheGetRandomSatisfiedChannel(retry)
 	if err != nil || ch == nil {
-		return nil, group, cyberChannelSelectError(cyberFallbackError(c, "target_unavailable"))
+		return nil, group, cyberChannelSelectError(cyberFallbackError(c, "target_unavailable", http.StatusServiceUnavailable))
 	}
 	route.Group = group
 	return ch, group, nil

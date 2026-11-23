@@ -845,8 +845,8 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 // TaskError.Error is nil for many local rejections, so fall back to the message.
 func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
 	if service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == service.CyberSessionBlockedCode {
-		apiErr := types.NewOpenAIError(errors.New(taskErr.Message), types.ErrorCode(taskErr.Code), http.StatusBadRequest, types.ErrOptionWithSkipRetry())
-		apiErr.RelayError = service.CyberPolicyError(http.StatusBadRequest).ToOpenAIError()
+		apiErr := types.NewOpenAIError(errors.New(taskErr.Message), types.ErrorCode(taskErr.Code), taskErr.StatusCode, types.ErrOptionWithSkipRetry())
+		apiErr.RelayError = service.CyberPolicyError(taskErr.StatusCode).ToOpenAIError()
 		return apiErr
 	}
 	if taskErr.Code == relaycommon.CyberPolicyCode && !taskErr.LocalError {

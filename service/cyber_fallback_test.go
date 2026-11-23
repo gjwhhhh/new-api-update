@@ -47,32 +47,36 @@ func TestCyberFallbackPolicy(t *testing.T) {
 }
 
 func TestCyberFallbackErrorsExposeCyberPolicy(t *testing.T) {
-	for _, reason := range []string{
-		"binding_conflict",
-		"reconnect_required",
-		"target_rejected",
-		"same_source",
-		"model_forbidden",
-		"state_unavailable",
-		"target_unavailable",
+	for _, tc := range []struct {
+		reason string
+		status int
+	}{
+		{reason: "binding_conflict", status: http.StatusConflict},
+		{reason: "reconnect_required", status: http.StatusConflict},
+		{reason: "reconnect_required", status: http.StatusForbidden},
+		{reason: "target_rejected", status: http.StatusForbidden},
+		{reason: "same_source", status: http.StatusForbidden},
+		{reason: "model_forbidden", status: http.StatusForbidden},
+		{reason: "state_unavailable", status: http.StatusServiceUnavailable},
+		{reason: "target_unavailable", status: http.StatusServiceUnavailable},
 	} {
-		t.Run(reason, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/%d", tc.reason, tc.status), func(t *testing.T) {
 			c := cyberFallbackTestContext(`{"input":"hello"}`)
 			armed := false
 			c.Set(cyberSessionArmKey, func() { armed = true })
-			apiErr := cyberFallbackError(c, reason)
-			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			apiErr := cyberFallbackError(c, tc.reason, tc.status)
+			assert.Equal(t, tc.status, apiErr.StatusCode)
 			public := apiErr.ToOpenAIError()
 			assert.Equal(t, "cyber_policy", public.Code)
 			assert.Equal(t, "invalid_request", public.Type)
-			assert.NotContains(t, public.Message, reason)
+			assert.NotContains(t, public.Message, tc.reason)
 			assert.Equal(t, "cyber_policy", apiErr.ToClaudeError().Type)
 			assert.True(t, types.IsSkipRetryError(apiErr))
 			SetRelayFinalError(c, apiErr)
 			assert.False(t, armed, "a local routing failure must not create another upstream rejection ban")
 			failure, found := FinalRelayFailure(c)
 			require.True(t, found)
-			assert.Equal(t, "cyber_fallback_"+reason, failure.Code)
+			assert.Equal(t, "cyber_fallback_"+tc.reason, failure.Code)
 		})
 	}
 }
@@ -316,7 +320,7 @@ func TestCyberFallbackConfirmedStorageFailureDoesNotReleaseBan(t *testing.T) {
 	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
 	apiErr := checkCyberSession(c, session, 0)
 	require.NotNil(t, apiErr)
-	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
 
 	// One corrupt parent must not make the entire bounded read fail open.
 	session.policy.Scope = "channel"
@@ -326,12 +330,12 @@ func TestCyberFallbackConfirmedStorageFailureDoesNotReleaseBan(t *testing.T) {
 	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
 	apiErr = checkCyberSession(c, session, 0)
 	require.NotNil(t, apiErr)
-	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode, "the global ban remains enforced despite another corrupt parent")
+	assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode, "the global ban remains enforced despite another corrupt parent")
 	c = cyberFallbackTestContext(`{"input":"hello"}`)
 	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
 	apiErr = checkCyberSession(c, session, 21)
 	require.NotNil(t, apiErr)
-	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode, "the corrupt parent itself is unavailable rather than unbanned")
+	assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode, "the corrupt parent itself is unavailable rather than unbanned")
 }
 
 func TestCyberFallbackPolicyReloadDefaultsToBlock(t *testing.T) {

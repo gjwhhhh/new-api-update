@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import type { ApiResponse } from '@/features/profile/types'
 import { api } from '@/lib/api'
 import { getServerErrorStatus } from '@/lib/server-error-message'
@@ -26,6 +27,7 @@ import { getServerErrorStatus } from '@/lib/server-error-message'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
 interface ConversationAuditDetail {
+  preview?: boolean
   audit: {
     status: string
     capture_error?: string
@@ -38,6 +40,10 @@ interface ConversationAuditDetail {
   response: string
   response_segments: string[]
   matched_segment?: { response_index: number; truncated: boolean }
+  request_preview?: string
+  response_preview?: string
+  request_preview_truncated?: boolean
+  response_preview_truncated?: boolean
 }
 
 function capturedText(payload: string, field: 'user_input' | 'assistant_text') {
@@ -56,6 +62,7 @@ function capturedText(payload: string, field: 'user_input' | 'assistant_text') {
 
 export function ConversationAuditPanel({ requestId }: { requestId: string }) {
   const { t } = useTranslation()
+  const [full, setFull] = useState(false)
   const [result, setResult] = useState<
     | { detail: ConversationAuditDetail }
     | { error: 'missing' | 'forbidden' | 'unavailable' }
@@ -68,7 +75,7 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
     // Keep decrypted text local to the open panel, not in the shared query cache.
     api
       .get<ApiResponse<ConversationAuditDetail>>(
-        `/api/custom/conversation-audits/${encodedId}`,
+        `/api/custom/conversation-audits/${encodedId}?preview=${full ? 'false' : 'true'}`,
         { signal: controller.signal, skipErrorHandler: true }
       )
       .then(({ data }) => {
@@ -91,7 +98,7 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
         }
       })
     return () => controller.abort()
-  }, [encodedId])
+  }, [encodedId, full])
 
   if (!result) return <p role='status'>{t('Loading...')}</p>
   if ('error' in result) {
@@ -103,19 +110,27 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
     return <p role='status'>{messages[result.error]}</p>
   }
 
-  const { audit, request, response, response_segments, matched_segment } =
-    result.detail
-  const input = audit.full_payload
-    ? request
-    : capturedText(request, 'user_input')
-  const rootReply = audit.full_payload
-    ? response
-    : capturedText(response, 'assistant_text')
-  const segments = response_segments.map((part) =>
-    capturedText(part, 'assistant_text')
-  )
-  const reply = matched_segment
-    ? (segments[matched_segment.response_index] ?? '')
+  const { audit } = result.detail
+  const isPreview = result.detail.preview === true
+  let input = result.detail.request_preview ?? ''
+  if (!isPreview) {
+    input = audit.full_payload
+      ? result.detail.request
+      : capturedText(result.detail.request, 'user_input')
+  }
+  let rootReply = result.detail.response_preview ?? ''
+  if (!isPreview) {
+    rootReply = audit.full_payload
+      ? result.detail.response
+      : capturedText(result.detail.response, 'assistant_text')
+  }
+  const segments = isPreview
+    ? []
+    : result.detail.response_segments.map((part) =>
+        capturedText(part, 'assistant_text')
+      )
+  const reply = result.detail.matched_segment
+    ? (segments[result.detail.matched_segment.response_index] ?? '')
     : rootReply
   const combined = [rootReply, ...segments].filter(Boolean).join('\n\n')
   const captureReasons = audit.capture_error?.split(',') ?? []
@@ -137,13 +152,13 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
     <div className='min-w-0 space-y-3 py-1'>
       <div className='space-y-1'>
         <DetailRow
-          label={matched_segment ? t('Turn status') : t('Status')}
+          label={result.detail.matched_segment ? t('Turn status') : t('Status')}
           value={statusLabel}
         />
         {audit.error_code && (
           <DetailRow label={t('Error code')} value={audit.error_code} mono />
         )}
-        {audit.full_payload && (
+        {!isPreview && audit.full_payload && (
           <p className='text-muted-foreground text-xs'>{t('Raw payload')}</p>
         )}
         {pending && (
@@ -151,12 +166,15 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
             {t('Continuation pending association')}
           </p>
         )}
-        {audit.request_truncated && (
+        {(audit.request_truncated ||
+          result.detail.request_preview_truncated) && (
           <p className='text-muted-foreground text-xs'>
             {t('Request truncated')}
           </p>
         )}
-        {(matched_segment?.truncated ?? audit.response_truncated) && (
+        {((result.detail.matched_segment?.truncated ??
+          audit.response_truncated) ||
+          result.detail.response_preview_truncated) && (
           <p className='text-muted-foreground text-xs'>
             {t('Response truncated')}
           </p>
@@ -174,13 +192,29 @@ export function ConversationAuditPanel({ requestId }: { requestId: string }) {
       <DetailSection label={t('Response')}>
         <p className={textClass}>{reply || t('No captured text')}</p>
       </DetailSection>
-      {segments.length > 0 && combined !== reply && (
-        <details className='space-y-2'>
-          <summary className='w-fit cursor-pointer text-sm font-medium'>
-            {t('Combined turn response')}
-          </summary>
-          <p className={textClass}>{combined}</p>
-        </details>
+      {isPreview ? (
+        <Button
+          type='button'
+          variant='link'
+          size='sm'
+          className='h-auto p-0'
+          onClick={() => {
+            setResult(null)
+            setFull(true)
+          }}
+        >
+          {t('Expand')}
+        </Button>
+      ) : (
+        segments.length > 0 &&
+        combined !== reply && (
+          <details className='space-y-2'>
+            <summary className='w-fit cursor-pointer text-sm font-medium'>
+              {t('Combined turn response')}
+            </summary>
+            <p className={textClass}>{combined}</p>
+          </details>
+        )
       )}
       <a
         className='text-primary text-sm underline-offset-4 hover:underline'

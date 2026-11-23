@@ -110,38 +110,68 @@ describe('usage log reject reason', () => {
 })
 
 describe('conversation content in usage log details', () => {
-  test('loads only when opened and shows the matching continuation as plain text', async () => {
-    const get = vi.spyOn(api, 'get').mockResolvedValueOnce({
-      data: {
-        success: true,
+  test('loads a preview on the first page and expands to the full continuation', async () => {
+    const get = vi
+      .spyOn(api, 'get')
+      .mockResolvedValueOnce({
         data: {
-          audit: { request_id: 'root-1', status: 'completed' },
-          request: JSON.stringify({
-            schema_version: 2,
-            user_input: 'A question',
-          }),
-          response: JSON.stringify({
-            schema_version: 2,
-            assistant_text: 'Root reply',
-          }),
-          response_segments: [
-            JSON.stringify({
-              schema_version: 2,
-              assistant_text: '<b>Continuation reply</b>',
-            }),
-          ],
-          matched_segment: { response_index: 0, truncated: true },
+          success: true,
+          data: {
+            preview: true,
+            audit: {
+              request_id: 'root-1',
+              status: 'completed',
+              full_payload: false,
+              request_truncated: false,
+              response_truncated: false,
+            },
+            request_preview: 'A question',
+            response_preview: 'Continuation reply',
+            request_preview_truncated: false,
+            response_preview_truncated: false,
+          },
         },
-      },
-    })
+      })
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: {
+            audit: {
+              request_id: 'root-1',
+              status: 'completed',
+              full_payload: false,
+              request_truncated: false,
+              response_truncated: false,
+            },
+            request: JSON.stringify({
+              schema_version: 2,
+              user_input: 'A question',
+            }),
+            response: JSON.stringify({
+              schema_version: 2,
+              assistant_text: 'Root reply',
+            }),
+            response_segments: [
+              JSON.stringify({
+                schema_version: 2,
+                assistant_text: '<b>Continuation reply</b>',
+              }),
+            ],
+            matched_segment: { response_index: 0, truncated: true },
+          },
+        },
+      })
     renderDetails(true, 2)
-    expect(get).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Conversation content' }))
     expect(await screen.findByText('A question')).toBeVisible()
     expect(
-      screen.getByText('<b>Continuation reply</b>', { exact: true })
+      screen.getByText('Continuation reply', { exact: true })
     ).toBeVisible()
+    expect(get).toHaveBeenCalledWith(
+      '/api/custom/conversation-audits/req-1?preview=true',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }))
+    expect(await screen.findByText('<b>Continuation reply</b>')).toBeVisible()
     expect(screen.getByText('Response truncated')).toBeVisible()
     expect(screen.getByText(/Root reply/)).not.toBeVisible()
     fireEvent.click(screen.getByText('Combined turn response'))
@@ -150,12 +180,9 @@ describe('conversation content in usage log details', () => {
       screen.getByRole('link', { name: 'View conversation audit' })
     ).toHaveAttribute('href', '/conversation-audit/?request_id=req-1')
     expect(get).toHaveBeenCalledWith(
-      '/api/custom/conversation-audits/req-1',
+      '/api/custom/conversation-audits/req-1?preview=false',
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Details' }))
-    expect(screen.queryByText('A question')).toBeNull()
   })
 
   test.each([
@@ -167,7 +194,6 @@ describe('conversation content in usage log details', () => {
     async (status, message) => {
       vi.spyOn(api, 'get').mockRejectedValueOnce({ response: { status } })
       renderDetails(true)
-      fireEvent.click(screen.getByRole('tab', { name: 'Conversation content' }))
       expect(await screen.findByText(message)).toBeVisible()
     }
   )
@@ -177,21 +203,22 @@ describe('conversation content in usage log details', () => {
       data: {
         success: true,
         data: {
+          preview: true,
           audit: {
             status: 'completed',
+            full_payload: false,
+            request_truncated: false,
+            response_truncated: false,
             capture_error: 'request_parse_limit_exceeded',
           },
-          request: '',
-          response: JSON.stringify({
-            schema_version: 2,
-            assistant_text: 'Visible reply',
-          }),
-          response_segments: [],
+          request_preview: '',
+          response_preview: 'Visible reply',
+          request_preview_truncated: false,
+          response_preview_truncated: false,
         },
       },
     })
     renderDetails(true, 2)
-    fireEvent.click(screen.getByRole('tab', { name: 'Conversation content' }))
     expect(await screen.findByText('Visible reply')).toBeVisible()
     expect(
       screen.getByText(

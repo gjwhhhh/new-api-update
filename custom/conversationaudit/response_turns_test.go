@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -175,6 +176,15 @@ func TestAuditDetailResolvesLoggedRequest(t *testing.T) {
 		engine.ServeHTTP(result, req)
 		return result
 	}
+	previewLookup := func(id, token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/custom/conversation-audits/"+id+"?preview=true", nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		result := httptest.NewRecorder()
+		engine.ServeHTTP(result, req)
+		return result
+	}
 
 	const pendingID = "pending-request"
 	const rootID = "root-request"
@@ -242,11 +252,49 @@ func TestAuditDetailResolvesLoggedRequest(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{rootID, pendingID, pendingID, "tool-only"}, viewedRequests)
 
+	preview := previewLookup(pendingID, adminSession.AccessToken)
+	require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
+	var previewPayload struct {
+		Data struct {
+			Preview          bool     `json:"preview"`
+			RequestPreview   string   `json:"request_preview"`
+			ResponsePreview  string   `json:"response_preview"`
+			ResponseSegments []string `json:"response_segments"`
+			Request          string   `json:"request"`
+			Response         string   `json:"response"`
+			MatchedSegment   any      `json:"matched_segment"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(preview.Body.Bytes(), &previewPayload))
+	assert.True(t, previewPayload.Data.Preview)
+	assert.Equal(t, "private question", previewPayload.Data.RequestPreview)
+	assert.Equal(t, "continuation reply", previewPayload.Data.ResponsePreview)
+	assert.Empty(t, previewPayload.Data.ResponseSegments)
+	assert.Empty(t, previewPayload.Data.Request)
+	assert.Empty(t, previewPayload.Data.Response)
+	assert.Nil(t, previewPayload.Data.MatchedSegment)
+
 	require.NoError(t, db.Model(root).Update("key_version", "unavailable").Error)
 	assert.Equal(t, http.StatusServiceUnavailable, lookup(pendingID, adminSession.AccessToken).Code)
 	require.NoError(t, db.Model(root).Update("expires_at", time.Now().Unix()-1).Error)
 	assert.Equal(t, http.StatusNotFound, lookup(rootID, adminSession.AccessToken).Code)
 	assert.Equal(t, http.StatusNotFound, lookup(pendingID, adminSession.AccessToken).Code)
+}
+
+func TestAuditPreviewTextExtractsVisibleContentAndTruncatesUTF8(t *testing.T) {
+	request, truncated := auditPreviewText(`{"schema_version":2,"user_input":"visible question"}`, "user_input")
+	assert.Equal(t, "visible question", request)
+	assert.False(t, truncated)
+
+	response, truncated := auditPreviewText(`{"schema_version":2,"assistant_text":"visible answer"}`, "assistant_text")
+	assert.Equal(t, "visible answer", response)
+	assert.False(t, truncated)
+
+	response, truncated = auditPreviewText(strings.Repeat("界", auditPreviewLimit), "assistant_text")
+	assert.True(t, truncated)
+	assert.True(t, utf8.ValidString(response))
+	assert.True(t, strings.HasSuffix(response, "…"))
+	assert.LessOrEqual(t, len(response), auditPreviewLimit+len("…"))
 }
 
 func TestCaptureMiddlewareAppendsResponsesToolContinuationToRootTurn(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -91,6 +92,7 @@ func listAudits(c *gin.Context) {
 
 func getAuditDetail(c *gin.Context) {
 	requestID := c.Param("request_id")
+	preview := c.Query("preview") == "true"
 	now := time.Now().Unix()
 	db := model.DB.WithContext(c.Request.Context())
 	var audit ConversationAudit
@@ -133,6 +135,45 @@ func getAuditDetail(c *gin.Context) {
 		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
 		return
 	}
+	if preview {
+		requestPreview, requestPreviewTruncated := auditPreviewText(requestContent, "user_input")
+		responsePreviewContent := responseContent
+		responsePreviewTruncated := false
+		if bySegment {
+			var segment ConversationAuditResponseSegment
+			segmentErr := db.Where("audit_id = ? AND request_id = ? AND expires_at > ?", audit.ID, requestID, now).Take(&segment).Error
+			if errors.Is(segmentErr, gorm.ErrRecordNotFound) {
+				respondError(c, http.StatusNotFound, "conversation audit was not found")
+				return
+			}
+			if segmentErr != nil {
+				respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
+				return
+			}
+			responsePreviewContent, err = decrypt(segment.KeyVersion, segment.ResponseNonce, segment.ResponseCiphertext, auditResponseSegmentAAD(&segment))
+			if err != nil {
+				respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
+				return
+			}
+			responsePreviewContent, responsePreviewTruncated = auditPreviewText(responsePreviewContent, "assistant_text")
+		} else {
+			responsePreviewContent, responsePreviewTruncated = auditPreviewText(responseContent, "assistant_text")
+		}
+		recordAdminAudit(c, "conversation_audit.view", requestID)
+		detail := gin.H{
+			"audit":                      audit,
+			"preview":                    true,
+			"request_preview":            requestPreview,
+			"response_preview":           responsePreviewContent,
+			"request_preview_truncated":  requestPreviewTruncated,
+			"response_preview_truncated": responsePreviewTruncated,
+		}
+		if sensitiveMatch != nil {
+			detail["local_sensitive_match"] = sensitiveMatch
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
+		return
+	}
 	responseSegments, matchedSegment, err := decryptAuditResponseSegments(db, &audit, requestID, now)
 	if err != nil {
 		respondError(c, http.StatusServiceUnavailable, "conversation audit content is unavailable")
@@ -161,6 +202,28 @@ func getAuditDetail(c *gin.Context) {
 		"success": true,
 		"data":    detail,
 	})
+}
+
+const auditPreviewLimit = 8 * 1024
+
+func auditPreviewText(payload, field string) (string, bool) {
+	text := payload
+	var captured capturePayload
+	if common.UnmarshalJsonStr(payload, &captured) == nil && captured.SchemaVersion == 2 {
+		if field == "user_input" {
+			text = captured.UserInput
+		} else {
+			text = captured.AssistantText
+		}
+	}
+	if len(text) <= auditPreviewLimit {
+		return text, false
+	}
+	text = text[:auditPreviewLimit]
+	for !utf8.ValidString(text) {
+		text = text[:len(text)-1]
+	}
+	return text + "…", true
 }
 
 func deleteAudit(c *gin.Context) {

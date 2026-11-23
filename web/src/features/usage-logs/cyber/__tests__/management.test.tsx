@@ -172,3 +172,82 @@ it('separates a newly written ban from a request blocked before relay', async ()
     '/conversation-audit/?request_id=upstream-rejection'
   )
 })
+
+it('keeps old policies blocking and requires an enabled fallback plus explicit data-routing confirmation', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/cyber/policy'
+          ? policy
+          : {
+              channels: [
+                {
+                  id: 3,
+                  name: 'Fallback upstream',
+                  status: 1,
+                  groups: ['default'],
+                },
+                {
+                  id: 4,
+                  name: 'Disabled upstream',
+                  status: 2,
+                  groups: ['default'],
+                },
+              ],
+              groups: ['default'],
+            },
+    },
+  }))
+  const save = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true, data: policy } })
+  const user = userEvent.setup()
+  renderPanel(<CyberPolicySettings userId={1} canWrite />)
+  const action = await screen.findByRole('combobox', {
+    name: 'Action for blocked sessions',
+  })
+  expect(action).toHaveValue('block')
+  await user.selectOptions(action, 'reroute')
+  const target = await screen.findByRole('combobox', {
+    name: 'Fallback channel',
+  })
+  expect(
+    await screen.findByRole('option', { name: '#4 Disabled upstream' })
+  ).toBeDisabled()
+  await user.selectOptions(target, '3')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  const dialog = await screen.findByRole('alertdialog')
+  expect(within(dialog).getByText(/Request context will be sent/)).toBeVisible()
+  expect(save).not.toHaveBeenCalled()
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(save).toHaveBeenCalledWith(
+    '/api/cyber/policy',
+    expect.objectContaining({
+      blocked_action: 'reroute',
+      fallback_channel_id: 3,
+    })
+  )
+})
+
+it('does not save rerouting when no fallback channels are available', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url === '/api/cyber/policy' ? policy : { channels: [], groups: [] },
+    },
+  }))
+  const save = vi.spyOn(api, 'put')
+  const user = userEvent.setup()
+  renderPanel(<CyberPolicySettings userId={1} canWrite />)
+  await user.selectOptions(
+    await screen.findByRole('combobox', {
+      name: 'Action for blocked sessions',
+    }),
+    'reroute'
+  )
+  expect(await screen.findByText('No available channels')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(save).not.toHaveBeenCalled()
+})

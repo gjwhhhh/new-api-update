@@ -52,6 +52,27 @@ type RetryParam struct {
 	resetNextTry       bool
 }
 
+// An unsubmitted candidate may be replaced by Cyber fallback. Roll back only
+// that selection's mutations, retaining the budget consumed by earlier attempts.
+type channelSelectionCheckpoint struct {
+	retry                                  RetryParam
+	autoGroup, groupIndex, groupRetryIndex any
+}
+
+func (p *RetryParam) selectionCheckpoint() channelSelectionCheckpoint {
+	group, _ := common.GetContextKey(p.Ctx, constant.ContextKeyAutoGroup)
+	index, _ := common.GetContextKey(p.Ctx, constant.ContextKeyAutoGroupIndex)
+	retryIndex, _ := common.GetContextKey(p.Ctx, constant.ContextKeyAutoGroupRetryIndex)
+	return channelSelectionCheckpoint{retry: *p, autoGroup: group, groupIndex: index, groupRetryIndex: retryIndex}
+}
+
+func (s channelSelectionCheckpoint) restore(p *RetryParam) {
+	*p = s.retry
+	common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroup, s.autoGroup)
+	common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroupIndex, s.groupIndex)
+	common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroupRetryIndex, s.groupRetryIndex)
+}
+
 func (p *RetryParam) GetRetry() int {
 	if p.Retry == nil {
 		return 0
@@ -126,6 +147,32 @@ func (p *RetryParam) ExcludeChannel(channelID int) {
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
+	if IsCyberFallback(param.Ctx) {
+		ch, group, err := selectCyberFallbackChannel(param.Ctx, param.ModelName, param)
+		if err != nil {
+			if err.APIError != nil {
+				return nil, group, err.APIError
+			}
+			return nil, group, errors.New(err.Message)
+		}
+		return ch, group, nil
+	}
+	checkpoint := param.selectionCheckpoint()
+	ch, group, err := cacheGetRandomSatisfiedChannel(param)
+	if err != nil || ch == nil {
+		return ch, group, err
+	}
+	if blocked := CheckCyberSessionChannel(param.Ctx, ch.Id); blocked != nil {
+		return nil, group, blocked
+	}
+	if IsCyberFallback(param.Ctx) {
+		checkpoint.restore(param)
+		return CacheGetRandomSatisfiedChannel(param)
+	}
+	return ch, group, nil
+}
+
+func cacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
 	var channel *model.Channel
 	var err error
 	selectGroup := param.TokenGroup
@@ -307,6 +354,8 @@ type ChannelSelectError struct {
 	MessageID  string
 	Params     map[string]any
 	Message    string
+	// APIError preserves policy errors whose client envelope differs from the internal code.
+	APIError *types.NewAPIError
 	// FilterKind and Channel identify a candidate rejected by request filters.
 	FilterKind dto.ChannelFilterKind
 	Channel    *model.Channel
@@ -322,6 +371,29 @@ type ChannelSelectError struct {
 // filters. The group the channel was chosen from is returned for auto-group
 // callers. The caller still applies SetupContextForSelectedChannel.
 func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
+	c.Set("cyber_affinity_clear_deferred", true)
+	defer func() {
+		c.Set("cyber_affinity_clear_deferred", false)
+		if c.GetBool("cyber_affinity_clear_pending") && !IsCyberFallback(c) {
+			ClearCurrentChannelAffinityCache(c)
+		}
+	}()
+	checkpoint := retry.selectionCheckpoint()
+	channel, group, err := selectChannelForRequest(c, modelName, retry)
+	if err != nil || channel == nil {
+		return channel, group, err
+	}
+	if blocked := CheckCyberSessionChannel(c, channel.Id); blocked != nil {
+		return nil, group, cyberChannelSelectError(blocked)
+	}
+	if route := cyberFallback(c); route != nil && channel.Id != route.TargetChannelID {
+		checkpoint.restore(retry)
+		return selectCyberFallbackChannel(c, modelName, retry)
+	}
+	return channel, group, nil
+}
+
+func selectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
 	state := RequestPolicy(c)
 	if !state.UserSessionPolicyLoaded {
 		if userId := common.GetContextKeyInt(c, constant.ContextKeyUserId); userId > 0 {
@@ -337,6 +409,9 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 			state.SessionMode, state.SessionModeSource = "off", "user_setting"
 			state.AddEvent(PolicyEvent{Decision: PolicyDecision{Action: "skip", Reason: "session_disabled_for_user", Source: "user_setting"}})
 		}
+	}
+	if IsCyberFallback(c) {
+		return selectCyberFallbackChannel(c, modelName, retry)
 	}
 	constraints := GetChannelConstraints(c)
 	if pin, found, overridden := constraints.ResolvedPin(); found {
@@ -406,7 +481,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	automaticallySelected := false
 	if channel == nil {
 		var err error
-		channel, selectGroup, err = CacheGetRandomSatisfiedChannel(retry)
+		channel, selectGroup, err = cacheGetRandomSatisfiedChannel(retry)
 		if err != nil {
 			showGroup := usingGroup
 			if usingGroup == "auto" {
@@ -457,5 +532,12 @@ func pinnedChannelUnavailable(pin dto.ChannelPin, statusCode int, messageID stri
 // AppendUsedChannel records an attempted channel in the request's channel
 // trail, which the retry log and the consume log's admin_info both read.
 func AppendUsedChannel(c *gin.Context, channelID int) {
+	if route := cyberFallback(c); route != nil && channelID == route.TargetChannelID {
+		route.ActualChannelID = channelID
+		route.Group = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		if group := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); group != "" {
+			route.Group = group
+		}
+	}
 	c.Set("use_channel", append(c.GetStringSlice("use_channel"), fmt.Sprintf("%d", channelID)))
 }

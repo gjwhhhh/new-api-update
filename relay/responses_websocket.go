@@ -107,6 +107,7 @@ type responsesWSSession struct {
 	// These fields belong to the serial request worker and describe the actual
 	// established connection. Per-request token/user data is never stored here.
 	lastResponseID  string
+	fallbackBinding *service.CyberFallbackBinding
 	lockedModel     string
 	lockedChannelID int
 	lockedGroup     string
@@ -207,7 +208,7 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 			s.shutdown()
 		}
 	}()
-	request := s.request.Clone(s.ctx)
+	request := service.WithCyberFallbackBinding(s.request.Clone(s.ctx), s.fallbackBinding)
 	// Middleware and passthrough must read the same normalized request body.
 	if parseErr == nil {
 		message = create.Body
@@ -221,6 +222,9 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		}
 		return s.runCall(c, state, create)
 	})
+	if apiErr != nil && service.IsCyberFallbackError(string(apiErr.GetErrorCode())) {
+		state.closeAfter = true
+	}
 	if apiErr != nil && (apiErr.StatusCode == http.StatusUnauthorized ||
 		apiErr.StatusCode == http.StatusForbidden && apiErr.GetErrorCode() != service.CyberSessionBlockedCode) {
 		state.closeAfter = true
@@ -265,11 +269,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 
 	if s.lockedChannelID != 0 {
 		if apiErr = s.restoreConnectionContext(c, modelName); apiErr != nil {
+			// A conversation-level block rejects this turn, not the shared socket.
+			// Connection invalidation and fallback rebinding still require reconnecting.
+			state.closeAfter = apiErr.GetErrorCode() != service.CyberSessionBlockedCode
 			return apiErr
 		}
 		if apiErr = filter.Check(c, s.lockedChannelID); apiErr != nil {
 			return apiErr
 		}
+		service.AppendUsedChannel(c, s.lockedChannelID)
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
@@ -344,6 +352,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				state.closeAfter = true
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
+			s.fallbackBinding = service.CyberFallbackConnectionBinding(c)
 			s.lockedModel, s.lockedChannelID, s.lockedGroup = modelName, channel.Id, info.UsingGroup
 			s.lockedKey, s.lockedKeyIndex = info.ApiKey, info.ChannelMultiKeyIndex
 			s.lockedRoute, _ = channel.GetOtherSettings().AdvancedCustom.MatchPathForModel(c.Request.URL.Path, modelName)
@@ -648,11 +657,13 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 		!reflect.DeepEqual(route.Auth, s.lockedRoute.Auth) {
 		return types.NewErrorWithStatusCode(errors.New("upstream route changed; reconnect required"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 	}
-	if pin, found, _ := service.GetChannelConstraints(c).ResolvedPin(); found {
+	pin, pinned, _ := service.GetChannelConstraints(c).ResolvedPin()
+	if pinned {
 		if pin.ChannelId != s.lockedChannelID {
 			return types.NewErrorWithStatusCode(errors.New("channel pin changed; reconnect required"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 		}
-	} else {
+	}
+	if !pinned || service.IsCyberFallback(c) {
 		group := common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup)
 		if group == "auto" {
 			if !slices.Contains(service.GetRequestAutoGroups(c, common.GetContextKeyString(c, appconstant.ContextKeyUserGroup)), s.lockedGroup) {
@@ -674,6 +685,9 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	common.SetContextKey(c, appconstant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, appconstant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 	if blocked := service.CheckCyberSessionChannel(c, channel.Id); blocked != nil {
+		return blocked
+	}
+	if blocked := service.ValidateCyberFallbackChannel(c, channel.Id); blocked != nil {
 		return blocked
 	}
 	policy := service.RequestPolicy(c)
@@ -1008,6 +1022,9 @@ func selectResponsesWSChannel(c *gin.Context, modelName string, retryParam *serv
 	}
 	channel, _, selectErr := service.SelectChannelForRequest(c, modelName, retryParam)
 	if selectErr != nil {
+		if selectErr.APIError != nil {
+			return nil, selectErr.APIError
+		}
 		message := selectErr.Message
 		if selectErr.MessageID != "" {
 			message = i18n.T(c, selectErr.MessageID, selectErr.Params)

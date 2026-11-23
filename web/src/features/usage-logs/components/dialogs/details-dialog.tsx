@@ -17,6 +17,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
+import {
+  Copy,
+  Check,
+  Route,
+  Settings2,
+  AlertTriangle,
+  Headphones,
+  Monitor,
+  Cloud,
+  Globe,
+  ShieldCheck,
+  UserCog,
+  Info,
+  LogIn,
+} from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -36,21 +51,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
-import {
-  Copy,
-  Check,
-  Route,
-  Settings2,
-  AlertTriangle,
-  Headphones,
-  Monitor,
-  Cloud,
-  Globe,
-  ShieldCheck,
-  UserCog,
-  Info,
-  LogIn,
-} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -69,6 +69,10 @@ import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { AuditDetailFields } from '../../audit/components/audit-detail-fields'
+import {
+  fallbackOutcomeLabel,
+  fallbackReasonLabel,
+} from '../../cyber/fallback-labels'
 import type { UsageLog } from '../../data/schema'
 import {
   parseLogOther,
@@ -831,6 +835,33 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
+        {props.isAdmin && adminInfo?.cyber_fallback && (
+          <DetailSection
+            label={t('Route to fallback channel')}
+            icon={<Route className='size-4' />}
+          >
+            <DetailRow
+              label={t('Source channel')}
+              value={
+                adminInfo.cyber_fallback.source_channel_id
+                  ? `#${adminInfo.cyber_fallback.source_channel_id}`
+                  : t('Unknown')
+              }
+            />
+            <DetailRow
+              label={t('Fallback channel')}
+              value={`#${adminInfo.cyber_fallback.target_channel_id}`}
+            />
+            <DetailRow
+              label={t('Outcome')}
+              value={fallbackOutcomeLabel(adminInfo.cyber_fallback.outcome, t)}
+            />
+            <DetailRow
+              label={t('Reason')}
+              value={fallbackReasonLabel(adminInfo.cyber_fallback.reason, t)}
+            />
+          </DetailSection>
+        )}
         {/* Quota saturation marker (admin only) */}
         {props.isAdmin && adminInfo?.request_policy?.length ? (
           <DetailSection

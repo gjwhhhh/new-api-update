@@ -1,0 +1,372 @@
+package service
+
+import (
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func cyberFallbackTestContext(body string) *gin.Context {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+	RequestPolicy(c).UserSessionPolicyLoaded = true
+	return c
+}
+
+func TestCyberFallbackPolicyAndDependencies(t *testing.T) {
+	p := CyberPolicy{Mode: "enforce", Scope: "all", TTLSeconds: 600}
+	p.Normalize()
+	assert.Equal(t, "block", p.BlockedAction)
+	require.NoError(t, p.Validate())
+	p.BlockedAction = "reroute"
+	require.Error(t, p.Validate())
+	p.FallbackChannelID = 12
+	require.NoError(t, p.Validate())
+	for _, tc := range []struct{ body, reason string }{
+		{`{"input":"hello"}`, ""},
+		{`{"input":"hello","metadata":{"conversation":"business-label"},"tools":[{"type":"function","name":"f","parameters":{"type":"object","properties":{"file_id":{"type":"string"}}}}]}`, ""},
+		{`{"prompt":{"id":"pmpt_1"}}`, "stateful_context"},
+		{`{"input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "stateful_context"},
+		{`{"previous_response_id":"resp-1"}`, "stateful_context"},
+		{`{"conversation":{"id":"conv-1"}}`, "stateful_context"},
+		{`{"input":[{"type":"input_file","file_id":"file-1"}]}`, "stateful_context"},
+		{`{"input":[{"type":"function_call_output","call_id":"call-1","output":"done"}]}`, "unpaired_tool_result"},
+		{`{"input":[{"type":"function_call","call_id":"call-1"},{"type":"function_call_output","call_id":"call-1","output":"done"}]}`, ""},
+		{`{"messages":[{"role":"assistant","tool_calls":[{"id":"call-1","type":"function"}]},{"role":"tool","tool_call_id":"call-1","content":"done"}]}`, ""},
+		{`{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`, ""},
+		{`{"input":"hello","text":{"format":{"type":"json_schema","name":"record","schema":{"type":"object","properties":{"conversation":{"type":"string"},"file_id":{"type":"string"},"file_ids":{"type":"array"}}}}}}`, ""},
+		{`{"messages":[{"role":"user","content":"hello"}],"response_format":{"type":"json_schema","json_schema":{"name":"record","schema":{"type":"object","properties":{"previous_response_id":{"type":"string"}}}}}}`, ""},
+		{`{"input":"hello","tools":[{"type":"code_interpreter","container":{"type":"auto","file_ids":["file-from-source"]}}]}`, "stateful_context"},
+		{`{"input":"hello","tools":[{"type":"code_interpreter","container":{"type":"auto","file_ids":[]}}]}`, ""},
+		{`{"input":"hello","tools":[{"type":"code_interpreter","container":{"type":"auto"}}]}`, ""},
+		{`{"input":"hello","tools":[{"type":"code_interpreter","container":"cntr-from-source"}]}`, "stateful_context"},
+		{`{"input":"hello","tools":[{"type":"file_search","vector_store_ids":["vs-from-source"]}]}`, "stateful_context"},
+		{`{"messages":[{"role":"user","content":[{"type":"file","file":{"file_id":"file-from-source"}}]}]}`, "stateful_context"},
+		{`{"input":[{"role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"file_citation","file_id":"file-from-source"}]}]}]}`, "stateful_context"},
+		{`{"input":[{"type":"item_reference","id":"item-from-source"}]}`, "stateful_context"},
+		{`{"input":[{"type":"function_call","call_id":"call-1","arguments":"{}"},{"type":"function_call_output","call_id":"call-1","output":[{"type":"input_file","file_id":"file-from-source"}]}]}`, "stateful_context"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			assert.Equal(t, tc.reason, cyberFallbackDependency(cyberFallbackTestContext(tc.body)))
+		})
+	}
+}
+
+func TestCyberFallbackAutoGroupSelectionDoesNotConsumeUnsentCandidate(t *testing.T) {
+	for _, entry := range []string{"request", "pool"} {
+		for _, tc := range []struct {
+			name                     string
+			sourceGroup, targetGroup string
+			retryLimit, priorRetry   int
+			groupIndex               int
+			unavailable              bool
+		}{
+			{name: "same group without retries", sourceGroup: "default", targetGroup: "default"},
+			{name: "next group without retries", sourceGroup: "default", targetGroup: "vip"},
+			{name: "preserves prior attempts", sourceGroup: "default", targetGroup: "default", retryLimit: 1, priorRetry: 1},
+			{name: "does not rewind an exhausted group", sourceGroup: "vip", targetGroup: "default", groupIndex: 1, unavailable: true},
+			{name: "does not expand permitted groups", sourceGroup: "default", targetGroup: "private", unavailable: true},
+		} {
+			t.Run(entry+"/"+tc.name, func(t *testing.T) {
+				db := setupChannelSelectAutoGroupsTest(t)
+				common.RetryTimes = tc.retryLimit
+				createChannelSelectAutoGroupsChannel(t, db, 4101, tc.sourceGroup, "test-model")
+				createChannelSelectAutoGroupsChannel(t, db, 4102, tc.targetGroup, "test-model")
+				if tc.priorRetry > 0 {
+					createChannelSelectAutoGroupsChannel(t, db, 4103, "default", "test-model")
+					require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 4103).Update("priority", 20).Error)
+					require.NoError(t, db.Model(&model.Ability{}).Where("channel_id = ?", 4103).Update("priority", 20).Error)
+				}
+				require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 4101).Update("priority", 10).Error)
+				require.NoError(t, db.Model(&model.Ability{}).Where("channel_id = ?", 4101).Update("priority", 10).Error)
+				model.InitChannelCache()
+				c := cyberFallbackTestContext(`{"input":"hello"}`)
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, "auto")
+				common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, []string{"default", "vip"})
+				common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, true)
+				// This cursor is the state left by earlier real attempts, not a fresh request.
+				common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, tc.groupIndex)
+				session := cyberRequestSession{policy: CyberPolicy{Mode: "enforce", Scope: "channel", ChannelIDs: []int{4101}, BlockedAction: "reroute", FallbackChannelID: 4102}, tokenID: 84, digest: strings.Repeat("b", 64)}
+				c.Set(cyberSessionRequestKey, session)
+				c.Set(cyberFallbackBansKey, map[string]cyberFallbackBan{session.redisKey(4101): {key: session.redisKey(4101), meta: CyberBanMetadata{ID: "test-batch", SourceChannelID: 4101}}})
+				param := &RetryParam{Ctx: c, TokenGroup: "auto", ModelName: "test-model", Retry: common.GetPointer(tc.priorRetry)}
+				var channel *model.Channel
+				var group string
+				if entry == "request" {
+					var err *ChannelSelectError
+					channel, group, err = SelectChannelForRequest(c, "test-model", param)
+					if tc.unavailable {
+						require.NotNil(t, err)
+						assert.Nil(t, channel)
+						assert.Equal(t, "cyber_fallback_target_unavailable", string(err.Code))
+						return
+					}
+					require.Nil(t, err)
+				} else {
+					var err error
+					channel, group, err = CacheGetRandomSatisfiedChannel(param)
+					if tc.unavailable {
+						require.Error(t, err)
+						assert.Nil(t, channel)
+						return
+					}
+					require.NoError(t, err)
+				}
+				require.NotNil(t, channel)
+				require.True(t, IsCyberFallback(c))
+				assert.Equal(t, 4102, channel.Id)
+				assert.Equal(t, tc.targetGroup, group)
+				param.IncreaseRetry()
+				channel, _, err := CacheGetRandomSatisfiedChannel(param)
+				require.Error(t, err, "the selected fallback consumes the original attempt budget")
+				assert.Nil(t, channel)
+			})
+		}
+	}
+}
+
+func TestCyberFallbackSelectionPreservesCandidateIntersection(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	createChannelSelectAutoGroupsChannel(t, db, 3101, "default", "test-model")
+	createChannelSelectAutoGroupsChannel(t, db, 3102, "vip", "test-model")
+	createChannelSelectAutoGroupsChannel(t, db, 3103, "default", "other-model")
+	model.InitChannelCache()
+	for _, tc := range []struct {
+		name    string
+		target  int
+		pins    []dto.ChannelPin
+		filters []dto.ChannelFilter
+		want    int
+	}{
+		{name: "eligible", target: 3101, want: 3101},
+		{name: "wrong group", target: 3102},
+		{name: "wrong model", target: 3103},
+		{name: "hidden origin pin conflicts", target: 3101, pins: []dto.ChannelPin{{ChannelId: 3101, Rank: 0}, {ChannelId: 3102, Rank: 10}}},
+		{name: "WS capability required", target: 3101, filters: []dto.ChannelFilter{{Kind: dto.FilterResponsesWebSocket}}},
+		{name: "plugin identity required", target: 3101, filters: []dto.ChannelFilter{{Kind: dto.FilterTaskPluginIdentity, TaskPluginKey: "video"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := cyberFallbackTestContext(`{"input":"hello"}`)
+			c.Set(cyberFallbackKey, &cyberFallbackRoute{TargetChannelID: tc.target})
+			constraints := GetChannelConstraints(c)
+			constraints.Pins = tc.pins
+			constraints.Filters = append(tc.filters, dto.ChannelFilter{Kind: dto.FilterAllowedChannelIDs, AllowedChannelIDs: []int{tc.target}})
+			param := &RetryParam{Ctx: c, TokenGroup: "default", ModelName: "test-model"}
+			ch, _, err := SelectChannelForRequest(c, "test-model", param)
+			if tc.want == 0 {
+				require.NotNil(t, err)
+				assert.Nil(t, ch)
+				return
+			}
+			require.Nil(t, err)
+			require.NotNil(t, ch)
+			assert.Equal(t, tc.want, ch.Id)
+			param.ExcludeChannel(ch.Id)
+			ch, _, retryErr := CacheGetRandomSatisfiedChannel(param)
+			require.Error(t, retryErr)
+			assert.Nil(t, ch, "retry cannot escape to another channel")
+		})
+	}
+}
+
+func TestCyberFallbackRedisLifecycle(t *testing.T) {
+	client := useChannelAffinityRedisForTest(t)
+	if addr := os.Getenv("TEST_CYBER_REDIS_ADDR"); addr != "" {
+		client = redis.NewClient(&redis.Options{Addr: addr})
+		require.NoError(t, client.Ping(t.Context()).Err())
+		common.RDB = client
+		t.Cleanup(func() { require.NoError(t, client.Close()) })
+	}
+	for _, permanent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("permanent=%t", permanent), func(t *testing.T) {
+			session := cyberRequestSession{policy: CyberPolicy{Mode: "enforce", Scope: "all", BlockedAction: "reroute", FallbackChannelID: 12}, tokenID: 84, digest: fmt.Sprintf("%x", sha256.Sum256([]byte(t.Name()+uuid.NewString())))}
+			// Fingerprints use the same canonical SHA-256 representation as production.
+
+			parent := session.redisKey(0)
+			ttl := 2 * time.Minute
+			if permanent {
+				ttl = 0
+			}
+			require.NoError(t, client.Set(t.Context(), parent, "1", ttl).Err())
+			t.Cleanup(func() { client.Del(context.Background(), parent) })
+			read := func(target int) (*gin.Context, *cyberFallbackRoute) {
+				s := session
+				s.policy.FallbackChannelID = target
+				c := cyberFallbackTestContext(`{"input":"hello"}`)
+				c.Set(cyberSessionRequestKey, s)
+				require.Nil(t, prepareCyberFallbackBans(c, s, nil))
+				return c, &cyberFallbackRoute{TargetChannelID: target}
+			}
+			c, _ := read(12)
+			require.Nil(t, checkCyberSession(c, session, 0))
+			route := cyberFallback(c)
+			require.NotNil(t, route)
+			assert.NotEmpty(t, route.BatchID)
+			child := cyberFallbackSetKey(parent, route.BatchID)
+			t.Cleanup(func() { client.Del(context.Background(), child) })
+			if permanent {
+				assert.Equal(t, cyberSessionNoExpiry, client.PTTL(t.Context(), parent).Val())
+			} else {
+				assert.LessOrEqual(t, client.PTTL(t.Context(), parent).Val(), ttl)
+			}
+			// Concurrent reports share a bounded set and never extend the parent's TTL.
+			var wg sync.WaitGroup
+			for range 4 {
+				wg.Go(func() {
+					rejectCyberFallback(cyberFallbackTestContext(`{}`), &cyberFallbackRoute{TargetChannelID: 12, BatchID: route.BatchID, ban: route.ban})
+				})
+			}
+			wg.Wait()
+			assert.EqualValues(t, 1, client.SCard(t.Context(), child).Val())
+			assert.LessOrEqual(t, client.PTTL(t.Context(), child).Val(), client.PTTL(t.Context(), parent).Val()+time.Millisecond)
+			c, _ = read(12)
+			err := checkCyberSession(c, session, 0)
+			require.NotNil(t, err)
+			assert.Equal(t, "cyber_fallback_target_rejected", string(err.GetErrorCode()))
+			s := session
+			s.policy.FallbackChannelID = 13
+			c, _ = read(13)
+			require.Nil(t, checkCyberSession(c, s, 0))
+			// Revocation is generation checked and removes permanent child state too.
+			generation := fmt.Sprintf("%x", sha256.Sum256([]byte(route.ban.raw)))
+			require.NoError(t, RevokeCyberBan(t.Context(), CyberBanTarget{TokenID: session.tokenID, Fingerprint: session.digest}, generation))
+			assert.Zero(t, client.Exists(t.Context(), parent, child).Val())
+			rejectCyberFallback(cyberFallbackTestContext(`{}`), route)
+			assert.Zero(t, client.Exists(t.Context(), parent, child).Val(), "late failure cannot resurrect a revoked batch")
+			// Recreate the parent; a stale writer cannot poison the new batch.
+			require.NoError(t, client.Set(t.Context(), parent, "1", ttl).Err())
+			c, _ = read(12)
+			require.Nil(t, checkCyberSession(c, session, 0))
+			next := cyberFallback(c)
+			require.NotNil(t, next)
+			assert.NotEqual(t, route.BatchID, next.BatchID)
+			t.Cleanup(func() { client.Del(context.Background(), cyberFallbackSetKey(parent, next.BatchID)) })
+			rejectCyberFallback(cyberFallbackTestContext(`{}`), route)
+			assert.Zero(t, client.SCard(t.Context(), cyberFallbackSetKey(parent, next.BatchID)).Val())
+			// A full rejection set refuses new targets without deleting old members.
+			members := make([]any, cyberFallbackLimit)
+			for i := range members {
+				members[i] = i + 100
+			}
+			require.NoError(t, client.SAdd(t.Context(), cyberFallbackSetKey(parent, next.BatchID), members...).Err())
+			c, _ = read(13)
+			err = checkCyberSession(c, s, 0)
+			require.NotNil(t, err)
+			assert.Equal(t, "cyber_fallback_target_rejected", string(err.GetErrorCode()))
+		})
+	}
+}
+
+func TestCyberFallbackConfirmedStorageFailureDoesNotReleaseBan(t *testing.T) {
+	client := useChannelAffinityRedisForTest(t)
+	session := cyberRequestSession{policy: CyberPolicy{Mode: "enforce", Scope: "all", BlockedAction: "reroute", FallbackChannelID: 12}, tokenID: 85, digest: strings.Repeat("a", 64)}
+	meta := CyberBanMetadata{ID: uuid.NewString()}
+	data, err := common.Marshal(meta)
+	require.NoError(t, err)
+	require.NoError(t, client.Set(t.Context(), session.redisKey(0), data, 0).Err())
+	require.NoError(t, client.Set(t.Context(), cyberFallbackSetKey(session.redisKey(0), meta.ID), "wrong type", 0).Err())
+	c := cyberFallbackTestContext(`{"input":"hello"}`)
+	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
+	apiErr := checkCyberSession(c, session, 0)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, 503, apiErr.StatusCode)
+
+	// One corrupt parent must not make the entire bounded read fail open.
+	session.policy.Scope = "channel"
+	session.policy.ChannelIDs = []int{21}
+	require.NoError(t, client.SAdd(t.Context(), session.redisKey(21), "wrong parent type").Err())
+	c = cyberFallbackTestContext(`{"input":"hello"}`)
+	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
+	apiErr = checkCyberSession(c, session, 0)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, 503, apiErr.StatusCode, "the global ban remains enforced despite another corrupt parent")
+	c = cyberFallbackTestContext(`{"input":"hello"}`)
+	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
+	apiErr = checkCyberSession(c, session, 21)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, 503, apiErr.StatusCode, "the corrupt parent itself is unavailable rather than unbanned")
+}
+
+func TestCyberFallbackPolicyReloadDefaultsToBlock(t *testing.T) {
+	common.OptionMapRWMutex.Lock()
+	previous := common.OptionMap
+	common.OptionMap = map[string]string{operation_setting.CyberPolicyOptionKey: `{"mode":"enforce","scope":"all","ttl_seconds":600}`}
+	common.OptionMapRWMutex.Unlock()
+	previousSnapshot := cyberSessionSnapshot.Load()
+	cyberSessionSnapshot.Store(nil)
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previous
+		common.OptionMapRWMutex.Unlock()
+		cyberSessionSnapshot.Store(previousSnapshot)
+	})
+	assert.Equal(t, "block", CurrentCyberPolicy().BlockedAction)
+	common.OptionMapRWMutex.Lock()
+	common.OptionMap[operation_setting.CyberPolicyOptionKey] = `{"mode":"enforce","scope":"all","ttl_seconds":600,"fallback_channel_id":"invalid"}`
+	common.OptionMapRWMutex.Unlock()
+	assert.Equal(t, "block", CurrentCyberPolicy().BlockedAction, "invalid reload retains the last valid policy")
+}
+
+func TestCyberFallbackChannelScopeAndAffinityIsolation(t *testing.T) {
+	client := useChannelAffinityRedisForTest(t)
+	session := cyberRequestSession{policy: CyberPolicy{Mode: "enforce", Scope: "channel", ChannelIDs: []int{21, 22}, BlockedAction: "reroute", FallbackChannelID: 22}, tokenID: 86, digest: strings.Repeat("b", 64)}
+	require.NoError(t, client.Set(t.Context(), session.redisKey(21), "1", time.Minute).Err())
+	c := cyberFallbackTestContext(`{"input":"hello"}`)
+	c.Set(cyberSessionRequestKey, session)
+	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
+	require.Nil(t, CheckCyberSessionChannel(c, 23))
+	assert.False(t, IsCyberFallback(c), "outside channel scope stays on normal routing")
+	for _, tc := range []struct {
+		name    string
+		tokenID int
+		digest  string
+	}{
+		{name: "same token different session", tokenID: session.tokenID, digest: strings.Repeat("c", 64)},
+		{name: "different token same fingerprint", tokenID: session.tokenID + 1, digest: session.digest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			independent := session
+			independent.tokenID, independent.digest = tc.tokenID, tc.digest
+			request := cyberFallbackTestContext(`{"input":"hello"}`)
+			request.Set(cyberSessionRequestKey, independent)
+			require.Nil(t, prepareCyberFallbackBans(request, independent, nil))
+			require.Nil(t, CheckCyberSessionChannel(request, 21))
+			assert.False(t, IsCyberFallback(request), "another session's ban cannot change this request's route")
+		})
+	}
+	require.Nil(t, CheckCyberSessionChannel(c, 21))
+	assert.True(t, IsCyberFallback(c))
+	setChannelAffinityContext(c, channelAffinityMeta{RuleName: "original", ParamTemplate: map[string]any{"model": "original-only"}, SkipRetry: true})
+	original := map[string]any{"model": "fallback-model"}
+	merged, applied := ApplyChannelAffinityOverrideTemplate(c, original)
+	assert.False(t, applied)
+	assert.Equal(t, original, merged)
+	assert.False(t, ShouldSkipRetryAfterChannelAffinityFailure(c), "original affinity must not suppress fallback retry policy")
+	assert.False(t, ClearCurrentChannelAffinityCache(c))
+	require.NoError(t, client.Set(t.Context(), session.redisKey(22), "1", time.Minute).Err())
+	c = cyberFallbackTestContext(`{"input":"hello"}`)
+	c.Set(cyberSessionRequestKey, session)
+	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
+	apiErr := CheckCyberSessionChannel(c, 21)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, "cyber_fallback_target_rejected", string(apiErr.GetErrorCode()), "a separately banned fallback cannot bypass its own active ban")
+}

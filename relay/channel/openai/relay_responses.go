@@ -42,6 +42,16 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 
 	info.ObserveResponseModel(responsesResponse.Model)
+	if service.IsCyberFallback(c) {
+		switch gjson.GetBytes(responseBody, "status").String() {
+		case "completed":
+			service.MarkCyberFallbackOutcome(c, "completed")
+		case "failed":
+			service.MarkCyberFallbackOutcome(c, "failed")
+		case "incomplete", "cancelled", "canceled":
+			service.MarkCyberFallbackOutcome(c, "interrupted")
+		}
+	}
 	responseBody = rewriteSGLangResponsesCreatedAt(info, responseBody, "created_at", responsesResponse.CreatedAt)
 
 	// 写入新的 response body

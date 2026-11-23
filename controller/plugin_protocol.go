@@ -332,6 +332,7 @@ func serveTaskPluginProtocol(
 		respondPluginProtocolError(c, http.StatusInternalServerError, "task_protocol_error", "Task protocol request failed")
 		return
 	}
+	service.MarkCyberFallbackSubmitted(c, outcome.Task.Status == model.TaskStatusSuccess)
 	logger.LogDebug(
 		c,
 		"task_plugin subsystem=protocol event=submission_durable generation=%d plugin=%q public_task_id=%q status=%q stream=%t",
@@ -799,6 +800,7 @@ func waitTaskPluginProtocol(
 					taskPluginDebugStatus(lastStatus),
 					hookElapsed.Milliseconds(),
 				)
+				service.MarkCyberFallbackOutcome(c, "completed")
 				c.JSON(http.StatusOK, response)
 				logger.LogDebug(
 					c,
@@ -1127,6 +1129,7 @@ func writeTaskPluginProtocolFailureResponse(
 	machine *relay.PluginResponsesMachine,
 	taskStatus string,
 ) {
+	service.MarkCyberFallbackOutcome(c, "failed")
 	if taskStatus == string(model.TaskStatusFailure) {
 		response, err := machine.FinalResponse(nil, taskStatus)
 		if err != nil {
@@ -1238,6 +1241,14 @@ func taskPluginProtocolEventsTerminal(events []dto.PluginResponsesStreamEvent) b
 }
 
 func writeTaskPluginProtocolEvent(c *gin.Context, event dto.PluginResponsesStreamEvent) error {
+	switch event.Type {
+	case "response.completed":
+		service.MarkCyberFallbackOutcome(c, "completed")
+	case "response.failed":
+		service.MarkCyberFallbackOutcome(c, "failed")
+	case "response.incomplete":
+		service.MarkCyberFallbackOutcome(c, "interrupted")
+	}
 	encoded, err := common.Marshal(event)
 	if err != nil {
 		return err
@@ -1268,6 +1279,14 @@ func respondPluginProtocolSubmissionError(c *gin.Context, taskErr *dto.TaskError
 		service.SetRelayFinalError(c, apiErr)
 		c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 		return
+	}
+	if taskErr != nil && (service.IsCyberFallback(c) || service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == relaycommon.CyberPolicyCode) {
+		apiErr := taskSubmissionAPIError(taskErr)
+		service.SetRelayFinalError(c, apiErr)
+		if service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == relaycommon.CyberPolicyCode {
+			c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+			return
+		}
 	}
 	status := http.StatusInternalServerError
 	if taskErr != nil && taskErr.StatusCode >= 400 && taskErr.StatusCode <= 599 {

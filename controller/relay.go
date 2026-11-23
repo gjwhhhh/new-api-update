@@ -316,6 +316,10 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 	if err != nil {
+		var apiErr *types.NewAPIError
+		if errors.As(err, &apiErr) {
+			return nil, apiErr
+		}
 		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	if channel == nil {
@@ -563,14 +567,20 @@ func executeTaskSubmissionWith(
 			channel, channelErr = getChannel(c, relayInfo, retryParam)
 			if channelErr != nil {
 				logger.LogError(c, channelErr.Error())
-				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", channelErr.StatusCode)
+				code := "get_channel_failed"
+				cause := channelErr.Err
+				if channelErr.GetErrorCode() == service.CyberSessionBlockedCode || service.IsCyberFallbackError(string(channelErr.GetErrorCode())) {
+					code = string(channelErr.GetErrorCode())
+					cause = channelErr
+				}
+				taskErr = service.TaskErrorWrapperLocal(cause, code, channelErr.StatusCode)
 				break
 			}
 		}
 		if blocked := service.CheckCyberSessionChannel(c, channel.Id); blocked != nil {
 			service.SetRelayFinalError(c, blocked)
 			service.RecordRequestPolicyTermination(c, blocked)
-			taskErr = service.TaskErrorWrapperLocal(blocked, relaycommon.CyberPolicyCode, blocked.StatusCode)
+			taskErr = service.TaskErrorWrapperLocal(blocked, string(blocked.GetErrorCode()), blocked.StatusCode)
 			break
 		}
 		diagnostics.attempt(retryParam.GetRetry()+1, channel, relayInfo.LockedChannel != nil)
@@ -731,6 +741,7 @@ func executeTaskSubmissionWith(
 		return nil, taskErr
 	}
 	durable = true
+	service.MarkCyberFallbackSubmitted(c, task.Status == model.TaskStatusSuccess)
 	stage = "settle"
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
@@ -806,6 +817,9 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 }
 
 func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
+	if service.IsCyberFallback(c) || service.IsCyberFallbackError(taskErr.Code) {
+		service.SetRelayFinalError(c, taskSubmissionAPIError(taskErr))
+	}
 	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
 	newTaskPluginSubmitDiagnostics(c).presentError(taskErr)
 	if middleware.RespondTaskPluginError(c, taskErr) {
@@ -825,6 +839,12 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 // taskSubmissionAPIError adapts a task error for the shared relay error paths.
 // TaskError.Error is nil for many local rejections, so fall back to the message.
 func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
+	if service.IsCyberFallbackError(taskErr.Code) {
+		return types.NewErrorWithStatusCode(errors.New(taskErr.Message), types.ErrorCode(taskErr.Code), taskErr.StatusCode, types.ErrOptionWithSkipRetry())
+	}
+	if taskErr.Code == relaycommon.CyberPolicyCode && !taskErr.LocalError {
+		return service.CyberPolicyError(taskErr.StatusCode)
+	}
 	err := taskErr.Error
 	if err == nil {
 		err = errors.New(taskErr.Message)
@@ -840,6 +860,8 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 	switch {
 	case taskErr == nil:
 		stop.Reason = "request_completed"
+	case taskErr.Code == relaycommon.CyberPolicyCode:
+		stop.Reason = "upstream_cyber"
 	case taskErr.NoRetry:
 		stop.Reason = "task_accepted"
 	case service.ShouldSkipRetryAfterChannelAffinityFailure(c):

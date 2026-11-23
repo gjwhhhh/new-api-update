@@ -123,6 +123,7 @@ export interface LogOtherData {
   protocol?: string
   status_code?: number
   admin_info?: {
+    cyber_fallback?: import('./cyber/api').CyberFallbackRoute
     request_policy?: PolicyEvent[]
     is_multi_key?: boolean
     multi_key_index?: number

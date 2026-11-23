@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -53,7 +55,11 @@ func CurrentCyberPolicy() CyberPolicy {
 		return snapshot.policy
 	}
 	var policy CyberPolicy
-	if raw != "" && common.UnmarshalJsonStr(raw, &policy) == nil && policy.Validate() == nil {
+	decoded := common.UnmarshalJsonStr(raw, &policy) == nil
+	if decoded {
+		policy.Normalize()
+	}
+	if raw != "" && decoded && policy.Validate() == nil {
 		cyberSessionSnapshot.Store(&cyberPolicySnapshot{raw: raw, policy: policy})
 		return policy
 	}
@@ -63,7 +69,7 @@ func CurrentCyberPolicy() CyberPolicy {
 	if fallback := cyberSessionDefaults.Load(); fallback != nil {
 		return *fallback
 	}
-	return CyberPolicy{Mode: "off", Scope: "token", TTLSeconds: 600}
+	return CyberPolicy{Mode: "off", Scope: "token", TTLSeconds: 600, BlockedAction: "block"}
 }
 
 var cyberSessionCounters struct {
@@ -117,13 +123,14 @@ func loadCyberSessionConfig(getEnv func(string) string) (CyberPolicy, error) {
 		}
 		p.MatchMessage = on
 	}
+	p.Normalize()
 	return p, p.Validate()
 }
 
 func CyberSessionGuardMetrics() map[string]any {
 	p := CurrentCyberPolicy()
 	return map[string]any{
-		"mode": p.Mode, "scope": p.Scope, "ttl_seconds": p.TTLSeconds,
+		"mode": p.Mode, "scope": p.Scope, "ttl_seconds": p.TTLSeconds, "fallback": CyberFallbackMetrics(),
 		"permanent":         p.Mode == cyberSessionEnforce && p.TTLSeconds == 0,
 		"configured_tokens": len(p.TokenIDs), "redis_ready": common.RedisEnabled && common.RDB != nil,
 		"checked": cyberSessionCounters.checked.Load(), "ineligible": cyberSessionCounters.ineligible.Load(),
@@ -136,6 +143,22 @@ func CyberSessionGuardMetrics() map[string]any {
 // For Responses WS the same middleware receives one normalized response.create.
 func CyberSessionGuard(c *gin.Context) {
 	settings := CurrentCyberPolicy()
+	binding, _ := c.Request.Context().Value(cyberFallbackContextKey{}).(*CyberFallbackBinding)
+	bindingOutOfScope := false
+	if binding != nil && settings.Scope == "channel" {
+		target, _ := parseCyberBanKey(binding.ban.key)
+		originalChannel := target.ChannelID
+		if originalChannel == 0 {
+			originalChannel = binding.ban.meta.SourceChannelID
+		}
+		bindingOutOfScope = !slices.Contains(settings.ChannelIDs, originalChannel)
+	}
+	if binding != nil && (settings.Mode != cyberSessionEnforce || settings.BlockedAction != "reroute" || settings.FallbackChannelID != binding.channelID || c.GetInt("token_id") != binding.session.tokenID || (settings.Scope == "token" && !slices.Contains(settings.TokenIDs, binding.session.tokenID)) || bindingOutOfScope) {
+		apiErr := cyberFallbackError(c, "reconnect_required", http.StatusForbidden)
+		SetRelayFinalError(c, apiErr)
+		c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+		return
+	}
 	c.Set(cyberMessagePolicyKey, settings.MatchMessage)
 	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), cyberUpstreamContextKey{}, c))
 	tokenID := c.GetInt("token_id")
@@ -157,9 +180,15 @@ func CyberSessionGuard(c *gin.Context) {
 		c.Set(cyberSessionSkipKey, "unsupported_request")
 		return
 	}
-	if !common.RedisEnabled || common.RDB == nil {
+	if (!common.RedisEnabled || common.RDB == nil) && binding == nil {
 		c.Set(cyberSessionSkipKey, "redis_unavailable")
 		cyberSessionCounters.readError.Add(1)
+		return
+	}
+	if binding != nil && (!common.RedisEnabled || common.RDB == nil || c.Request.ContentLength > cyberSessionCacheLimit) {
+		apiErr := cyberFallbackError(c, "state_unavailable", http.StatusServiceUnavailable)
+		SetRelayFinalError(c, apiErr)
+		c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 		return
 	}
 	if c.Request.ContentLength > cyberSessionCacheLimit {
@@ -178,6 +207,17 @@ func CyberSessionGuard(c *gin.Context) {
 	}
 	c.Request.Body = io.NopCloser(storage)
 	digest := cyberSessionFingerprint(storage)
+	if binding != nil {
+		body, readErr := storage.Bytes()
+		invalidSession := readErr != nil || digest == "" && gjson.GetBytes(body, "prompt_cache_key").Exists()
+		if invalidSession || digest != "" && digest != binding.session.digest {
+			apiErr := cyberFallbackError(c, "reconnect_required", http.StatusForbidden)
+			SetRelayFinalError(c, apiErr)
+			c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+			return
+		}
+		digest = binding.session.digest
+	}
 	if digest == "" {
 		c.Set(cyberSessionSkipKey, "missing_session")
 		cyberSessionCounters.ineligible.Add(1)
@@ -185,6 +225,13 @@ func CyberSessionGuard(c *gin.Context) {
 	}
 	session := cyberRequestSession{policy: settings, tokenID: tokenID, digest: digest}
 	c.Set(cyberSessionRequestKey, session)
+	if settings.Mode == cyberSessionEnforce && settings.BlockedAction == "reroute" {
+		if apiErr := prepareCyberFallbackBans(c, session, binding); apiErr != nil {
+			SetRelayFinalError(c, apiErr)
+			c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+			return
+		}
+	}
 	if settings.Scope != "channel" {
 		if apiErr := checkCyberSession(c, session, 0); apiErr != nil {
 			SetRelayFinalError(c, apiErr)
@@ -218,6 +265,9 @@ func (s cyberRequestSession) redisKey(channelID int) string {
 }
 
 func CheckCyberSessionChannel(c *gin.Context, channelID int) *types.NewAPIError {
+	if IsCyberFallback(c) {
+		return ValidateCyberFallbackChannel(c, channelID)
+	}
 	value, _ := c.Get(cyberSessionRequestKey)
 	session, ok := value.(cyberRequestSession)
 	if !ok || session.policy.Scope != "channel" || !slices.Contains(session.policy.ChannelIDs, channelID) {
@@ -227,6 +277,21 @@ func CheckCyberSessionChannel(c *gin.Context, channelID int) *types.NewAPIError 
 }
 
 func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID int) *types.NewAPIError {
+	if session.policy.Mode == cyberSessionEnforce && session.policy.BlockedAction == "reroute" {
+		if IsCyberFallback(c) {
+			return nil
+		}
+		value, _ := c.Get(cyberFallbackBansKey)
+		bans, _ := value.(map[string]cyberFallbackBan)
+		ban, found := bans[session.redisKey(channelID)]
+		if !found && channelID > 0 {
+			ban, found = bans[session.redisKey(0)]
+		}
+		if found {
+			return activateCyberFallback(c, session, ban, false)
+		}
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), cyberSessionRedisBudget)
 	remaining, err := common.RDB.PTTL(ctx, session.redisKey(channelID)).Result()
 	if err == nil && remaining < 0 && remaining != cyberSessionNoExpiry && channelID > 0 {
@@ -240,6 +305,10 @@ func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID in
 		if remaining >= 0 || remaining == cyberSessionNoExpiry {
 			if session.policy.Mode == cyberSessionEnforce {
 				cyberSessionCounters.blocked.Add(1)
+				if channelID > 0 {
+					// Selection may reject this candidate before channel setup runs.
+					common.SetContextKey(c, constant.ContextKeyChannelId, channelID)
+				}
 				permanent := remaining == cyberSessionNoExpiry
 				c.Set(cyberSessionLogKey, gin.H{"mode": session.policy.Mode, "action": "blocked", "session_fingerprint": session.digest, "permanent": permanent, "channel_id": channelID})
 				message := "This conversation is temporarily blocked after an upstream content policy rejection"
@@ -266,6 +335,10 @@ func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID in
 }
 
 func writeCyberSession(c *gin.Context, session cyberRequestSession) {
+	if route := cyberFallback(c); route != nil {
+		rejectCyberFallback(c, route)
+		return
+	}
 	settings := session.policy
 	channelID := 0
 	if settings.Scope == "channel" {
@@ -277,7 +350,7 @@ func writeCyberSession(c *gin.Context, session cyberRequestSession) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), cyberSessionRedisBudget)
 	defer cancel()
-	metadata, err := common.Marshal(CyberBanMetadata{ID: uuid.NewString(), RequestID: c.GetString(common.RequestIdKey), CreatedAt: time.Now().Unix()})
+	metadata, err := common.Marshal(CyberBanMetadata{ID: uuid.NewString(), RequestID: c.GetString(common.RequestIdKey), CreatedAt: time.Now().Unix(), SourceChannelID: c.GetInt("channel_id")})
 	if err != nil {
 		c.Set(cyberSessionSkipKey, "store_failed")
 		return

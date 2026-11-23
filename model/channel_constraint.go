@@ -8,6 +8,7 @@ import (
 )
 
 var filterEvalOrder = []dto.ChannelFilterKind{
+	dto.FilterAllowedChannelIDs,
 	dto.FilterExcludedChannelIDs,
 	dto.FilterRequestPath,
 	dto.FilterTaskPluginIdentity,
@@ -90,6 +91,8 @@ func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind
 
 func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter) bool {
 	switch filter.Kind {
+	case dto.FilterAllowedChannelIDs:
+		return slices.Contains(filter.AllowedChannelIDs, ch.Id)
 	case dto.FilterExcludedChannelIDs:
 		_, excluded := filter.ExcludedChannelIDs[ch.Id]
 		return !excluded

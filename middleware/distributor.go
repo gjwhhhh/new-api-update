@@ -119,6 +119,11 @@ func Distribute() func(c *gin.Context) {
 				Retry:       common.GetPointer(0),
 			})
 			if selectErr != nil {
+				if selectErr.APIError != nil {
+					service.SetRelayFinalError(c, selectErr.APIError)
+					c.AbortWithStatusJSON(selectErr.StatusCode, gin.H{"error": selectErr.APIError.ToOpenAIError()})
+					return
+				}
 				if selectErr.FilterKind == taskdto.FilterTaskPluginIdentity {
 					logTaskPluginChannelDecision(c, selectErr.Channel, modelRequest.Model, "channel_rejected", "identity_mismatch")
 				}
@@ -133,7 +138,13 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if channel != nil {
+			if apiErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); apiErr != nil {
+				service.SetRelayFinalError(c, apiErr)
+				c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+				return
+			}
+		}
 		service.UnlockGroupMutationRead()
 		groupGateLocked = false
 		c.Next()

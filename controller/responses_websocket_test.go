@@ -70,7 +70,11 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
+	if strings.HasPrefix(os.Getenv("TEST_RESPONSES_LOG_SQL_DSN"), "clickhouse://") {
+		common.IsMasterNode = true
+	}
 	require.NoError(t, model.InitLogDB())
+	common.IsMasterNode = false
 	if model.LOG_DB != db {
 		logSQL, err := model.LOG_DB.DB()
 		require.NoError(t, err)
@@ -361,7 +365,9 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 		"perf_metrics_setting.enabled":    "true",
 	}))
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
-	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+	if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+	}
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
 	require.NoError(t, model.DB.Model(token).Update("remain_quota", 3000).Error)
 
@@ -1746,5 +1752,228 @@ func TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification(t *tes
 			assert.Equal(t, int64(1), requests)
 			assert.Zero(t, successes)
 		})
+	}
+}
+
+func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
+	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
+	const completed = `{"type":"response.completed","response":{"id":"resp_fallback","object":"response","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":4,"output_tokens":3,"total_tokens":7}}}`
+	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) { t.Error("original WebSocket must not be called") })
+	fixture.httpDone = make(chan struct{}, 16)
+	var originalCalls, fallbackCalls, failureStatus atomic.Int32
+	var responseStatus atomic.Value
+	responseStatus.Store("completed")
+	fixture.httpUpstream = func(w http.ResponseWriter, r *http.Request) {
+		originalCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy","message":"rejected"}}`)
+	}
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer fallback-key", r.Header.Get("Authorization"))
+		if websocket.IsWebSocketUpgrade(r) {
+			ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer ws.Close()
+			for {
+				_, body, err := ws.ReadMessage()
+				if err != nil {
+					return
+				}
+				assert.Contains(t, string(body), `"type":"response.create"`)
+				n := fallbackCalls.Add(1)
+				frame := strings.ReplaceAll(completed, "resp_fallback", fmt.Sprintf("resp_fallback_%d", n))
+				if ws.WriteMessage(websocket.TextMessage, []byte(frame)) != nil {
+					return
+				}
+			}
+		}
+		fallbackCalls.Add(1)
+		if status := failureStatus.Load(); status > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(int(status))
+			if status == http.StatusForbidden {
+				_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy"}}`)
+			} else {
+				_, _ = io.WriteString(w, `{"error":{"code":"upstream_unavailable"}}`)
+			}
+			return
+		}
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		require.NoError(t, common.DecodeJson(r.Body, &request))
+		if request.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			frame := strings.ReplaceAll(completed, "completed", responseStatus.Load().(string))
+			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body := `{"id":"resp_fallback","object":"response","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":4,"output_tokens":3,"total_tokens":7}}`
+		_, _ = io.WriteString(w, strings.ReplaceAll(body, "completed", responseStatus.Load().(string)))
+	}))
+	t.Cleanup(fallback.Close)
+	channel := &model.Channel{Name: "cyber-fallback", Key: "fallback-key", Status: common.ChannelStatusEnabled, Type: constant.ChannelTypeOpenAI, Group: "default", Models: "ws-billing", BaseURL: &fallback.URL, ModelMapping: fixture.channel.ModelMapping}
+	channel.SetSetting(dto.ChannelSettings{ResponsesWebSocketEnabled: true})
+	require.NoError(t, model.DB.Create(channel).Error)
+	priority := int64(100)
+	require.NoError(t, model.DB.Model(fixture.channel).Update("priority", priority).Error)
+	require.NoError(t, model.DB.Model(&model.Ability{}).Where("channel_id = ?", fixture.channel.Id).Update("priority", priority).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{ChannelId: channel.Id, Model: "ws-billing", Group: "default", Enabled: true}).Error)
+	require.NoError(t, model.DB.Model(fixture.token).Update("remain_quota", 100000).Error)
+	require.NoError(t, model.InvalidateTokenCaches([]string{fixture.token.Key}))
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error)
+		require.NoError(t, model.DB.Delete(channel).Error)
+	})
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}, &model.GroupRenameAlias{}))
+	common.OptionMapRWMutex.Lock()
+	wasNil := common.OptionMap == nil
+	if wasNil {
+		common.OptionMap = make(map[string]string)
+	}
+	old, had := common.OptionMap[operation_setting.CyberPolicyOptionKey]
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		if wasNil {
+			common.OptionMap = nil
+		} else if had {
+			common.OptionMap[operation_setting.CyberPolicyOptionKey] = old
+		} else {
+			delete(common.OptionMap, operation_setting.CyberPolicyOptionKey)
+		}
+		common.OptionMapRWMutex.Unlock()
+	})
+	policy := service.CyberPolicy{Mode: "enforce", Scope: "all", TTLSeconds: 600, BlockedAction: "reroute", FallbackChannelID: channel.Id}
+	save := func() {
+		data, err := common.Marshal(policy)
+		require.NoError(t, err)
+		require.NoError(t, model.UpdateOption(operation_setting.CyberPolicyOptionKey, string(data)))
+		assert.Equal(t, policy.FallbackChannelID, service.CurrentCyberPolicy().FallbackChannelID)
+	}
+	save()
+	request := func(extra string) (int, string) {
+		body := fmt.Sprintf(`{"model":"ws-billing","input":"hello","prompt_cache_key":%q%s}`, session, extra)
+		req, err := http.NewRequest("POST", fixture.gatewayURL+"/v1/responses", strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+		req.Header.Set("Content-Type", "application/json")
+		response, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		data, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		return response.StatusCode, string(data)
+	}
+	status, body := request("")
+	assert.Equal(t, 403, status, body)
+	assert.Zero(t, fallbackCalls.Load(), "first upstream Cyber must not trigger a fallback retry")
+	status, body = request("")
+	assert.Equal(t, 200, status, body)
+	assert.EqualValues(t, 1, originalCalls.Load())
+	assert.EqualValues(t, 1, fallbackCalls.Load())
+	status, body = request(`,"previous_response_id":"resp_fallback"`)
+	assert.Equal(t, 409, status, body)
+	assert.EqualValues(t, 1, fallbackCalls.Load())
+	common.LogConsumeEnabled = false
+	status, body = request(`,"stream":true`)
+	assert.Equal(t, 200, status, body)
+	assert.Contains(t, body, "response.completed")
+	for round := range 2 {
+		extra := ""
+		if round > 0 {
+			extra = `,"previous_response_id":"resp_fallback_3"`
+		}
+		frame := fmt.Sprintf(`{"type":"response.create","model":"ws-billing","input":"hello","prompt_cache_key":%q%s}`, session, extra)
+		require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(frame)))
+		event := readResponsesWSTestEvent(t, fixture.client)
+		require.Equal(t, "response.completed", event["type"], "%v", event)
+		if round == 0 {
+			bans, _, err := service.ListCyberBans(t.Context(), 0)
+			require.NoError(t, err)
+			require.Len(t, bans, 1)
+			require.NoError(t, service.RevokeCyberBan(t.Context(), bans[0].CyberBanTarget, bans[0].Generation))
+		}
+	}
+	assert.EqualValues(t, 4, fallbackCalls.Load())
+	// After revocation, a new independent HTTP request uses normal routing again.
+	status, body = request("")
+	assert.Equal(t, 403, status, body)
+	assert.EqualValues(t, 2, originalCalls.Load())
+	responseStatus.Store("incomplete")
+	for _, extra := range []string{"", `,"stream":true`} {
+		status, body = request(extra)
+		assert.Equal(t, http.StatusOK, status, body)
+		assert.Contains(t, body, `"status":"incomplete"`)
+	}
+	responseStatus.Store("completed")
+	failureStatus.Store(http.StatusServiceUnavailable)
+	status, body = request("")
+	assert.GreaterOrEqual(t, status, 400, body)
+	assert.EqualValues(t, 7, fallbackCalls.Load(), "ordinary failure must not escape to an unrelated channel")
+	failureStatus.Store(http.StatusForbidden)
+	status, body = request("")
+	assert.Equal(t, 403, status, body)
+	assert.EqualValues(t, 8, fallbackCalls.Load())
+	status, body = request("")
+	assert.Equal(t, 403, status, body)
+	assert.Contains(t, body, "cyber_fallback_target_rejected")
+	assert.EqualValues(t, 8, fallbackCalls.Load(), "the rejected fallback must not be called again in this batch")
+	failedEvents, err := model.CyberEvents(t.Context(), model.CyberEventFilter{Start: 1, End: time.Now().Unix(), TokenID: fixture.token.Id, Action: "reroute_failed"})
+	require.NoError(t, err)
+	assert.Len(t, failedEvents, 2)
+	policy.BlockedAction = "block"
+	policy.FallbackChannelID = 0
+	save()
+	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"after policy change"}`)))
+	event := readResponsesWSTestEvent(t, fixture.client)
+	assert.Equal(t, "error", event["type"])
+	assert.Equal(t, "cyber_fallback_reconnect_required", event["error"].(map[string]any)["code"])
+	_, _, err = fixture.client.ReadMessage()
+	require.Error(t, err)
+	var user model.User
+	require.NoError(t, model.DB.First(&user, fixture.user.Id).Error)
+	assert.Equal(t, 94000, user.Quota, "four completed and two incomplete fallback calls are billed once each for their actual usage")
+	var token model.Token
+	require.NoError(t, model.DB.First(&token, fixture.token.Id).Error)
+	assert.Equal(t, 94000, token.RemainQuota)
+	interrupted, err := model.CyberEvents(t.Context(), model.CyberEventFilter{Start: 1, End: time.Now().Unix(), TokenID: fixture.token.Id, Action: "reroute_interrupted"})
+	require.NoError(t, err)
+	assert.Len(t, interrupted, 2, "HTTP 200 does not make incomplete JSON or SSE responses completed")
+	events, err := model.CyberEvents(t.Context(), model.CyberEventFilter{Start: 1, End: time.Now().Unix(), TokenID: fixture.token.Id, Action: "reroute_completed"})
+	require.NoError(t, err)
+	require.Len(t, events, 4, "successful system events remain queryable with consume logs disabled")
+	for _, event := range events {
+		require.NotNil(t, event.Fallback)
+		assert.Equal(t, channel.Id, event.Fallback.ActualChannelID)
+		assert.Equal(t, fixture.channel.Id, event.Fallback.SourceChannelID)
+		assert.Equal(t, "default", event.Fallback.Group)
+	}
+	for page := 1; page <= 2; page++ {
+		response := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(response)
+		c.Request = httptest.NewRequest("GET", fmt.Sprintf("/api/cyber/events?start=%d&end=%d&token_id=%d&action=reroute_completed&p=%d&page_size=2", time.Now().Add(-time.Hour).Unix(), time.Now().Unix(), fixture.token.Id, page), nil)
+		GetCyberEvents(c)
+		assert.Equal(t, 200, response.Code)
+		var result struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Total int                `json:"total"`
+				Items []model.CyberEvent `json:"items"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		assert.True(t, result.Success)
+		assert.Equal(t, 4, result.Data.Total)
+		assert.Len(t, result.Data.Items, 2)
+	}
+	logs, _, err := model.GetUserLogs(fixture.user.Id, model.LogTypeUnknown, 0, 0, "", "", 0, 100, "", "", "", "")
+	require.NoError(t, err)
+	for _, log := range logs {
+		assert.NotContains(t, log.Other, `"cyber_fallback":`, "route details must remain admin-only")
 	}
 }

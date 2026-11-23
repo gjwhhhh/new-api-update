@@ -23,6 +23,7 @@ const (
 	relayFinalErrorKey       = "relay_final_error"
 	relayFailureProtocolKey  = "relay_failure_protocol"
 	relayAuditFrameKey       = "relay_audit_frame"
+	relayAuditPayloadKey     = "relay_audit_payload"
 )
 
 var relayErrorIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$`)
@@ -88,6 +89,37 @@ func ObserveRelayAuditFrame(c *gin.Context, frame []byte) {
 	if value, ok := c.Get(relayAuditFrameKey); ok {
 		if observer, ok := value.(func([]byte)); ok && observer != nil {
 			observer(frame)
+		}
+	}
+}
+
+// RelayAuditWebSocket carries the original client frame and the transport's
+// error encoder through the normalized per-turn HTTP middleware.
+type RelayAuditWebSocket struct {
+	Request      []byte
+	ErrorPayload func(*types.NewAPIError) ([]byte, error)
+}
+
+type relayAuditWebSocketKey struct{}
+
+func WithRelayAuditWebSocket(request *http.Request, audit RelayAuditWebSocket) *http.Request {
+	return request.WithContext(context.WithValue(request.Context(), relayAuditWebSocketKey{}, audit))
+}
+
+func RelayAuditWebSocketContext(request *http.Request) (RelayAuditWebSocket, bool) {
+	audit, ok := request.Context().Value(relayAuditWebSocketKey{}).(RelayAuditWebSocket)
+	return audit, ok
+}
+
+func SetRelayAuditPayloadObserver(c *gin.Context, observer func([]byte, bool)) {
+	c.Set(relayAuditPayloadKey, observer)
+}
+
+// ObserveRelayAuditPayload observes complete client-facing WebSocket frames.
+func ObserveRelayAuditPayload(c *gin.Context, frame []byte, terminal bool) {
+	if value, ok := c.Get(relayAuditPayloadKey); ok {
+		if observer, ok := value.(func([]byte, bool)); ok && observer != nil {
+			observer(frame, terminal)
 		}
 	}
 }

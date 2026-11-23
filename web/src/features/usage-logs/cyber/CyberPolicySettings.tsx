@@ -63,6 +63,7 @@ const schema = z
     channel_ids: ids,
     ttl_seconds: z.number().int(),
     match_message: z.boolean(),
+    capture_full_payload: z.boolean(),
     blocked_action: z.enum(['block', 'reroute']),
     fallback_channel_id: z.number().int(),
   })
@@ -128,6 +129,7 @@ function PolicyForm(props: {
     defaultValues: {
       ...props.policy,
       blocked_action: props.policy.blocked_action ?? 'block',
+      capture_full_payload: props.policy.capture_full_payload ?? true,
       fallback_channel_id: props.policy.fallback_channel_id ?? 0,
       token_ids: props.policy.token_ids?.join(', ') ?? '',
       channel_ids: props.policy.channel_ids?.join(', ') ?? '',
@@ -354,6 +356,27 @@ function PolicyForm(props: {
             />
             {t('Match cyber_policy in error messages')}
           </label>
+          <div className='space-y-1.5 sm:col-span-2'>
+            <label className='flex items-center gap-3 text-sm'>
+              <Controller
+                control={form.control}
+                name='capture_full_payload'
+                render={({ field }) => (
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                    disabled={!props.canWrite || mutation.isPending}
+                  />
+                )}
+              />
+              {t('Record full Cyber requests and responses')}
+            </label>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Stores full payloads for Cyber rejections and fallback requests when conversation auditing is enabled.'
+              )}
+            </p>
+          </div>
           {props.canWrite && (
             <Button
               className='justify-self-start'
@@ -375,7 +398,7 @@ function PolicyForm(props: {
         desc={
           pending?.blocked_action === 'reroute'
             ? t(
-                'Request context will be sent to the fallback upstream. Costs, latency and model behavior may change. Stateful continuations may require independent context.'
+                'Request context will be sent to the fallback upstream. Costs, latency and model behavior may change.'
               )
             : t('The new policy applies to new requests without a restart.')
         }

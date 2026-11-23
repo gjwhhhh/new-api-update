@@ -147,9 +147,65 @@ func TestRelayErrorHandlerMatchesCyberPolicyByExactCode(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
 			assert.Equal(t, tc.code == "cyber_policy", types.IsSkipRetryError(apiErr))
 			if tc.code == "cyber_policy" {
-				assert.Equal(t, "content_policy_violation", apiErr.ToOpenAIError().Type)
+				assert.Equal(t, "invalid_request", apiErr.ToOpenAIError().Type)
 				assert.Equal(t, "Request rejected by an upstream content policy", apiErr.Error())
 			}
+		})
+	}
+}
+
+// codexRecognizesHTTPCyberPolicy mirrors openai/codex api_bridge.rs:
+// HTTP CyberPolicy is accepted only when status is 400 and error.code is cyber_policy.
+// The error.type field is not consulted.
+func codexRecognizesHTTPCyberPolicy(status int, code, _type string) bool {
+	_ = _type
+	return status == http.StatusBadRequest && code == "cyber_policy"
+}
+
+func TestCodexHTTPCyberPolicyShapeMatrix(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		status         int
+		code, typ      string
+		wantRecognized bool
+	}{
+		{
+			name:   "codex_fixture_400_invalid_request",
+			status: http.StatusBadRequest, code: "cyber_policy", typ: "invalid_request",
+			wantRecognized: true,
+		},
+		{
+			name:   "planned_500_content_policy_violation",
+			status: http.StatusInternalServerError, code: "cyber_policy", typ: "content_policy_violation",
+			wantRecognized: false,
+		},
+		{
+			name:   "planned_code_type_with_400",
+			status: http.StatusBadRequest, code: "cyber_policy", typ: "content_policy_violation",
+			wantRecognized: true,
+		},
+		{
+			name:   "project_normalized_403_content_policy_violation",
+			status: http.StatusForbidden, code: "cyber_policy", typ: "content_policy_violation",
+			wantRecognized: false,
+		},
+		{
+			name:   "current_local_sensitive_500",
+			status: http.StatusInternalServerError, code: "sensitive_words_detected", typ: "new_api_error",
+			wantRecognized: false,
+		},
+		{
+			name:   "400_but_wrong_code",
+			status: http.StatusBadRequest, code: "sensitive_words_detected", typ: "invalid_request",
+			wantRecognized: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := codexRecognizesHTTPCyberPolicy(tc.status, tc.code, tc.typ)
+			assert.Equal(t, tc.wantRecognized, got,
+				"status=%d code=%q type=%q", tc.status, tc.code, tc.typ)
 		})
 	}
 }

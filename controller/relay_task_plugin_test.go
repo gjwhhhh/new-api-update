@@ -809,7 +809,7 @@ func TestTaskPluginResponsesCyberChannelGuard(t *testing.T) {
 				assert.Zero(t, billing.refunds)
 				return
 			}
-			assert.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+			assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
 			var response struct {
 				Error struct {
 					Code string `json:"code"`
@@ -818,7 +818,7 @@ func TestTaskPluginResponsesCyberChannelGuard(t *testing.T) {
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 			assert.Equal(t, "cyber_policy", response.Error.Code)
-			assert.Equal(t, "content_policy_violation", response.Error.Type)
+			assert.Equal(t, "invalid_request", response.Error.Type)
 			if tc.retry {
 				assert.Equal(t, []int{80}, submittedChannels)
 			} else {

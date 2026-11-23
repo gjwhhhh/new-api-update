@@ -39,7 +39,7 @@ func SaveCyberPolicy(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryOperation, Action: "cyber_policy_updated", Content: "Cyber policy updated", Success: true, Other: model.AuditOther{Op: &model.AuditOperation{Action: "cyber_policy_updated", Params: map[string]any{"mode": policy.Mode, "scope": policy.Scope, "token_ids": policy.TokenIDs, "channel_ids": policy.ChannelIDs, "ttl_seconds": policy.TTLSeconds, "match_message": policy.MatchMessage, "blocked_action": policy.BlockedAction, "fallback_channel_id": policy.FallbackChannelID}}}})
+	model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryOperation, Action: "cyber_policy_updated", Content: "Cyber policy updated", Success: true, Other: model.AuditOther{Op: &model.AuditOperation{Action: "cyber_policy_updated", Params: map[string]any{"mode": policy.Mode, "scope": policy.Scope, "token_ids": policy.TokenIDs, "channel_ids": policy.ChannelIDs, "ttl_seconds": policy.TTLSeconds, "match_message": policy.MatchMessage, "capture_full_payload": policy.CaptureFullPayload, "blocked_action": policy.BlockedAction, "fallback_channel_id": policy.FallbackChannelID}}}})
 	common.ApiSuccess(c, service.CurrentCyberPolicy())
 }
 

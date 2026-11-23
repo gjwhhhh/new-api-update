@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -32,7 +35,7 @@ func cyberFallbackTestContext(body string) *gin.Context {
 	return c
 }
 
-func TestCyberFallbackPolicyAndDependencies(t *testing.T) {
+func TestCyberFallbackPolicy(t *testing.T) {
 	p := CyberPolicy{Mode: "enforce", Scope: "all", TTLSeconds: 600}
 	p.Normalize()
 	assert.Equal(t, "block", p.BlockedAction)
@@ -41,32 +44,57 @@ func TestCyberFallbackPolicyAndDependencies(t *testing.T) {
 	require.Error(t, p.Validate())
 	p.FallbackChannelID = 12
 	require.NoError(t, p.Validate())
-	for _, tc := range []struct{ body, reason string }{
-		{`{"input":"hello"}`, ""},
-		{`{"input":"hello","metadata":{"conversation":"business-label"},"tools":[{"type":"function","name":"f","parameters":{"type":"object","properties":{"file_id":{"type":"string"}}}}]}`, ""},
-		{`{"prompt":{"id":"pmpt_1"}}`, "stateful_context"},
-		{`{"input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "stateful_context"},
-		{`{"previous_response_id":"resp-1"}`, "stateful_context"},
-		{`{"conversation":{"id":"conv-1"}}`, "stateful_context"},
-		{`{"input":[{"type":"input_file","file_id":"file-1"}]}`, "stateful_context"},
-		{`{"input":[{"type":"function_call_output","call_id":"call-1","output":"done"}]}`, "unpaired_tool_result"},
-		{`{"input":[{"type":"function_call","call_id":"call-1"},{"type":"function_call_output","call_id":"call-1","output":"done"}]}`, ""},
-		{`{"messages":[{"role":"assistant","tool_calls":[{"id":"call-1","type":"function"}]},{"role":"tool","tool_call_id":"call-1","content":"done"}]}`, ""},
-		{`{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`, ""},
-		{`{"input":"hello","text":{"format":{"type":"json_schema","name":"record","schema":{"type":"object","properties":{"conversation":{"type":"string"},"file_id":{"type":"string"},"file_ids":{"type":"array"}}}}}}`, ""},
-		{`{"messages":[{"role":"user","content":"hello"}],"response_format":{"type":"json_schema","json_schema":{"name":"record","schema":{"type":"object","properties":{"previous_response_id":{"type":"string"}}}}}}`, ""},
-		{`{"input":"hello","tools":[{"type":"code_interpreter","container":{"type":"auto","file_ids":["file-from-source"]}}]}`, "stateful_context"},
-		{`{"input":"hello","tools":[{"type":"code_interpreter","container":{"type":"auto","file_ids":[]}}]}`, ""},
-		{`{"input":"hello","tools":[{"type":"code_interpreter","container":{"type":"auto"}}]}`, ""},
-		{`{"input":"hello","tools":[{"type":"code_interpreter","container":"cntr-from-source"}]}`, "stateful_context"},
-		{`{"input":"hello","tools":[{"type":"file_search","vector_store_ids":["vs-from-source"]}]}`, "stateful_context"},
-		{`{"messages":[{"role":"user","content":[{"type":"file","file":{"file_id":"file-from-source"}}]}]}`, "stateful_context"},
-		{`{"input":[{"role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"file_citation","file_id":"file-from-source"}]}]}]}`, "stateful_context"},
-		{`{"input":[{"type":"item_reference","id":"item-from-source"}]}`, "stateful_context"},
-		{`{"input":[{"type":"function_call","call_id":"call-1","arguments":"{}"},{"type":"function_call_output","call_id":"call-1","output":[{"type":"input_file","file_id":"file-from-source"}]}]}`, "stateful_context"},
+}
+
+func TestCyberFallbackErrorsExposeCyberPolicy(t *testing.T) {
+	for _, reason := range []string{
+		"binding_conflict",
+		"reconnect_required",
+		"target_rejected",
+		"same_source",
+		"model_forbidden",
+		"state_unavailable",
+		"target_unavailable",
 	} {
-		t.Run(tc.body, func(t *testing.T) {
-			assert.Equal(t, tc.reason, cyberFallbackDependency(cyberFallbackTestContext(tc.body)))
+		t.Run(reason, func(t *testing.T) {
+			c := cyberFallbackTestContext(`{"input":"hello"}`)
+			armed := false
+			c.Set(cyberSessionArmKey, func() { armed = true })
+			apiErr := cyberFallbackError(c, reason)
+			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			public := apiErr.ToOpenAIError()
+			assert.Equal(t, "cyber_policy", public.Code)
+			assert.Equal(t, "invalid_request", public.Type)
+			assert.NotContains(t, public.Message, reason)
+			assert.Equal(t, "cyber_policy", apiErr.ToClaudeError().Type)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			SetRelayFinalError(c, apiErr)
+			assert.False(t, armed, "a local routing failure must not create another upstream rejection ban")
+			failure, found := FinalRelayFailure(c)
+			require.True(t, found)
+			assert.Equal(t, "cyber_fallback_"+reason, failure.Code)
+		})
+	}
+}
+
+func TestCyberFallbackForwardsStatefulContext(t *testing.T) {
+	for _, body := range []string{
+		`{"previous_response_id":"resp_parent","input":"next"}`,
+		`{"conversation":"conv_private","input":[{"type":"reasoning","id":"rs_private"}]}`,
+		`{"input":[{"type":"function_call_output","call_id":"call_private","output":"result"}]}`,
+		`{"input":[{"type":"item_reference","id":"item_private"}]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			c := cyberFallbackTestContext(body)
+			session := cyberRequestSession{policy: CyberPolicy{BlockedAction: "reroute", FallbackChannelID: 94}}
+			require.Nil(t, activateCyberFallback(c, session, cyberFallbackBan{meta: CyberBanMetadata{ID: "ban", SourceChannelID: 79}}, false))
+			require.True(t, IsCyberFallback(c))
+			assert.Equal(t, 94, cyberFallback(c).TargetChannelID)
+			raw, err := io.ReadAll(c.Request.Body)
+			require.NoError(t, err)
+			assert.Equal(t, body, string(raw))
+			require.Len(t, GetChannelConstraints(c).Filters, 1)
+			assert.Equal(t, []int{94}, GetChannelConstraints(c).Filters[0].AllowedChannelIDs)
 		})
 	}
 }
@@ -288,7 +316,7 @@ func TestCyberFallbackConfirmedStorageFailureDoesNotReleaseBan(t *testing.T) {
 	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
 	apiErr := checkCyberSession(c, session, 0)
 	require.NotNil(t, apiErr)
-	assert.Equal(t, 503, apiErr.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
 
 	// One corrupt parent must not make the entire bounded read fail open.
 	session.policy.Scope = "channel"
@@ -298,12 +326,12 @@ func TestCyberFallbackConfirmedStorageFailureDoesNotReleaseBan(t *testing.T) {
 	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
 	apiErr = checkCyberSession(c, session, 0)
 	require.NotNil(t, apiErr)
-	assert.Equal(t, 503, apiErr.StatusCode, "the global ban remains enforced despite another corrupt parent")
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode, "the global ban remains enforced despite another corrupt parent")
 	c = cyberFallbackTestContext(`{"input":"hello"}`)
 	require.Nil(t, prepareCyberFallbackBans(c, session, nil))
 	apiErr = checkCyberSession(c, session, 21)
 	require.NotNil(t, apiErr)
-	assert.Equal(t, 503, apiErr.StatusCode, "the corrupt parent itself is unavailable rather than unbanned")
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode, "the corrupt parent itself is unavailable rather than unbanned")
 }
 
 func TestCyberFallbackPolicyReloadDefaultsToBlock(t *testing.T) {
@@ -320,6 +348,14 @@ func TestCyberFallbackPolicyReloadDefaultsToBlock(t *testing.T) {
 		cyberSessionSnapshot.Store(previousSnapshot)
 	})
 	assert.Equal(t, "block", CurrentCyberPolicy().BlockedAction)
+	require.NotNil(t, CurrentCyberPolicy().CaptureFullPayload)
+	assert.True(t, *CurrentCyberPolicy().CaptureFullPayload)
+	common.OptionMapRWMutex.Lock()
+	common.OptionMap[operation_setting.CyberPolicyOptionKey] = `{"mode":"enforce","scope":"all","ttl_seconds":600,"capture_full_payload":false}`
+	common.OptionMapRWMutex.Unlock()
+	assert.False(t, *CurrentCyberPolicy().CaptureFullPayload)
+	cyberSessionSnapshot.Store(nil)
+	assert.False(t, *CurrentCyberPolicy().CaptureFullPayload, "reload preserves an explicit disabled value")
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap[operation_setting.CyberPolicyOptionKey] = `{"mode":"enforce","scope":"all","ttl_seconds":600,"fallback_channel_id":"invalid"}`
 	common.OptionMapRWMutex.Unlock()

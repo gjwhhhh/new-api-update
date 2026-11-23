@@ -106,6 +106,11 @@ it('shows the live policy without editable controls to administrators without wr
   })
   renderPanel(<CyberPolicySettings userId={2} canWrite={false} />)
   expect(await screen.findByRole('combobox', { name: 'Mode' })).toBeDisabled()
+  expect(
+    screen.getByRole('switch', {
+      name: 'Record full Cyber requests and responses',
+    })
+  ).toHaveAttribute('aria-disabled', 'true')
   expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
 })
 
@@ -250,4 +255,32 @@ it('does not save rerouting when no fallback channels are available', async () =
   await user.click(screen.getByRole('button', { name: 'Save' }))
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   expect(save).not.toHaveBeenCalled()
+})
+
+it('defaults Cyber full payload capture on and persists an explicit off selection', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: policy },
+  })
+  const save = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true, data: { ...policy, capture_full_payload: false } },
+  })
+  const user = userEvent.setup()
+  renderPanel(<CyberPolicySettings userId={1} canWrite />)
+  const capture = await screen.findByRole('switch', {
+    name: 'Record full Cyber requests and responses',
+  })
+  expect(capture).toBeChecked()
+  await user.click(capture)
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  const dialog = await screen.findByRole('alertdialog')
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(save).toHaveBeenCalledWith(
+    '/api/cyber/policy',
+    expect.objectContaining({ capture_full_payload: false })
+  )
+  expect(
+    await screen.findByRole('switch', {
+      name: 'Record full Cyber requests and responses',
+    })
+  ).not.toBeChecked()
 })

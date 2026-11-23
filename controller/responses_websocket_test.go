@@ -422,9 +422,14 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 		c.Set(common.RequestIdKey, "responses-ws-billing")
 		ResponsesWebSocket(c)
 	})
-	engine.POST("/v1/responses", middleware.BodyStorageCleanup(), middleware.TokenAuth(), service.RelayFailureLog(""), service.CyberSessionGuard, middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
+	engine.POST("/v1/responses", middleware.BodyStorageCleanup(), middleware.TokenAuth(), func(c *gin.Context) {
+		id := c.GetHeader("X-Test-Request-ID")
+		if id == "" {
+			id = "responses-http-billing"
+		}
+		c.Set(common.RequestIdKey, id)
+	}, service.RelayFailureLog(""), conversationaudit.CaptureMiddleware(), service.CyberSessionGuard, middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
 		defer func() { fixture.httpDone <- struct{}{} }()
-		c.Set(common.RequestIdKey, "responses-http-billing")
 		Relay(c, types.RelayFormatOpenAIResponses)
 	})
 	gateway := httptest.NewServer(engine)
@@ -504,7 +509,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 				assert.Equal(t, want, service.CyberSessionGuardMetrics()["would_block"])
 				return
 			}
-			assert.Equal(t, float64(http.StatusForbidden), next["status"])
+			assert.Equal(t, float64(http.StatusBadRequest), next["status"])
 			require.IsType(t, map[string]any{}, next["error"])
 			assert.Equal(t, "cyber_policy", next["error"].(map[string]any)["code"])
 			req, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":"ws-billing","input":"test","prompt_cache_key":%q}`, session)))
@@ -516,7 +521,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
-			assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 			assert.Contains(t, string(body), `"code":"cyber_policy"`)
 			if tc.ttl == "0" {
 				assert.Empty(t, resp.Header.Get("Retry-After"))
@@ -526,7 +531,7 @@ func TestResponsesCyberSessionGuardAcrossHTTPAndWebSocket(t *testing.T) {
 			assert.Equal(t, "response.completed", wsTurn(otherSession)["type"])
 			fixture.redisServer.FastForward(time.Hour)
 			if tc.ttl == "0" {
-				assert.Equal(t, float64(http.StatusForbidden), wsTurn(session)["status"])
+				assert.Equal(t, float64(http.StatusBadRequest), wsTurn(session)["status"])
 				bans, _, err := service.ListCyberBans(t.Context(), 0)
 				require.NoError(t, err)
 				require.Len(t, bans, 1)
@@ -602,7 +607,7 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	assert.Len(t, events[0].Fingerprint, 64)
 
 	status, body = post()
-	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, http.StatusBadRequest, status)
 	assert.Contains(t, body, `"code":"cyber_policy"`)
 	assert.Empty(t, fixture.httpDone, "the blocked request must not enter the HTTP relay")
 
@@ -612,7 +617,7 @@ func TestResponsesCyberSSEBlocksHTTPAndWrappedWebSocket(t *testing.T) {
 	payload := fmt.Sprintf(`{"type":"response.create","response":{"model":"ws-billing","input":"test","prompt_cache_key":%q}}`, session)
 	require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(payload)))
 	rejection := readResponsesWSTestEvent(t, client)
-	require.Equal(t, float64(http.StatusForbidden), rejection["status"])
+	require.Equal(t, float64(http.StatusBadRequest), rejection["status"])
 	require.IsType(t, map[string]any{}, rejection["error"])
 	assert.Equal(t, "cyber_policy", rejection["error"].(map[string]any)["code"])
 	assert.Zero(t, fixture.connections.Load())
@@ -940,16 +945,7 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 }
 
 func TestResponsesWebSocketAuditFromUsageLog(t *testing.T) {
-	// Audit registration starts a process-wide worker against the current DB.
-	// Isolate it from the other tests, which replace and close their own DBs.
-	const worker = "TEST_RESPONSES_WS_AUDIT_WORKER"
-	if os.Getenv(worker) != "1" {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestResponsesWebSocketAuditFromUsageLog$", "-test.v")
-		cmd.Env = append(os.Environ(), worker+"=1")
-		output, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", output)
+	if isolateResponsesAuditTest(t) {
 		return
 	}
 
@@ -969,24 +965,7 @@ func TestResponsesWebSocketAuditFromUsageLog(t *testing.T) {
 		}
 		_, _, _ = ws.ReadMessage() // Keep the upstream open until the client closes.
 	})
-	t.Setenv("CONVERSATION_AUDIT_ENABLED", "true")
-	t.Setenv("CONVERSATION_AUDIT_CAPTURE_WS_SUCCESS", "true")
-	t.Setenv("CONVERSATION_AUDIT_ACTIVE_KEY_VERSION", "v1")
-	t.Setenv("CONVERSATION_AUDIT_KEY_V1", base64.StdEncoding.EncodeToString([]byte("12345678901234567890123456789012")))
-	require.NoError(t, model.DB.AutoMigrate(&conversationaudit.AuditSettings{}, &conversationaudit.ConversationAudit{},
-		&conversationaudit.ConversationAuditResponseLink{}, &conversationaudit.ConversationAuditResponseSegment{},
-		&conversationaudit.ConversationAuditPendingResponse{}, &model.UserAccessToken{}, &model.AuditLog{}))
-	require.NoError(t, model.DB.Create(&conversationaudit.AuditSettings{
-		ID: 1, Enabled: true, CaptureFullPayload: true, RetentionDays: 30, MaxContentBytes: 262144, ActiveKeyVersion: "v1",
-	}).Error)
-	admin := model.User{Username: "ws-audit-admin", AffCode: "ws-aud", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
-	require.NoError(t, model.DB.Create(&admin).Error)
-	rawToken := model.AccessTokenPrefix + strings.Repeat("a", 43)
-	pat := model.UserAccessToken{UserId: admin.Id, Name: "audit test", TokenHash: model.AccessTokenFingerprint(rawToken), TokenHint: model.AccessTokenHint(rawToken), ExpiresAt: time.Now().Add(time.Hour).Unix()}
-	require.NoError(t, pat.SetScopes([]string{"log:read"}))
-	require.NoError(t, model.DB.Create(&pat).Error)
-	lookup := gin.New()
-	conversationaudit.Register(lookup.Group("/api"))
+	lookup, rawToken := setupResponsesAuditLookup(t, true, true, fixture.user.Id)
 
 	for round := 1; round <= 2; round++ {
 		frame := fmt.Sprintf(`{"type":"response.create","model":"ws-billing","input":"question %d","instructions":"private instructions"}`, round)
@@ -1322,7 +1301,7 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					require.NoError(t, response.Body.Close())
 					if tc.failed && !tc.delta {
 						if isCyber {
-							assert.Equal(t, http.StatusForbidden, response.StatusCode)
+							assert.Equal(t, http.StatusBadRequest, response.StatusCode)
 							assert.Contains(t, string(body), "cyber_policy")
 						} else {
 							assert.Equal(t, http.StatusBadGateway, response.StatusCode)
@@ -1756,11 +1735,16 @@ func TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification(t *tes
 }
 
 func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
+	if isolateResponsesAuditTest(t) {
+		return
+	}
 	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
 	const completed = `{"type":"response.completed","response":{"id":"resp_fallback","object":"response","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":4,"output_tokens":3,"total_tokens":7}}}`
 	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) { t.Error("original WebSocket must not be called") })
+	lookup, rawToken := setupResponsesAuditLookup(t, false, false, fixture.user.Id)
+	expectedPayloads := map[string][2]string{}
 	fixture.httpDone = make(chan struct{}, 16)
-	var originalCalls, fallbackCalls, failureStatus atomic.Int32
+	var originalCalls, fallbackCalls, failureStatus, continuations atomic.Int32
 	var responseStatus atomic.Value
 	responseStatus.Store("completed")
 	fixture.httpUpstream = func(w http.ResponseWriter, r *http.Request) {
@@ -1797,14 +1781,19 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 			if status == http.StatusForbidden {
 				_, _ = io.WriteString(w, `{"error":{"code":"cyber_policy"}}`)
 			} else {
-				_, _ = io.WriteString(w, `{"error":{"code":"upstream_unavailable"}}`)
+				_, _ = io.WriteString(w, `{"error":{"type":"server_error","code":"upstream_unavailable","message":"Temporarily unavailable"}}`)
 			}
 			return
 		}
 		var request struct {
-			Stream bool `json:"stream"`
+			Stream             bool   `json:"stream"`
+			PreviousResponseID string `json:"previous_response_id"`
 		}
 		require.NoError(t, common.DecodeJson(r.Body, &request))
+		if request.PreviousResponseID != "" {
+			assert.Equal(t, "resp_fallback", request.PreviousResponseID)
+			continuations.Add(1)
+		}
 		if request.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			frame := strings.ReplaceAll(completed, "completed", responseStatus.Load().(string))
@@ -1856,17 +1845,22 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 		assert.Equal(t, policy.FallbackChannelID, service.CurrentCyberPolicy().FallbackChannelID)
 	}
 	save()
+	httpSequence := 0
 	request := func(extra string) (int, string) {
+		httpSequence++
+		id := fmt.Sprintf("cyber-http-%d", httpSequence)
 		body := fmt.Sprintf(`{"model":"ws-billing","input":"hello","prompt_cache_key":%q%s}`, session, extra)
 		req, err := http.NewRequest("POST", fixture.gatewayURL+"/v1/responses", strings.NewReader(body))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Test-Request-ID", id)
 		response, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		defer response.Body.Close()
 		data, err := io.ReadAll(response.Body)
 		require.NoError(t, err)
+		expectedPayloads[id] = [2]string{body, string(data)}
 		return response.StatusCode, string(data)
 	}
 	status, body := request("")
@@ -1877,8 +1871,9 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	assert.EqualValues(t, 1, originalCalls.Load())
 	assert.EqualValues(t, 1, fallbackCalls.Load())
 	status, body = request(`,"previous_response_id":"resp_fallback"`)
-	assert.Equal(t, 409, status, body)
-	assert.EqualValues(t, 1, fallbackCalls.Load())
+	assert.Equal(t, 200, status, body)
+	assert.EqualValues(t, 2, fallbackCalls.Load())
+	assert.EqualValues(t, 1, continuations.Load(), "the normal relay preserves the provider continuation identifier")
 	common.LogConsumeEnabled = false
 	status, body = request(`,"stream":true`)
 	assert.Equal(t, 200, status, body)
@@ -1886,12 +1881,16 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	for round := range 2 {
 		extra := ""
 		if round > 0 {
-			extra = `,"previous_response_id":"resp_fallback_3"`
+			extra = `,"previous_response_id":"resp_fallback_4"`
 		}
 		frame := fmt.Sprintf(`{"type":"response.create","model":"ws-billing","input":"hello","prompt_cache_key":%q%s}`, session, extra)
 		require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(frame)))
-		event := readResponsesWSTestEvent(t, fixture.client)
+		_, response, err := fixture.client.ReadMessage()
+		require.NoError(t, err)
+		var event map[string]any
+		require.NoError(t, common.Unmarshal(response, &event))
 		require.Equal(t, "response.completed", event["type"], "%v", event)
+		expectedPayloads[fmt.Sprintf("responses-ws-billing-ws-%d", round)] = [2]string{frame, string(response) + "\n"}
 		if round == 0 {
 			bans, _, err := service.ListCyberBans(t.Context(), 0)
 			require.NoError(t, err)
@@ -1899,7 +1898,7 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 			require.NoError(t, service.RevokeCyberBan(t.Context(), bans[0].CyberBanTarget, bans[0].Generation))
 		}
 	}
-	assert.EqualValues(t, 4, fallbackCalls.Load())
+	assert.EqualValues(t, 5, fallbackCalls.Load())
 	// After revocation, a new independent HTTP request uses normal routing again.
 	status, body = request("")
 	assert.Equal(t, 403, status, body)
@@ -1914,39 +1913,49 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	failureStatus.Store(http.StatusServiceUnavailable)
 	status, body = request("")
 	assert.GreaterOrEqual(t, status, 400, body)
-	assert.EqualValues(t, 7, fallbackCalls.Load(), "ordinary failure must not escape to an unrelated channel")
+	assert.Contains(t, body, "upstream_unavailable")
+	assert.EqualValues(t, 8, fallbackCalls.Load(), "ordinary failure must not escape to an unrelated channel")
 	failureStatus.Store(http.StatusForbidden)
 	status, body = request("")
 	assert.Equal(t, 403, status, body)
-	assert.EqualValues(t, 8, fallbackCalls.Load())
+	assert.EqualValues(t, 9, fallbackCalls.Load())
 	status, body = request("")
-	assert.Equal(t, 403, status, body)
-	assert.Contains(t, body, "cyber_fallback_target_rejected")
-	assert.EqualValues(t, 8, fallbackCalls.Load(), "the rejected fallback must not be called again in this batch")
+	assert.Equal(t, http.StatusBadRequest, status, body)
+	assert.Contains(t, body, `"code":"cyber_policy"`)
+	assert.NotContains(t, body, "cyber_fallback_")
+	assert.EqualValues(t, 9, fallbackCalls.Load(), "the rejected fallback must not be called again in this batch")
 	failedEvents, err := model.CyberEvents(t.Context(), model.CyberEventFilter{Start: 1, End: time.Now().Unix(), TokenID: fixture.token.Id, Action: "reroute_failed"})
 	require.NoError(t, err)
 	assert.Len(t, failedEvents, 2)
 	policy.BlockedAction = "block"
 	policy.FallbackChannelID = 0
 	save()
-	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"after policy change"}`)))
-	event := readResponsesWSTestEvent(t, fixture.client)
+	const blockedFrame = `{"type":"response.create","model":"ws-billing","input":"after policy change"}`
+	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(blockedFrame)))
+	_, blockedResponse, err := fixture.client.ReadMessage()
+	require.NoError(t, err)
+	var event map[string]any
+	require.NoError(t, common.Unmarshal(blockedResponse, &event))
+	expectedPayloads["responses-ws-billing-ws-2"] = [2]string{blockedFrame, string(blockedResponse) + "\n"}
 	assert.Equal(t, "error", event["type"])
-	assert.Equal(t, "cyber_fallback_reconnect_required", event["error"].(map[string]any)["code"])
+	assert.Equal(t, float64(http.StatusBadRequest), event["status"])
+	assert.Equal(t, "invalid_request", event["error"].(map[string]any)["type"])
+	assert.Equal(t, "cyber_policy", event["error"].(map[string]any)["code"])
+	assert.NotContains(t, string(blockedResponse), "cyber_fallback_")
 	_, _, err = fixture.client.ReadMessage()
 	require.Error(t, err)
 	var user model.User
 	require.NoError(t, model.DB.First(&user, fixture.user.Id).Error)
-	assert.Equal(t, 94000, user.Quota, "four completed and two incomplete fallback calls are billed once each for their actual usage")
+	assert.Equal(t, 93000, user.Quota, "five completed and two incomplete fallback calls are billed once each for their actual usage")
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, fixture.token.Id).Error)
-	assert.Equal(t, 94000, token.RemainQuota)
+	assert.Equal(t, 93000, token.RemainQuota)
 	interrupted, err := model.CyberEvents(t.Context(), model.CyberEventFilter{Start: 1, End: time.Now().Unix(), TokenID: fixture.token.Id, Action: "reroute_interrupted"})
 	require.NoError(t, err)
 	assert.Len(t, interrupted, 2, "HTTP 200 does not make incomplete JSON or SSE responses completed")
 	events, err := model.CyberEvents(t.Context(), model.CyberEventFilter{Start: 1, End: time.Now().Unix(), TokenID: fixture.token.Id, Action: "reroute_completed"})
 	require.NoError(t, err)
-	require.Len(t, events, 4, "successful system events remain queryable with consume logs disabled")
+	require.Len(t, events, 5, "successful system events remain queryable with consume logs disabled")
 	for _, event := range events {
 		require.NotNil(t, event.Fallback)
 		assert.Equal(t, channel.Id, event.Fallback.ActualChannelID)
@@ -1968,7 +1977,7 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 		}
 		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 		assert.True(t, result.Success)
-		assert.Equal(t, 4, result.Data.Total)
+		assert.Equal(t, 5, result.Data.Total)
 		assert.Len(t, result.Data.Items, 2)
 	}
 	logs, _, err := model.GetUserLogs(fixture.user.Id, model.LogTypeUnknown, 0, 0, "", "", 0, 100, "", "", "", "")
@@ -1976,4 +1985,95 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	for _, log := range logs {
 		assert.NotContains(t, log.Other, `"cyber_fallback":`, "route details must remain admin-only")
 	}
+	for requestID, payloads := range expectedPayloads {
+		req := httptest.NewRequest(http.MethodGet, "/api/custom/conversation-audits/"+requestID, nil)
+		req.Header.Set("Authorization", "Bearer "+rawToken)
+		result := httptest.NewRecorder()
+		lookup.ServeHTTP(result, req)
+		require.Equal(t, http.StatusOK, result.Code, "%s: %s", requestID, result.Body.String())
+		var detail struct {
+			Data struct {
+				Audit             conversationaudit.ConversationAudit
+				Request, Response string
+			}
+		}
+		require.NoError(t, common.Unmarshal(result.Body.Bytes(), &detail))
+		assert.True(t, detail.Data.Audit.FullPayload, requestID)
+		assert.Empty(t, detail.Data.Audit.CaptureError, requestID)
+		assert.Equal(t, payloads[0], detail.Data.Request, requestID)
+		assert.Equal(t, payloads[1], detail.Data.Response, requestID)
+	}
+
+	policy.CaptureFullPayload = common.GetPointer(false)
+	save()
+	var saved model.Option
+	require.NoError(t, model.DB.Where(&model.Option{Key: operation_setting.CyberPolicyOptionKey}).Take(&saved).Error)
+	var savedPolicy service.CyberPolicy
+	require.NoError(t, common.UnmarshalJsonStr(saved.Value, &savedPolicy))
+	require.NotNil(t, savedPolicy.CaptureFullPayload)
+	assert.False(t, *savedPolicy.CaptureFullPayload)
+	status, body = request("")
+	assert.Equal(t, http.StatusBadRequest, status, body)
+	var summary conversationaudit.ConversationAudit
+	require.Eventually(t, func() bool {
+		return model.DB.Where("request_id = ?", fmt.Sprintf("cyber-http-%d", httpSequence)).Take(&summary).Error == nil
+	}, time.Second, time.Millisecond)
+	assert.False(t, summary.FullPayload, "changing the persisted switch applies to the next request")
+
+}
+
+func isolateResponsesAuditTest(t *testing.T) bool {
+	t.Helper()
+	// Audit registration starts a process-wide worker against the current DB.
+	// Isolate it from the other tests, which replace and close their own DBs.
+	const worker = "TEST_RESPONSES_WS_AUDIT_WORKER"
+	if os.Getenv(worker) != "1" {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+t.Name()+"$", "-test.v")
+		cmd.Env = append(os.Environ(), worker+"=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return true
+	}
+
+	return false
+}
+
+func setupResponsesAuditLookup(t *testing.T, fullPayload, captureWSSuccess bool, userID int) (*gin.Engine, string) {
+	t.Helper()
+	t.Setenv("CONVERSATION_AUDIT_ENABLED", "true")
+	t.Setenv("CONVERSATION_AUDIT_CAPTURE_WS_SUCCESS", strconv.FormatBool(captureWSSuccess))
+	t.Setenv("CONVERSATION_AUDIT_ACTIVE_KEY_VERSION", "v1")
+	t.Setenv("CONVERSATION_AUDIT_KEY_V1", base64.StdEncoding.EncodeToString([]byte("12345678901234567890123456789012")))
+	require.NoError(t, model.DB.AutoMigrate(&conversationaudit.AuditSettings{}, &conversationaudit.ConversationAudit{},
+		&conversationaudit.ConversationAuditResponseLink{}, &conversationaudit.ConversationAuditResponseSegment{},
+		&conversationaudit.ConversationAuditPendingResponse{}, &model.UserAccessToken{}, &model.AuditLog{}))
+	require.NoError(t, model.DB.Create(&conversationaudit.AuditSettings{
+		ID: 1, Enabled: true, CaptureFullPayload: fullPayload, RetentionDays: 30, MaxContentBytes: 262144, ActiveKeyVersion: "v1",
+	}).Error)
+	admin := model.User{Username: "ws-audit-admin", AffCode: "ws-aud", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, model.DB.Create(&admin).Error)
+	rawToken := model.AccessTokenPrefix + strings.Repeat("a", 43)
+	pat := model.UserAccessToken{UserId: admin.Id, Name: "audit test", TokenHash: model.AccessTokenFingerprint(rawToken), TokenHint: model.AccessTokenHint(rawToken), ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, pat.SetScopes([]string{"log:read"}))
+	require.NoError(t, model.DB.Create(&pat).Error)
+	lookup := gin.New()
+	conversationaudit.Register(lookup.Group("/api"))
+
+	t.Cleanup(func() {
+		var audits []conversationaudit.ConversationAudit
+		require.NoError(t, model.DB.Where("user_id = ?", userID).Find(&audits).Error)
+		for _, audit := range audits {
+			require.NoError(t, model.DB.Where("audit_id = ?", audit.ID).Delete(&conversationaudit.ConversationAuditPendingResponse{}).Error)
+			require.NoError(t, model.DB.Where("audit_id = ?", audit.ID).Delete(&conversationaudit.ConversationAuditResponseSegment{}).Error)
+			require.NoError(t, model.DB.Where("audit_id = ?", audit.ID).Delete(&conversationaudit.ConversationAuditResponseLink{}).Error)
+		}
+		require.NoError(t, model.DB.Where("user_id = ?", userID).Delete(&conversationaudit.ConversationAudit{}).Error)
+		require.NoError(t, model.DB.Delete(&conversationaudit.AuditSettings{ID: 1}).Error)
+		require.NoError(t, model.DB.Delete(&pat).Error)
+		require.NoError(t, model.DB.Unscoped().Delete(&admin).Error)
+	})
+
+	return lookup, rawToken
 }

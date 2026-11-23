@@ -209,6 +209,12 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		}
 	}()
 	request := service.WithCyberFallbackBinding(s.request.Clone(s.ctx), s.fallbackBinding)
+	request = service.WithRelayAuditWebSocket(request, service.RelayAuditWebSocket{
+		Request: message,
+		ErrorPayload: func(err *types.NewAPIError) ([]byte, error) {
+			return buildResponsesWSErrorPayload(envelope.EventID, streamID, err)
+		},
+	})
 	// Middleware and passthrough must read the same normalized request body.
 	if parseErr == nil {
 		message = create.Body
@@ -431,6 +437,8 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					if !terminal {
 						if err := s.writeClient(incoming.kind, incoming.body); err != nil {
 							s.shutdown()
+						} else {
+							service.ObserveRelayAuditPayload(c, incoming.body, false)
 						}
 						// Only a control error in this stream resolves its pending control.
 						if controlError {
@@ -462,6 +470,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						}
 						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 						s.lastResponseID = responseID
+						service.ObserveRelayAuditPayload(c, incoming.body, true)
 						state.terminal, state.closeAfter = &incoming, ambiguous
 						ConsumeResponsesQuota(c, info, accumulator.Finish())
 						return nil
@@ -519,12 +528,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					s.lastResponseID = event.Response.ID
 				}
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+				service.ObserveRelayAuditPayload(c, incoming.body, true)
 				state.terminal = &incoming
 				ConsumeResponsesQuota(c, info, accumulator.Finish())
 				return nil
 			}
 			if err := s.writeClient(incoming.kind, incoming.body); err != nil {
 				s.shutdown()
+			} else {
+				service.ObserveRelayAuditPayload(c, incoming.body, false)
 			}
 			if accepted && pendingControl != nil {
 				if err := s.writeTarget(websocket.TextMessage, pendingControl); err != nil {

@@ -1280,10 +1280,10 @@ func respondPluginProtocolSubmissionError(c *gin.Context, taskErr *dto.TaskError
 		c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 		return
 	}
-	if taskErr != nil && (service.IsCyberFallback(c) || service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == relaycommon.CyberPolicyCode) {
+	if taskErr != nil && (service.IsCyberFallback(c) || service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == service.CyberSessionBlockedCode || taskErr.Code == relaycommon.CyberPolicyCode) {
 		apiErr := taskSubmissionAPIError(taskErr)
 		service.SetRelayFinalError(c, apiErr)
-		if service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == relaycommon.CyberPolicyCode {
+		if service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == service.CyberSessionBlockedCode || taskErr.Code == relaycommon.CyberPolicyCode {
 			c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 			return
 		}

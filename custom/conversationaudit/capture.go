@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,8 @@ import (
 const (
 	maxSSEFrameBytes                      = 1024 * 1024
 	captureErrorRequestParseLimitExceeded = "request_parse_limit_exceeded"
+	auditConfigContextKey                 = "conversation_audit_config"
+	cyberFullPayloadContextKey            = "conversation_audit_cyber_full_payload"
 )
 
 type conversationProtocol int
@@ -94,11 +97,49 @@ func captureMiddleware(websocket bool) gin.HandlerFunc {
 			return
 		}
 
+		c.Set(auditConfigContextKey, cfg)
+		cyberPolicy := service.CurrentCyberPolicy()
+		captureCyber := cyberPolicy.CaptureFullPayload == nil || *cyberPolicy.CaptureFullPayload
+		var payload *cyberPayloadCapture
+		originalLength := c.Request.ContentLength
+		var originalReader io.ReadCloser
+		var originalPayload *cyberPayloadReader
+		var originalError error
+		terminalObserved := false
+		if captureCyber {
+			payload = &cyberPayloadCapture{version: cfg.ActiveKeyVersion, aad: "cyber-audit|" + c.GetString(common.RequestIdKey)}
+			defer payload.Close()
+			if websocket {
+				service.SetRelayAuditPayloadObserver(c, func(frame []byte, terminal bool) {
+					payload.Write(frame)
+					payload.Write([]byte("\n"))
+					terminalObserved = terminalObserved || terminal
+				})
+			}
+		}
+
 		websocketFailuresOnly := websocket && !cfg.CaptureWSSuccess
 		captureFullPayload := cfg.CaptureFullPayload && !websocket
 		parseStarted := time.Now()
 		request := captureRequest(c, protocol, cfg.MaxParseBytes, cfg.MaxContentBytes, captureFullPayload)
 		observeAuditPhase("request_parse", parseStarted, request.captureError != "")
+
+		// Hold an independent reader before adaptors can replace the body. Large
+		// requests stay lazy until the relay buffers them or a Cyber result occurs.
+		if captureCyber && !websocket {
+			if storage, ok := common.PeekBodyStorage(c); ok {
+				originalReader, originalError = storage.NewReader()
+				if originalReader != nil {
+					defer originalReader.Close()
+				}
+			} else {
+				requestPayload := &cyberPayloadCapture{version: cfg.ActiveKeyVersion, aad: "cyber-audit-request|" + c.GetString(common.RequestIdKey)}
+				defer requestPayload.Close()
+				originalPayload = &cyberPayloadReader{ReadCloser: c.Request.Body, capture: requestPayload}
+				c.Request.Body = originalPayload
+				defer originalPayload.Close()
+			}
+		}
 
 		collector := newResponseCollector(protocol, cfg.MaxContentBytes, cfg.MaxParseBytes, captureFullPayload)
 		if websocket {
@@ -112,16 +153,88 @@ func captureMiddleware(websocket bool) gin.HandlerFunc {
 				collector.consumeSSEPayload(frame)
 			})
 		} else {
-			c.Writer = &captureWriter{ResponseWriter: c.Writer, collector: collector}
+			c.Writer = &captureWriter{ResponseWriter: c.Writer, collector: collector, payload: payload}
 		}
 
 		c.Next()
 		failure, failed := service.FinalRelayFailure(c)
-		if websocketFailuresOnly && !failed {
+		response := collector.FinalizeCapture()
+		cyberRelated := service.IsCyberFallback(c) || service.IsCyberFallbackError(failure.Code) ||
+			failure.Code == relaycommon.CyberPolicyCode || failure.Code == service.CyberSessionBlockedCode || response.errorCode == relaycommon.CyberPolicyCode
+		if c.Request.URL.Path == "/v1/responses/compact" && !(captureCyber && cyberRelated) {
 			return
 		}
-
-		response := collector.FinalizeCapture()
+		if captureCyber && cyberRelated {
+			c.Set(cyberFullPayloadContextKey, true)
+			request = requestCapture{fullPayload: true}
+			var raw []byte
+			if ws, ok := service.RelayAuditWebSocketContext(c.Request); websocket && ok {
+				raw = ws.Request
+				originalError = nil
+				if !terminalObserved && service.GetRelayFinalError(c) != nil && ws.ErrorPayload != nil {
+					frame, err := ws.ErrorPayload(service.GetRelayFinalError(c))
+					if err == nil {
+						payload.Write(frame)
+						payload.Write([]byte("\n"))
+					} else {
+						payload.err = err
+					}
+				}
+			} else if originalPayload != nil {
+				if originalPayload.readError == nil {
+					maxMB := constant.MaxRequestBodyMB
+					if maxMB <= 0 {
+						maxMB = 128
+					}
+					remaining := (int64(maxMB) << 20) + 1 - originalPayload.readBytes
+					if remaining > 0 {
+						_, originalError = io.Copy(io.Discard, io.LimitReader(originalPayload, remaining))
+					}
+				}
+				if originalError == nil && originalPayload.readError != io.EOF {
+					originalError = originalPayload.readError
+					if originalError == nil {
+						originalError = common.ErrRequestBodyTooLarge
+					}
+				}
+				body, err := originalPayload.capture.Body()
+				raw = []byte(body)
+				if originalError == nil {
+					originalError = err
+				}
+			} else {
+				if originalReader == nil && originalError == nil {
+					storage, err := common.GetBodyStorage(c)
+					originalError = err
+					if err == nil {
+						originalReader, originalError = storage.NewReader()
+						if originalReader != nil {
+							defer originalReader.Close()
+						}
+					}
+				}
+				if originalError == nil && originalReader != nil {
+					raw, originalError = io.ReadAll(originalReader)
+				}
+			}
+			if !websocket && originalError == nil && originalLength > 0 && int64(len(raw)) != originalLength {
+				originalError = io.ErrUnexpectedEOF
+			}
+			request.body, request.requestBytes = string(raw), len(raw)
+			if originalError != nil {
+				request.captureError = "request_payload_capture_failed"
+				request.truncated = true
+			}
+			body, err := payload.Body()
+			response.body, response.truncated = body, err != nil
+			response.captureError = ""
+			if err != nil {
+				response.captureError = joinCaptureErrors(response.captureError, "response_payload_capture_failed")
+			}
+		}
+		if websocketFailuresOnly && !failed && !(captureCyber && cyberRelated) {
+			return
+		}
 		status := response.status
 		if status == "" {
 			status = "completed"
@@ -232,7 +345,7 @@ func protocolForRequest(request *http.Request) conversationProtocol {
 	switch path {
 	case "/v1/chat/completions", "/pg/chat/completions":
 		return protocolOpenAIChat
-	case "/v1/responses":
+	case "/v1/responses", "/v1/responses/compact":
 		return protocolOpenAIResponses
 	case "/v1/messages":
 		return protocolClaude
@@ -743,11 +856,13 @@ func isAuditableText(text string) bool {
 type captureWriter struct {
 	gin.ResponseWriter
 	collector *responseCollector
+	payload   *cyberPayloadCapture
 }
 
 func (w *captureWriter) Write(data []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(data)
 	if n > 0 {
+		w.payload.Write(data[:n])
 		w.collector.Write(data[:n], strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream"))
 	}
 	return n, err
@@ -756,6 +871,7 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 func (w *captureWriter) WriteString(value string) (int, error) {
 	n, err := w.ResponseWriter.WriteString(value)
 	if n > 0 {
+		w.payload.Write([]byte(value[:n]))
 		w.collector.Write([]byte(value[:n]), strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream"))
 	}
 	return n, err

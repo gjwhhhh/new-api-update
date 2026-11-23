@@ -154,10 +154,10 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 
 func CyberPolicyError(status int) *types.NewAPIError {
 	if status < 400 || status > 599 {
-		status = http.StatusForbidden
+		status = http.StatusBadRequest
 	}
 	return types.WithOpenAIError(types.OpenAIError{
-		Type: "content_policy_violation", Code: relaycommon.CyberPolicyCode,
+		Type: "invalid_request", Code: relaycommon.CyberPolicyCode,
 		Message: "Request rejected by an upstream content policy",
 	}, status, types.ErrOptionWithSkipRetry())
 }

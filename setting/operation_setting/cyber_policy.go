@@ -8,18 +8,23 @@ import (
 const CyberPolicyOptionKey = "CyberSessionPolicy"
 
 type CyberPolicy struct {
-	Mode              string `json:"mode"`
-	Scope             string `json:"scope"`
-	TokenIDs          []int  `json:"token_ids"`
-	ChannelIDs        []int  `json:"channel_ids"`
-	TTLSeconds        int    `json:"ttl_seconds"`
-	MatchMessage      bool   `json:"match_message"`
-	BlockedAction     string `json:"blocked_action"`
-	FallbackChannelID int    `json:"fallback_channel_id"`
+	CaptureFullPayload *bool  `json:"capture_full_payload"`
+	Mode               string `json:"mode"`
+	Scope              string `json:"scope"`
+	TokenIDs           []int  `json:"token_ids"`
+	ChannelIDs         []int  `json:"channel_ids"`
+	TTLSeconds         int    `json:"ttl_seconds"`
+	MatchMessage       bool   `json:"match_message"`
+	BlockedAction      string `json:"blocked_action"`
+	FallbackChannelID  int    `json:"fallback_channel_id"`
 }
 
-// Normalize preserves the blocking behavior of policies saved before rerouting.
+// Normalize fills defaults for policies saved before newer options existed.
 func (p *CyberPolicy) Normalize() {
+	if p.CaptureFullPayload == nil {
+		enabled := true
+		p.CaptureFullPayload = &enabled
+	}
 	if p.BlockedAction == "" {
 		p.BlockedAction = "block"
 	}

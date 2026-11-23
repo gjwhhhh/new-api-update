@@ -471,6 +471,9 @@ func marshalSensitiveAuditRequest(match service.RelaySensitiveMatch, requestBody
 
 func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError string, requestTruncated, responseTruncated, fullPayload bool, status string, statusCode int, identities ...responseIdentity) *ConversationAudit {
 	cfg := currentConfig()
+	if snapshot, ok := c.Get(auditConfigContextKey); ok {
+		cfg = snapshot.(runtimeConfig)
+	}
 	var identity responseIdentity
 	if len(identities) > 0 {
 		identity = identities[0]
@@ -490,7 +493,11 @@ func persist(c *gin.Context, requestBody, responseBody, errorCode, captureError 
 		return nil
 	}
 	if match, ok := service.RelayPromptSensitiveMatch(c); ok && status == "failed" {
-		body, truncated, err := marshalSensitiveAuditRequest(match, requestBody, cfg.MaxContentBytes)
+		sensitivePayloadLimit := cfg.MaxContentBytes
+		if c.GetBool(cyberFullPayloadContextKey) {
+			sensitivePayloadLimit = int(^uint(0) >> 1)
+		}
+		body, truncated, err := marshalSensitiveAuditRequest(match, requestBody, sensitivePayloadLimit)
 		if err == nil {
 			requestBody = body
 			requestTruncated = requestTruncated || truncated

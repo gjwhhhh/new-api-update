@@ -817,11 +817,16 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 }
 
 func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
-	if service.IsCyberFallback(c) || service.IsCyberFallbackError(taskErr.Code) {
-		service.SetRelayFinalError(c, taskSubmissionAPIError(taskErr))
+	apiErr := taskSubmissionAPIError(taskErr)
+	if service.IsCyberFallback(c) || service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == service.CyberSessionBlockedCode {
+		service.SetRelayFinalError(c, apiErr)
 	}
-	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
+	service.RecordRequestPolicyTermination(c, apiErr)
 	newTaskPluginSubmitDiagnostics(c).presentError(taskErr)
+	if service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == service.CyberSessionBlockedCode {
+		c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+		return
+	}
 	if middleware.RespondTaskPluginError(c, taskErr) {
 		return
 	}
@@ -839,8 +844,10 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 // taskSubmissionAPIError adapts a task error for the shared relay error paths.
 // TaskError.Error is nil for many local rejections, so fall back to the message.
 func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
-	if service.IsCyberFallbackError(taskErr.Code) {
-		return types.NewErrorWithStatusCode(errors.New(taskErr.Message), types.ErrorCode(taskErr.Code), taskErr.StatusCode, types.ErrOptionWithSkipRetry())
+	if service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == service.CyberSessionBlockedCode {
+		apiErr := types.NewOpenAIError(errors.New(taskErr.Message), types.ErrorCode(taskErr.Code), http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		apiErr.RelayError = service.CyberPolicyError(http.StatusBadRequest).ToOpenAIError()
+		return apiErr
 	}
 	if taskErr.Code == relaycommon.CyberPolicyCode && !taskErr.LocalError {
 		return service.CyberPolicyError(taskErr.StatusCode)

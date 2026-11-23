@@ -26,6 +26,7 @@ export type CyberPolicy = {
   token_ids: number[] | null
   channel_ids: number[] | null
   ttl_seconds: number
+  capture_full_payload?: boolean
   match_message: boolean
   blocked_action?: 'block' | 'reroute'
   fallback_channel_id?: number

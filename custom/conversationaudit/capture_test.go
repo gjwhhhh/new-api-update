@@ -13,7 +13,9 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,13 +160,15 @@ func TestCaptureCyberRejectionWithoutVisibleText(t *testing.T) {
 	require.NoError(t, db.Where("request_id = ?", "cyber-without-text").First(&audit).Error)
 	assert.Equal(t, "failed", audit.Status)
 	assert.Equal(t, "cyber_policy", audit.ErrorCode)
-	assert.Equal(t, "no_new_user_text", audit.CaptureError)
-	assert.Empty(t, audit.RequestCiphertext)
+	assert.Empty(t, audit.CaptureError)
+	assert.True(t, audit.FullPayload)
+	assert.Equal(t, `{"input":[{"type":"function_call_output","call_id":"test","output":"not user text"}]}`, mustDecryptAuditContent(t, &audit, "request"))
 	assert.Empty(t, audit.ResponseCiphertext)
 }
 
 func TestCaptureCyberRejectionBackfillsUserTextBeforeToolOutput(t *testing.T) {
 	db := setupResponseTurnTest(t)
+	setCyberCapturePolicy(t, common.GetPointer(false))
 	engine := gin.New()
 	engine.Use(func(c *gin.Context) {
 		c.Set("id", 1)
@@ -214,6 +218,7 @@ func TestCaptureSuccessfulResponsesBackfillsUserTextBeforeToolOutput(t *testing.
 
 func TestCaptureCyberContinuationKeepsParentUserText(t *testing.T) {
 	db := setupResponseTurnTest(t)
+	setCyberCapturePolicy(t, common.GetPointer(false))
 	root := persist(
 		newResponseTurnContext("cyber-parent", 1),
 		capturePayloadJSON(t, capturePayload{SchemaVersion: 2, CaptureMode: "latest_user_text", UserInput: "parent user input"}),
@@ -256,6 +261,7 @@ func TestCaptureCyberContinuationKeepsParentUserText(t *testing.T) {
 
 func TestCaptureResponsesWS(t *testing.T) {
 	db := setupResponseTurnTest(t)
+	setCyberCapturePolicy(t, common.GetPointer(false))
 	engine := gin.New()
 	engine.POST("/v1/responses", func(c *gin.Context) {
 		c.Set("id", 1)
@@ -625,12 +631,15 @@ func TestExtractSafeErrorCodeDoesNotKeepErrorMessage(t *testing.T) {
 	assert.Equal(t, "channel_unavailable", code)
 }
 
-func TestProtocolForRequestSkipsCompactAndBinaryEndpoints(t *testing.T) {
+func TestProtocolForRequestRecognizesCompactAndSkipsBinaryEndpoints(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	request.Header.Set("Content-Type", "application/json")
 	assert.Equal(t, protocolOpenAIChat, protocolForRequest(request))
 
-	for _, path := range []string{"/v1/responses/compact", "/v1/images/generations", "/v1/audio/speech"} {
+	request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	request.Header.Set("Content-Type", "application/json")
+	assert.Equal(t, protocolOpenAIResponses, protocolForRequest(request))
+	for _, path := range []string{"/v1/images/generations", "/v1/audio/speech"} {
 		request = httptest.NewRequest(http.MethodPost, path, nil)
 		request.Header.Set("Content-Type", "application/json")
 		assert.Equal(t, protocolUnknown, protocolForRequest(request), path)
@@ -644,4 +653,199 @@ func decodedPayloadField(t *testing.T, body, field string) string {
 	value, ok := payload[field].(string)
 	require.True(t, ok, "missing %s in %s", field, body)
 	return value
+}
+
+func setCyberCapturePolicy(t *testing.T, enabled *bool) {
+	t.Helper()
+	policy := operation_setting.CyberPolicy{Mode: "off", Scope: "all", TTLSeconds: 600, CaptureFullPayload: enabled}
+	data, err := common.Marshal(policy)
+	require.NoError(t, err)
+	common.OptionMapRWMutex.Lock()
+	old, had := common.OptionMap[operation_setting.CyberPolicyOptionKey]
+	wasNil := common.OptionMap == nil
+	if wasNil {
+		common.OptionMap = make(map[string]string)
+	}
+	common.OptionMap[operation_setting.CyberPolicyOptionKey] = string(data)
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		if wasNil {
+			common.OptionMap = nil
+		} else if had {
+			common.OptionMap[operation_setting.CyberPolicyOptionKey] = old
+		} else {
+			delete(common.OptionMap, operation_setting.CyberPolicyOptionKey)
+		}
+	})
+}
+
+func TestCaptureCyberFullPayload(t *testing.T) {
+	for _, tc := range []struct {
+		name                                               string
+		path                                               string
+		stream, large, changePolicy, failCapture, ordinary bool
+	}{
+		{name: "json"},
+		{name: "compact", path: "/v1/responses/compact"},
+		{name: "ordinary-compact-skipped", path: "/v1/responses/compact", ordinary: true},
+		{name: "sse", stream: true},
+		{name: "beyond-summary-parse-limit", large: true},
+		{name: "in-flight-policy-snapshot", changePolicy: true},
+		{name: "disk-capture-failure", large: true, failCapture: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupResponseTurnTest(t)
+			path := tc.path
+			if path == "" {
+				path = "/v1/responses"
+			}
+			setCyberCapturePolicy(t, nil)
+			if tc.failCapture {
+				t.Setenv("TMPDIR", t.TempDir()+"/unavailable")
+			}
+			input := "private tool result"
+			if tc.large {
+				input = strings.Repeat("private-large-payload-", defaultMaxParseBytes/20+1)
+			}
+			requestBody := `{"previous_response_id":"resp_parent","input":[{"type":"function_call_output","call_id":"call_private","output":"` + input + `"}],"tools":[{"type":"function","name":"private_tool"}]}`
+			responseBody := `{"error":{"code":"cyber_policy","message":"` + input + `"}}`
+			contentType := "application/json"
+			if tc.ordinary {
+				responseBody = `{"id":"compact-success","output":[]}`
+			}
+			if tc.stream {
+				contentType = "text/event-stream"
+				responseBody = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"private partial\"}\n\n" + "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"failed\",\"error\":{\"code\":\"cyber_policy\"}}}\n\n"
+			}
+			engine := gin.New()
+			engine.Use(func(c *gin.Context) { c.Set(common.RequestIdKey, tc.name); c.Set("id", 1) })
+			engine.POST(path, CaptureMiddleware(), func(c *gin.Context) {
+				// Normal relay buffering must remain available even beyond the audit parse limit.
+				storage, err := common.GetBodyStorage(c)
+				require.NoError(t, err)
+				raw, err := storage.Bytes()
+				require.NoError(t, err)
+				assert.Equal(t, requestBody, string(raw))
+				if tc.large && !tc.failCapture {
+					patched, err := common.CreateBodyStorage([]byte(`{"input":"normalized provider request"}`))
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, patched.Close()) })
+					require.NoError(t, storage.Close())
+					c.Set(common.KeyBodyStorage, patched)
+					c.Request.Body = io.NopCloser(patched)
+					c.Request.ContentLength = patched.Size()
+				}
+				if tc.changePolicy {
+					setCyberCapturePolicy(t, common.GetPointer(false))
+					runtimeState.Lock()
+					runtimeState.config.Enabled = false
+					runtimeState.Unlock()
+				}
+				status := http.StatusOK
+				if !tc.ordinary {
+					status = http.StatusForbidden
+					service.SetRelayFinalError(c, service.CyberPolicyError(status))
+				}
+				c.Data(status, contentType, []byte(responseBody))
+			})
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(requestBody))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, request)
+			assert.Equal(t, responseBody, recorder.Body.String())
+			var audit ConversationAudit
+			err := db.Where("request_id = ?", tc.name).Take(&audit).Error
+			if tc.ordinary {
+				require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, audit.FullPayload)
+			if tc.failCapture {
+				assert.True(t, audit.RequestTruncated)
+				assert.True(t, audit.ResponseTruncated)
+				assert.Equal(t, "request_payload_capture_failed,response_payload_capture_failed", audit.CaptureError)
+			} else {
+				assert.False(t, audit.RequestTruncated)
+				assert.Equal(t, requestBody, mustDecryptAuditContent(t, &audit, "request"))
+				assert.False(t, audit.ResponseTruncated)
+				assert.Empty(t, audit.CaptureError)
+				assert.Equal(t, responseBody, mustDecryptAuditContent(t, &audit, "response"))
+			}
+		})
+	}
+}
+
+func TestCaptureCyberWebSocketPayload(t *testing.T) {
+	for _, scenario := range []string{"upstream", "local", "control-then-local"} {
+		t.Run(scenario, func(t *testing.T) {
+			localFailure := scenario != "upstream"
+			db := setupResponseTurnTest(t)
+			setCyberCapturePolicy(t, nil)
+			const original = `{"type":"response.create","event_id":"private_event","response":{"model":"model","input":[{"type":"function_call_output","output":"private tool"}]}}`
+			frames := []string{`{"type":"response.output_text.delta","delta":"private partial"}`, `{"type":"response.failed","response":{"id":"failed","error":{"code":"cyber_policy"}}}`}
+			if localFailure {
+				frames = []string{`{"type":"error","event_id":"private_event","error":{"code":"cyber_policy"}}`}
+			}
+			if scenario == "control-then-local" {
+				frames = append([]string{`{"type":"error","error":{"code":"invalid_control"}}`}, frames...)
+			}
+			engine := gin.New()
+			engine.POST("/v1/responses", func(c *gin.Context) {
+				c.Set(common.RequestIdKey, "ws-cyber")
+				c.Set("id", 1)
+				c.Request = service.WithRelayAuditWebSocket(c.Request, service.RelayAuditWebSocket{Request: []byte(original), ErrorPayload: func(apiErr *types.NewAPIError) ([]byte, error) {
+					assert.Equal(t, "cyber_policy", string(apiErr.GetErrorCode()))
+					return []byte(frames[len(frames)-1]), nil
+				}})
+			}, CaptureResponsesWS(), func(c *gin.Context) {
+				if scenario == "control-then-local" {
+					service.ObserveRelayAuditPayload(c, []byte(frames[0]), false)
+				}
+				if !localFailure {
+					for index, frame := range frames {
+						service.ObserveRelayAuditFrame(c, []byte(frame))
+						service.ObserveRelayAuditPayload(c, []byte(frame), index == len(frames)-1)
+					}
+				}
+				service.SetRelayFinalError(c, service.CyberPolicyError(http.StatusForbidden))
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"normalized input"}`))
+			request.Header.Set("Content-Type", "application/json")
+			engine.ServeHTTP(httptest.NewRecorder(), request)
+			var audit ConversationAudit
+			require.NoError(t, db.Where("request_id = ?", "ws-cyber").Take(&audit).Error)
+			assert.True(t, audit.FullPayload)
+			assert.Empty(t, audit.CaptureError)
+			assert.Equal(t, original, mustDecryptAuditContent(t, &audit, "request"))
+			assert.Equal(t, strings.Join(frames, "\n")+"\n", mustDecryptAuditContent(t, &audit, "response"))
+		})
+	}
+}
+
+func TestCyberPayloadSpillEncryptionAndCleanup(t *testing.T) {
+	setupResponseTurnTest(t)
+	payload := &cyberPayloadCapture{version: "v1", aad: "request-private"}
+	t.Cleanup(payload.Close)
+	body := strings.Repeat("private response payload", cyberCaptureChunkBytes/10)
+	payload.Write([]byte(body))
+	require.NotNil(t, payload.file)
+	name := payload.file.Name()
+	encrypted, err := os.ReadFile(name)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encrypted), "private response payload")
+	info, err := os.Stat(name)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	actual, err := payload.Body()
+	require.NoError(t, err)
+	assert.Equal(t, body, actual)
+	payload.aad = "different request"
+	_, err = payload.Body()
+	require.Error(t, err)
+	payload.Close()
+	_, err = os.Stat(name)
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }

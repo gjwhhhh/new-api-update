@@ -69,7 +69,7 @@ func CurrentCyberPolicy() CyberPolicy {
 	if fallback := cyberSessionDefaults.Load(); fallback != nil {
 		return *fallback
 	}
-	return CyberPolicy{Mode: "off", Scope: "token", TTLSeconds: 600, BlockedAction: "block"}
+	return CyberPolicy{Mode: "off", Scope: "token", TTLSeconds: 600, BlockedAction: "block", CaptureFullPayload: common.GetPointer(true)}
 }
 
 var cyberSessionCounters struct {
@@ -82,6 +82,7 @@ func InitCyberSessionGuard() {
 		settings = CyberPolicy{Mode: "off", Scope: "token", TTLSeconds: 600}
 		common.SysError("cyber_session_guard disabled: " + err.Error())
 	}
+	settings.Normalize()
 	cyberSessionDefaults.Store(&settings)
 	settings = CurrentCyberPolicy()
 	if settings.Mode != "off" {
@@ -154,7 +155,7 @@ func CyberSessionGuard(c *gin.Context) {
 		bindingOutOfScope = !slices.Contains(settings.ChannelIDs, originalChannel)
 	}
 	if binding != nil && (settings.Mode != cyberSessionEnforce || settings.BlockedAction != "reroute" || settings.FallbackChannelID != binding.channelID || c.GetInt("token_id") != binding.session.tokenID || (settings.Scope == "token" && !slices.Contains(settings.TokenIDs, binding.session.tokenID)) || bindingOutOfScope) {
-		apiErr := cyberFallbackError(c, "reconnect_required", http.StatusForbidden)
+		apiErr := cyberFallbackError(c, "reconnect_required")
 		SetRelayFinalError(c, apiErr)
 		c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 		return
@@ -186,7 +187,7 @@ func CyberSessionGuard(c *gin.Context) {
 		return
 	}
 	if binding != nil && (!common.RedisEnabled || common.RDB == nil || c.Request.ContentLength > cyberSessionCacheLimit) {
-		apiErr := cyberFallbackError(c, "state_unavailable", http.StatusServiceUnavailable)
+		apiErr := cyberFallbackError(c, "state_unavailable")
 		SetRelayFinalError(c, apiErr)
 		c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 		return
@@ -211,7 +212,7 @@ func CyberSessionGuard(c *gin.Context) {
 		body, readErr := storage.Bytes()
 		invalidSession := readErr != nil || digest == "" && gjson.GetBytes(body, "prompt_cache_key").Exists()
 		if invalidSession || digest != "" && digest != binding.session.digest {
-			apiErr := cyberFallbackError(c, "reconnect_required", http.StatusForbidden)
+			apiErr := cyberFallbackError(c, "reconnect_required")
 			SetRelayFinalError(c, apiErr)
 			c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
 			return
@@ -318,10 +319,10 @@ func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID in
 					c.Header("Retry-After", strconv.FormatInt(max(1, int64((remaining+time.Second-1)/time.Second)), 10))
 				}
 				clientError := types.OpenAIError{
-					Type: "content_policy_violation", Code: CyberSessionBlockedCode,
+					Type: "invalid_request", Code: CyberSessionBlockedCode,
 					Message: message,
 				}
-				apiErr := types.WithOpenAIError(clientError, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+				apiErr := types.WithOpenAIError(clientError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 				// Keep gateway blocks distinct from upstream rejections in relay handling and logs.
 				clientError.Code = relaycommon.CyberPolicyCode
 				apiErr.RelayError = clientError

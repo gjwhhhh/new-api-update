@@ -77,6 +77,18 @@ func TestCyberFallbackPluginSubmissionAndTerminalOutcomes(t *testing.T) {
 			require.True(t, service.IsCyberFallback(c))
 			common.SetContextKey(c, constant.ContextKeyChannelId, 12)
 			if tc.conflict {
+				legacyOriginError := relay.ResolveOriginTask(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{OriginTaskID: "task_origin"}})
+				require.NotNil(t, legacyOriginError)
+				assert.Equal(t, http.StatusBadRequest, legacyOriginError.StatusCode)
+				assert.Equal(t, "cyber_policy", taskSubmissionAPIError(legacyOriginError).ToOpenAIError().Code)
+				assert.Equal(t, "stop", decideTaskRetry(c, legacyOriginError, 3).Action)
+				common.SetContextKey(c, constant.ContextKeyOriginTasks, []*model.Task{{TaskID: "task_origin"}})
+				pluginOriginError := relay.ApplyChannelPin(c, nil)
+				require.NotNil(t, pluginOriginError)
+				assert.Equal(t, http.StatusBadRequest, pluginOriginError.StatusCode)
+				assert.Equal(t, "cyber_policy", taskSubmissionAPIError(pluginOriginError).ToOpenAIError().Code)
+				assert.Equal(t, "stop", decideTaskRetry(c, pluginOriginError, 3).Action)
+				common.SetContextKey(c, constant.ContextKeyOriginTasks, []*model.Task(nil))
 				service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 12, Rank: dto.PinRankToken})
 				service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 13, Rank: dto.PinRankOriginTask})
 			}
@@ -93,8 +105,9 @@ func TestCyberFallbackPluginSubmissionAndTerminalOutcomes(t *testing.T) {
 			serveTaskPluginProtocol(c, pinned, deps)
 			if tc.conflict {
 				assert.Zero(t, submits)
-				assert.Equal(t, http.StatusConflict, recorder.Code)
-				assert.Contains(t, recorder.Body.String(), "cyber_fallback_binding_conflict")
+				assert.Equal(t, http.StatusBadRequest, recorder.Code)
+				assert.Contains(t, recorder.Body.String(), `"code":"cyber_policy"`)
+				assert.NotContains(t, recorder.Body.String(), "cyber_fallback_")
 			} else {
 				assert.Equal(t, 1, submits)
 				assert.Equal(t, http.StatusOK, recorder.Code)
@@ -114,6 +127,48 @@ func TestCyberFallbackPluginSubmissionAndTerminalOutcomes(t *testing.T) {
 			require.NoError(t, common.UnmarshalJsonStr(other.JSONString(), &stored))
 			assert.Equal(t, tc.outcome, stored.Admin.Fallback.Outcome)
 		})
+	}
+}
+
+func TestCyberFallbackTaskErrorsExposeCyberPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		code   string
+		status int
+	}{
+		{code: "cyber_fallback_binding_conflict", status: http.StatusConflict},
+		{code: "cyber_fallback_target_rejected", status: http.StatusForbidden},
+		{code: "cyber_fallback_target_unavailable", status: http.StatusServiceUnavailable},
+		{code: "cyber_fallback_stateful_context", status: http.StatusConflict},
+		{code: service.CyberSessionBlockedCode, status: http.StatusForbidden},
+	} {
+		for _, protocol := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/protocol=%t", tc.code, protocol), func(t *testing.T) {
+				c, recorder := newPluginProtocolTestContext(false, false)
+				taskErr := &dto.TaskError{
+					Code: tc.code, Message: "Fallback unavailable (" + tc.code + ")",
+					StatusCode: tc.status, LocalError: true,
+				}
+				if protocol {
+					respondPluginProtocolSubmissionError(c, taskErr)
+				} else {
+					respondTaskSubmissionError(c, taskErr)
+				}
+				assert.Equal(t, http.StatusBadRequest, recorder.Code)
+				var response struct {
+					Error struct {
+						Code string `json:"code"`
+						Type string `json:"type"`
+					} `json:"error"`
+				}
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				assert.Equal(t, "cyber_policy", response.Error.Code)
+				assert.Equal(t, "invalid_request", response.Error.Type)
+				assert.NotContains(t, recorder.Body.String(), tc.code)
+				failure, found := service.FinalRelayFailure(c)
+				require.True(t, found)
+				assert.Equal(t, taskErr.Code, failure.Code)
+			})
+		}
 	}
 }
 

@@ -159,8 +159,12 @@ func captureMiddleware(websocket bool) gin.HandlerFunc {
 		c.Next()
 		failure, failed := service.FinalRelayFailure(c)
 		response := collector.FinalizeCapture()
+		// A local sensitive-word rejection is audited as private evidence, never as
+		// an upstream Cyber event, even though clients see cyber_policy for both.
+		_, localSensitiveRejection := service.RelayPromptSensitiveMatch(c)
 		cyberRelated := service.IsCyberFallback(c) || service.IsCyberFallbackError(failure.Code) ||
-			failure.Code == relaycommon.CyberPolicyCode || failure.Code == service.CyberSessionBlockedCode || response.errorCode == relaycommon.CyberPolicyCode
+			failure.Code == relaycommon.CyberPolicyCode || failure.Code == service.CyberSessionBlockedCode ||
+			(response.errorCode == relaycommon.CyberPolicyCode && !localSensitiveRejection)
 		if c.Request.URL.Path == "/v1/responses/compact" && !(captureCyber && cyberRelated) {
 			return
 		}

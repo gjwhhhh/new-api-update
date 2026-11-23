@@ -684,7 +684,7 @@ func TestResponsesPromptTextFilterChecksActualChannelAndNewTurns(t *testing.T) {
 	rejection := wsRequest(strings.ToUpper(word))
 	require.Equal(t, "error", rejection["type"])
 	require.IsType(t, map[string]any{}, rejection["error"])
-	assert.Equal(t, "sensitive_words_detected", rejection["error"].(map[string]any)["code"])
+	assert.Equal(t, "cyber_policy", rejection["error"].(map[string]any)["code"])
 	assert.NotContains(t, fmt.Sprint(rejection), word)
 	require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"PromptRejectMode": model.PromptRejectModeCyber}))
 	localCyber := wsRequest(word)
@@ -707,7 +707,7 @@ func TestResponsesPromptTextFilterChecksActualChannelAndNewTurns(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
-	require.Contains(t, string(body), `"code":"sensitive_words_detected"`)
+	require.Contains(t, string(body), `"code":"cyber_policy"`)
 	assert.NotContains(t, string(body), word)
 	assert.EqualValues(t, 1, firstHTTP.Load())
 	assert.Zero(t, fallbackHTTP.Load(), "the retry must never reach the scoped channel")
@@ -835,11 +835,7 @@ func TestResponsesLocalPromptBanAcrossHTTPAndWebSocket(t *testing.T) {
 			} else {
 				rejected := wsTurn(fixture.client, input, key)
 				require.Equal(t, "error", rejected["type"])
-				wantCode := "cyber_policy"
-				if tc.response == model.PromptRejectModeSensitive {
-					wantCode = "sensitive_words_detected"
-				}
-				assert.Equal(t, wantCode, rejected["error"].(map[string]any)["code"])
+				assert.Equal(t, "cyber_policy", rejected["error"].(map[string]any)["code"])
 			}
 			var token model.Token
 			require.NoError(t, model.DB.First(&token, fixture.token.Id).Error)

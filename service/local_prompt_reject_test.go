@@ -34,7 +34,8 @@ func TestCheckRelayPromptSensitiveRejectModes(t *testing.T) {
 				require.NotNil(t, apiErr)
 				if mode == model.PromptRejectModeSensitive {
 					assert.Equal(t, types.ErrorCodeSensitiveWordsDetected, apiErr.GetErrorCode())
-					assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+					assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+					assert.Equal(t, relaycommon.CyberPolicyCode, apiErr.ToOpenAIError().Code)
 				} else {
 					assert.Equal(t, types.ErrorCode(relaycommon.CyberPolicyCode), apiErr.GetErrorCode())
 					assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)

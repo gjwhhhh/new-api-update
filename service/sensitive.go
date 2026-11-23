@@ -113,7 +113,14 @@ func finishLocalPromptReject(c *gin.Context, match RelaySensitiveMatch, policy *
 	}
 	apiErr := LocalPromptCyberError()
 	if policy.NormalizedRejectMode() == model.PromptRejectModeSensitive {
-		apiErr = types.NewError(errors.New("Request rejected by the local sensitive word policy"), types.ErrorCodeSensitiveWordsDetected, types.ErrOptionWithSkipRetry())
+		// Keep the local rule for logs and audit while exposing the client policy code.
+		apiErr = types.WithOpenAIError(types.OpenAIError{
+			Type: "invalid_request", Code: types.ErrorCodeSensitiveWordsDetected,
+			Message: "Request rejected by the local sensitive word policy",
+		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		clientErr := CyberPolicyError(http.StatusBadRequest).ToOpenAIError()
+		clientErr.Message = "Request rejected by the local sensitive word policy"
+		apiErr.RelayError = clientErr
 	}
 	RequestPolicy(c).AddEvent(PolicyEvent{
 		ChannelID:   channelID,

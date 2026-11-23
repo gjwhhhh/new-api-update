@@ -73,7 +73,6 @@ type cyberFallbackRoute struct {
 	Reason          string `json:"reason"`
 	RequestID       string `json:"request_id"`
 	ban             cyberFallbackBan
-	sameConnection  bool
 }
 
 var cyberFallbackCounters struct{ selected, rejected, stored, logError atomic.Uint64 }
@@ -175,17 +174,17 @@ func prepareCyberFallbackBans(c *gin.Context, session cyberRequestSession, bindi
 		if current, ok := bans[session.redisKey(0)]; ok {
 			ban = current
 		}
-		return activateCyberFallback(c, session, ban, true)
+		return activateCyberFallback(c, session, ban)
 	}
 	return nil
 }
 
-func activateCyberFallback(c *gin.Context, session cyberRequestSession, ban cyberFallbackBan, sameConnection bool) *types.NewAPIError {
+func activateCyberFallback(c *gin.Context, session cyberRequestSession, ban cyberFallbackBan) *types.NewAPIError {
 	if cyberFallback(c) != nil {
 		return nil
 	}
 	route := &cyberFallbackRoute{BatchID: ban.meta.ID, Fingerprint: session.digest, SourceChannelID: ban.meta.SourceChannelID,
-		TargetChannelID: session.policy.FallbackChannelID, Action: "reroute", Outcome: "selected", Reason: "existing_ban", RequestID: c.GetString(common.RequestIdKey), ban: ban, sameConnection: sameConnection}
+		TargetChannelID: session.policy.FallbackChannelID, Action: "reroute", Outcome: "selected", Reason: "existing_ban", RequestID: c.GetString(common.RequestIdKey), ban: ban}
 	c.Set(cyberFallbackKey, route)
 	if ban.unavailable {
 		return cyberFallbackError(c, "state_unavailable", http.StatusServiceUnavailable)
@@ -219,9 +218,30 @@ func cyberFallbackError(c *gin.Context, reason string, status int) *types.NewAPI
 	cyberFallbackCounters.rejected.Add(1)
 	apiErr := types.WithOpenAIError(types.OpenAIError{Type: "invalid_request_error", Code: "cyber_fallback_" + reason,
 		Message: "This conversation cannot use the configured fallback channel (" + reason + "); contact an administrator"}, status, types.ErrOptionWithSkipRetry())
-	// Preserve the routing failure for retry decisions and audit attribution.
-	apiErr.RelayError = CyberPolicyError(status).ToOpenAIError()
+	// Keep the routing reason for retry decisions and audit attribution; clients
+	// receive the standard error that matches the actual failure.
+	apiErr.RelayError = CyberClientError(string(apiErr.GetErrorCode()), status)
 	return apiErr
+}
+
+// CyberClientError maps an internal gateway block or fallback routing failure to
+// the client-facing error. Only content policy outcomes surface as cyber_policy;
+// infrastructure and request-shape failures keep standard OpenAI semantics.
+func CyberClientError(code string, status int) types.OpenAIError {
+	switch strings.TrimPrefix(code, "cyber_fallback_") {
+	case "target_rejected", "same_source":
+		return CyberPolicyError(status).ToOpenAIError()
+	case "model_forbidden":
+		return types.OpenAIError{Type: "invalid_request_error", Code: "permission_denied",
+			Message: "This model is not available on the configured fallback channel"}
+	case "binding_conflict", "reconnect_required", "stateful_context":
+		return types.OpenAIError{Type: "invalid_request_error", Code: "invalid_request",
+			Message: "This conversation cannot use the configured fallback channel; reconnect or contact an administrator"}
+	case "state_unavailable", "target_unavailable":
+		return types.OpenAIError{Type: "server_error", Code: "server_error",
+			Message: "The configured fallback channel is temporarily unavailable"}
+	}
+	return CyberPolicyError(status).ToOpenAIError()
 }
 
 // Validate every hard pin, including pins hidden by normal priority resolution.

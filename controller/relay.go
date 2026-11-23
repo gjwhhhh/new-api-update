@@ -846,7 +846,7 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
 	if service.IsCyberFallbackError(taskErr.Code) || taskErr.Code == service.CyberSessionBlockedCode {
 		apiErr := types.NewOpenAIError(errors.New(taskErr.Message), types.ErrorCode(taskErr.Code), taskErr.StatusCode, types.ErrOptionWithSkipRetry())
-		apiErr.RelayError = service.CyberPolicyError(taskErr.StatusCode).ToOpenAIError()
+		apiErr.RelayError = service.CyberClientError(taskErr.Code, taskErr.StatusCode)
 		return apiErr
 	}
 	if taskErr.Code == relaycommon.CyberPolicyCode && !taskErr.LocalError {

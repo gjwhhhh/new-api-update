@@ -46,19 +46,20 @@ func TestCyberFallbackPolicy(t *testing.T) {
 	require.NoError(t, p.Validate())
 }
 
-func TestCyberFallbackErrorsExposeCyberPolicy(t *testing.T) {
+func TestCyberFallbackErrorsExposePublicCodes(t *testing.T) {
 	for _, tc := range []struct {
-		reason string
-		status int
+		reason      string
+		status      int
+		code, etype string
 	}{
-		{reason: "binding_conflict", status: http.StatusConflict},
-		{reason: "reconnect_required", status: http.StatusConflict},
-		{reason: "reconnect_required", status: http.StatusForbidden},
-		{reason: "target_rejected", status: http.StatusForbidden},
-		{reason: "same_source", status: http.StatusForbidden},
-		{reason: "model_forbidden", status: http.StatusForbidden},
-		{reason: "state_unavailable", status: http.StatusServiceUnavailable},
-		{reason: "target_unavailable", status: http.StatusServiceUnavailable},
+		{reason: "binding_conflict", status: http.StatusConflict, code: "invalid_request", etype: "invalid_request_error"},
+		{reason: "reconnect_required", status: http.StatusConflict, code: "invalid_request", etype: "invalid_request_error"},
+		{reason: "target_rejected", status: http.StatusForbidden, code: "cyber_policy", etype: "invalid_request"},
+		{reason: "same_source", status: http.StatusForbidden, code: "cyber_policy", etype: "invalid_request"},
+		{reason: "model_forbidden", status: http.StatusForbidden, code: "permission_denied", etype: "invalid_request_error"},
+		{reason: "state_unavailable", status: http.StatusServiceUnavailable, code: "server_error", etype: "server_error"},
+		{reason: "target_unavailable", status: http.StatusServiceUnavailable, code: "server_error", etype: "server_error"},
+		{reason: "stateful_context", status: http.StatusConflict, code: "invalid_request", etype: "invalid_request_error"},
 	} {
 		t.Run(fmt.Sprintf("%s/%d", tc.reason, tc.status), func(t *testing.T) {
 			c := cyberFallbackTestContext(`{"input":"hello"}`)
@@ -67,10 +68,10 @@ func TestCyberFallbackErrorsExposeCyberPolicy(t *testing.T) {
 			apiErr := cyberFallbackError(c, tc.reason, tc.status)
 			assert.Equal(t, tc.status, apiErr.StatusCode)
 			public := apiErr.ToOpenAIError()
-			assert.Equal(t, "cyber_policy", public.Code)
-			assert.Equal(t, "invalid_request", public.Type)
+			assert.Equal(t, tc.code, public.Code)
+			assert.Equal(t, tc.etype, public.Type)
 			assert.NotContains(t, public.Message, tc.reason)
-			assert.Equal(t, "cyber_policy", apiErr.ToClaudeError().Type)
+			assert.Equal(t, tc.code, apiErr.ToClaudeError().Type)
 			assert.True(t, types.IsSkipRetryError(apiErr))
 			SetRelayFinalError(c, apiErr)
 			assert.False(t, armed, "a local routing failure must not create another upstream rejection ban")
@@ -91,7 +92,7 @@ func TestCyberFallbackForwardsStatefulContext(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			c := cyberFallbackTestContext(body)
 			session := cyberRequestSession{policy: CyberPolicy{BlockedAction: "reroute", FallbackChannelID: 94}}
-			require.Nil(t, activateCyberFallback(c, session, cyberFallbackBan{meta: CyberBanMetadata{ID: "ban", SourceChannelID: 79}}, false))
+			require.Nil(t, activateCyberFallback(c, session, cyberFallbackBan{meta: CyberBanMetadata{ID: "ban", SourceChannelID: 79}}))
 			require.True(t, IsCyberFallback(c))
 			assert.Equal(t, 94, cyberFallback(c).TargetChannelID)
 			raw, err := io.ReadAll(c.Request.Body)

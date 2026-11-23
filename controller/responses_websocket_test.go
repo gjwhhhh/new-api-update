@@ -1938,9 +1938,9 @@ func TestCyberFallbackResponsesRoutingAndBilling(t *testing.T) {
 	require.NoError(t, common.Unmarshal(blockedResponse, &event))
 	expectedPayloads["responses-ws-billing-ws-2"] = [2]string{blockedFrame, string(blockedResponse) + "\n"}
 	assert.Equal(t, "error", event["type"])
-	assert.Equal(t, float64(http.StatusForbidden), event["status"])
-	assert.Equal(t, "invalid_request", event["error"].(map[string]any)["type"])
-	assert.Equal(t, "cyber_policy", event["error"].(map[string]any)["code"])
+	assert.Equal(t, float64(http.StatusConflict), event["status"])
+	assert.Equal(t, "invalid_request_error", event["error"].(map[string]any)["type"])
+	assert.Equal(t, "invalid_request", event["error"].(map[string]any)["code"])
 	assert.NotContains(t, string(blockedResponse), "cyber_fallback_")
 	_, _, err = fixture.client.ReadMessage()
 	require.Error(t, err)

@@ -207,6 +207,7 @@ import {
 } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
 import { ChannelHealthCheckSettings } from '../channel-health-check-settings'
+import { ChannelProbeSettings } from '../channel-probe-settings'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelQuickOptions } from '../channel-quick-options'
 import { ChannelSamplingSettings } from '../channel-sampling-settings'
@@ -4699,6 +4700,14 @@ export function ChannelMutateDrawer({
                 disabled={sensitiveLocked || isSubmitting}
                 lastAutomaticTestTime={channelData?.data?.last_auto_test_time}
               />
+              {open && canEditSensitive && channelId != null && (
+                <ChannelProbeSettings
+                  key={channelId}
+                  channelId={channelId}
+                  disabled={isSubmitting}
+                  canRun={canOperateChannel}
+                />
+              )}
             </div>
             <div
               role='group'

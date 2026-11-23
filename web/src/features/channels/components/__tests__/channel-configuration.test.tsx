@@ -159,6 +159,14 @@ beforeEach(() => {
     if (url === '/api/channel/42') {
       return { data: { success: true, data: editingChannel } }
     }
+    if (url === '/api/channel/42/probe') {
+      return {
+        data: {
+          success: true,
+          data: { supported: true, config: { mode: 'short' } },
+        },
+      }
+    }
     if (url === '/api/channel/fetch_models/42') {
       return { data: { success: true, data: ['upstream-model'] } }
     }
@@ -224,6 +232,194 @@ function useWideScreen() {
     toJSON: () => ({}),
   } as DOMRect)
 }
+
+test('generated probe is a draft until saved and displays explicit zero cache hits', async () => {
+  const generated = {
+    mode: 'auto',
+    target_tokens: 24000,
+    seed: 'fixture',
+    template_version: 1,
+    lines: 800,
+  }
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/channel/42/probe/preview') {
+      return {
+        data: {
+          success: true,
+          data: {
+            config: generated,
+            context: 'Stable sample',
+            question: 'Code?',
+            expected_answer: 'OK',
+            estimated_input_tokens: 24012,
+          },
+        },
+      }
+    }
+    if (url === '/api/channel/42/probe/test') {
+      return {
+        data: {
+          success: true,
+          data: {
+            status: 'succeeded',
+            probe_input_tokens: 24012,
+            probe_cached_tokens: 0,
+          },
+        },
+      }
+    }
+    throw new Error(`Unexpected POST ${url}`)
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true, data: generated } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  await user.click(
+    await screen.findByRole('combobox', { name: 'Probe content' })
+  )
+  await user.click(
+    await screen.findByRole('option', { name: 'Generated long context' })
+  )
+  await user.click(screen.getByRole('button', { name: 'Generate probe' }))
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Save probe settings' })
+    ).toBeEnabled()
+  )
+  expect(put).not.toHaveBeenCalled()
+  expect(
+    screen.queryByRole('button', { name: 'Run saved probe' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Save probe settings' }))
+  expect(put).toHaveBeenCalledWith(
+    '/api/channel/42/probe',
+    generated,
+    expect.anything()
+  )
+  await user.click(
+    await screen.findByRole('button', { name: 'Run saved probe' })
+  )
+  const dialog = await screen.findByRole('alertdialog')
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Run saved probe' })
+  )
+  expect(post).toHaveBeenCalledTimes(2)
+  expect(await screen.findByText('0%')).toBeVisible()
+})
+
+test('probe settings wait for a fresh fetch instead of pinning a stale cache', async () => {
+  const stale = { mode: 'short' as const }
+  const fresh = {
+    mode: 'auto' as const,
+    target_tokens: 24000,
+    seed: 'server-seed',
+    template_version: 1,
+    lines: 800,
+  }
+  const probe = deferredResponse<{
+    data: {
+      success: boolean
+      data: { supported: boolean; config: typeof fresh }
+    }
+  }>()
+  client.setQueryData(['channel-probe', 42], {
+    supported: true,
+    config: stale,
+  })
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/channel/42') {
+      return { data: { success: true, data: editingChannel } }
+    }
+    if (url === '/api/channel/42/probe') {
+      return probe.promise
+    }
+    if (url === '/api/channel/fetch_models/42') {
+      return { data: { success: true, data: ['upstream-model'] } }
+    }
+    if (url === '/api/task_plugin_options') {
+      return { data: { success: true, data: pluginOptions } }
+    }
+    if (url === '/api/channel/models') {
+      return { data: { success: true, data: [{ id: 'custom-model' }] } }
+    }
+    if (url === '/api/channel/default_base_urls') {
+      return { data: { success: true, data: {} } }
+    }
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default'] } }
+    }
+    if (url === '/api/prefill_group') {
+      return { data: { success: true, data: [] } }
+    }
+    throw new Error(`Unexpected GET ${url}`)
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  expect(await screen.findByText('Loading')).toBeVisible()
+  expect(
+    screen.queryByRole('combobox', { name: 'Probe content' })
+  ).not.toBeInTheDocument()
+  await act(async () => {
+    probe.resolve({
+      data: { success: true, data: { supported: true, config: fresh } },
+    })
+  })
+  const mode = await screen.findByRole('combobox', { name: 'Probe content' })
+  expect(mode).toHaveTextContent('Generated long context')
+  expect(
+    screen.getByRole('spinbutton', { name: 'Target input tokens' })
+  ).toHaveValue(24000)
+  expect(
+    screen.getByRole('button', { name: 'Run saved probe' })
+  ).toBeInTheDocument()
+})
+
+test('clean probe settings adopt a newer server config without wiping dirty edits', async () => {
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  await screen.findByRole('combobox', { name: 'Probe content' })
+
+  await act(async () => {
+    client.setQueryData(['channel-probe', 42], {
+      supported: true,
+      config: {
+        mode: 'custom',
+        context: 'Server context',
+        question: 'Server question?',
+        expected_answer: 'Server',
+      },
+    })
+  })
+  expect(
+    await screen.findByRole('combobox', { name: 'Probe content' })
+  ).toHaveTextContent('Custom long context')
+  expect(screen.getByLabelText('Context')).toHaveValue('Server context')
+
+  await user.clear(screen.getByLabelText('Context'))
+  await user.type(screen.getByLabelText('Context'), 'Local draft')
+  await act(async () => {
+    client.setQueryData(['channel-probe', 42], {
+      supported: true,
+      config: {
+        mode: 'custom',
+        context: 'Newer server context',
+        question: 'Server question?',
+        expected_answer: 'Server',
+      },
+    })
+  })
+  expect(screen.getByLabelText('Context')).toHaveValue('Local draft')
+  expect(
+    screen.getByRole('button', { name: 'Save probe settings' })
+  ).toBeEnabled()
+})
 
 test.each([
   ['inherit', 'Follow global settings', undefined],

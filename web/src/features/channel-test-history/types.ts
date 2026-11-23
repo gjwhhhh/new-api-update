@@ -36,6 +36,9 @@ export type ChannelTestResult = {
   channel_groups: string
   source: 'scheduled' | 'manual_batch' | 'manual_single'
   health_check_mode?: string
+  probe_mode?: 'auto' | 'custom'
+  probe_input_tokens?: number
+  probe_cached_tokens?: number
   model_name: string
   endpoint_type?: string
   request_path: string

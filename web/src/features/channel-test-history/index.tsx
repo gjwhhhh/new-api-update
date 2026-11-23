@@ -61,6 +61,7 @@ import {
   getChannelTestHistory,
   getChannelTestResult,
 } from './api'
+import { channelProbeUsageRows } from './probe-usage'
 import type {
   ChannelTestHistoryTimeRange,
   ChannelTestResult,
@@ -163,6 +164,17 @@ function ResultDetails(props: { resultId?: number }) {
     [t('Upstream HTTP status'), result.upstream_http_status || '-'],
     [t('Gateway result status'), result.result_status_code || '-'],
     [t('Duration'), formatDurationSeconds(result.duration_ms)],
+    ...(result.probe_mode
+      ? [
+          [
+            t('Probe content'),
+            result.probe_mode === 'auto'
+              ? t('Generated long context')
+              : t('Custom long context'),
+          ],
+          ...channelProbeUsageRows(result, t),
+        ]
+      : []),
     [t('Channel'), `#${result.channel_id} ${result.channel_name}`],
     [
       t('Groups'),

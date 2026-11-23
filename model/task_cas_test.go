@@ -63,6 +63,7 @@ func TestMain(m *testing.M) {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&ChannelTestResult{},
+		&ChannelProbe{},
 		&UserAccessToken{},
 		&UserChannelPriority{},
 	); err != nil {
@@ -103,6 +104,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM system_task_locks")
 		DB.Exec("DELETE FROM system_tasks")
 		DB.Exec("DELETE FROM channel_test_results")
+		DB.Exec("DELETE FROM channel_probes")
 	})
 }
 

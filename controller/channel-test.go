@@ -49,6 +49,8 @@ type testResult struct {
 	upstreamHTTPStatus int
 	resultStatusCode   int
 	failureKind        string
+	probeInputTokens   *int
+	probeCachedTokens  *int
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) string {
@@ -79,7 +81,7 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream, isHealthCheck bool) (result testResult) {
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream, isHealthCheck bool, probe *channelProbe) (result testResult) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -120,20 +122,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
-	testModel = strings.TrimSpace(testModel)
-	if testModel == "" {
-		if channel.TestModel != nil && *channel.TestModel != "" {
-			testModel = strings.TrimSpace(*channel.TestModel)
-		} else {
-			models := channel.GetModels()
-			if len(models) > 0 {
-				testModel = strings.TrimSpace(models[0])
-			}
-			if testModel == "" {
-				testModel = "gpt-4o-mini"
-			}
-		}
-	}
+	testModel = resolveChannelTestModel(channel, testModel)
 
 	endpointType = normalizeChannelTestEndpoint(channel, endpointType)
 
@@ -197,7 +186,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("group", group)
 
 	var newAPIError *types.NewAPIError
-	if isHealthCheck {
+	if probe != nil {
+		newAPIError = middleware.SetupContextForChannelProbe(c, channel, testModel)
+	} else if isHealthCheck {
 		newAPIError = middleware.SetupContextForChannelHealthCheck(c, channel, testModel)
 	} else {
 		newAPIError = middleware.SetupContextForChannelTest(c, channel, testModel)
@@ -261,6 +252,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
+	if probe != nil {
+		request = &dto.GeneralOpenAIRequest{
+			Model: testModel, Stream: lo.ToPtr(false), MaxTokens: lo.ToPtr(uint(probeOutputTokens)),
+			Messages: []dto.Message{{Role: "system", Content: probe.context}, {Role: "user", Content: probe.question}},
+		}
+	}
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
@@ -274,9 +271,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	sampleSuccess := false
 	sampleTokens := int64(0)
-	defer func() {
-		recordChannelTestSample(channel, info, sampleSuccess, sampleTokens)
-	}()
+	if probe == nil {
+		defer func() {
+			recordChannelTestSample(channel, info, sampleSuccess, sampleTokens)
+		}()
+	}
 
 	info.IsChannelTest = true
 	info.InitChannelMeta(c)
@@ -331,7 +330,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//// 创建一个用于日志的 info 副本，移除 ApiKey
 	//logInfo := info
 	//logInfo.ApiKey = ""
-	common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+	if probe == nil {
+		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+	}
 
 	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
 	if err != nil {
@@ -470,6 +471,24 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
+	if probe != nil {
+		requestURL, err := adaptor.GetRequestURL(info)
+		if err == nil {
+			err = probe.validateRequest(jsonData, info.UpstreamModelName, requestURL)
+		}
+		if err != nil {
+			return testResult{context: c, localErr: err, failureKind: service.ChannelTestFailureKindSetup,
+				newAPIError: types.NewErrorWithStatusCode(err, types.ErrorCodeConvertRequestFailed, http.StatusBadRequest)}
+		}
+		testModel = info.UpstreamModelName
+		estimate := probe.estimate(testModel)
+		if estimate > probeMaxTokens+probeMaxTokens/100 {
+			return testResult{context: c, localErr: errors.New("estimated probe input exceeds token limit"), failureKind: service.ChannelTestFailureKindSetup}
+		}
+		info.SetEstimatePromptTokens(estimate)
+		probe.applyConversationID(info, jsonData)
+	}
+
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
 	resp, err := adaptor.DoRequest(c, info, requestBody)
@@ -485,6 +504,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		httpResp = resp.(*http.Response)
 		upstreamHTTPStatus = httpResp.StatusCode
 		if httpResp.StatusCode != http.StatusOK {
+			if probe != nil {
+				_ = httpResp.Body.Close()
+				err := fmt.Errorf("probe upstream returned HTTP %d", httpResp.StatusCode)
+				return testResult{context: c, localErr: err, failureKind: service.ChannelTestFailureKindUpstreamHTTP,
+					newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, httpResp.StatusCode)}
+			}
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 			common.SysError(fmt.Sprintf(
 				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
@@ -503,6 +528,14 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				upstreamHTTPStatus: httpResp.StatusCode,
 			}
 		}
+	}
+	var probeResponse *channelProbeResponse
+	if probe != nil && httpResp != nil && httpResp.Body != nil {
+		probeResponse = &channelProbeResponse{ReadCloser: httpResp.Body}
+		httpResp.Body = probeResponse
+	}
+	if probe != nil {
+		defer func() { result.probeInputTokens, result.probeCachedTokens = probeResponse.usage() }()
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
 	if respErr != nil {
@@ -558,7 +591,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		Group:            info.UsingGroup,
 		Other:            other,
 	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	if probe == nil {
+		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	} else if !probe.matchesAnswer(respBody) {
+		return testResult{context: c, localErr: errors.New("probe response did not match the expected answer"),
+			failureKind: service.ChannelTestFailureKindResponseInvalid, resultStatusCode: http.StatusUnprocessableEntity}
+	}
 	return testResult{
 		context:     c,
 		localErr:    nil,
@@ -946,7 +984,7 @@ func TestChannel(c *gin.Context) {
 		requestID = common.NewRequestId()
 		requestCtx = context.WithValue(requestCtx, common.RequestIdKey, requestID)
 	}
-	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, false)
+	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, false, nil)
 	milliseconds := time.Since(tik).Milliseconds()
 	history := buildChannelTestHistoryResult(channel, result, channelTestHistoryContext{
 		RunID:     requestID,
@@ -1046,6 +1084,8 @@ func buildChannelTestHistoryResult(channel *model.Channel, result testResult, hi
 		ChannelGroups:      strings.Join(normalizedGroups, ","),
 		Source:             historyContext.Source,
 		HealthCheckMode:    historyContext.HealthCheckMode,
+		ProbeInputTokens:   result.probeInputTokens,
+		ProbeCachedTokens:  result.probeCachedTokens,
 		ModelName:          result.modelName,
 		EndpointType:       result.endpointType,
 		RequestPath:        result.requestPath,
@@ -1082,8 +1122,31 @@ func testChannelForHealthCheck(ctx context.Context, target automaticChannelTestT
 	channel := target.Channel
 	requestID := common.NewRequestId()
 	testCtx := context.WithValue(ctx, common.RequestIdKey, requestID)
+	if historyContext.Source == "scheduled" && target.HealthCheckMode == string(dto.ChannelHealthCheckModeScheduled) &&
+		channel.Status == common.ChannelStatusEnabled && !channel.HasAutoDisabledKey() && supportsChannelProbe(channel) {
+		config, err := loadChannelProbe(channel.Id)
+		if err != nil {
+			common.SysError(fmt.Sprintf("failed to load probe configuration: channel_id=%d", channel.Id))
+			return channelTestSummary{Tested: 1, Failed: 1}
+		}
+		if config.Mode != probeShort {
+			historyContext.RequestID = requestID
+			historyContext.HealthCheckMode = target.HealthCheckMode
+			history := runLongChannelProbe(ctx, channel, testUserID, config, historyContext)
+			if ctx.Err() != nil {
+				return summary
+			}
+			if err := channel.UpdateAutomaticProbeTime(); err != nil {
+				common.SysError(fmt.Sprintf("failed to update scheduled probe time: channel_id=%d", channel.Id))
+			}
+			if history.Status == service.ChannelTestStatusSucceeded {
+				return channelTestSummary{Tested: 1, Succeeded: 1}
+			}
+			return channelTestSummary{Tested: 1, Failed: 1}
+		}
+	}
 	tik := time.Now()
-	result := testChannel(testCtx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), true)
+	result := testChannel(testCtx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), true, nil)
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
 		return summary

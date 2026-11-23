@@ -388,6 +388,7 @@ func migrateDB() error {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&ChannelTestResult{},
+		&ChannelProbe{},
 		&GroupRenameAlias{},
 		&CasbinRule{},
 		&AuthzRole{},

@@ -1,3 +1,4 @@
+import type { ChannelTestResult } from '@/features/channel-test-history/types'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -49,6 +50,62 @@ const channelActionConfig = (
   skipBusinessError: true,
   skipErrorHandler: true,
 })
+
+export type ChannelProbeConfig = {
+  mode: 'short' | 'auto' | 'custom'
+  target_tokens?: number
+  seed?: string
+  template_version?: number
+  lines?: number
+  context?: string
+  question?: string
+  expected_answer?: string
+  grok_conv_id?: boolean
+}
+
+export type ChannelProbePreview = {
+  config: ChannelProbeConfig
+  context: string
+  question: string
+  expected_answer: string
+  estimated_input_tokens: number
+}
+
+type ProbeResponse<T> = { success: boolean; message: string; data: T }
+
+export async function getChannelProbe(id: number) {
+  const { data } = await api.get<
+    ProbeResponse<{ supported: boolean; config: ChannelProbeConfig }>
+  >(`/api/channel/${id}/probe`, channelActionConfig())
+  return requireServerSuccess(data).data
+}
+
+export async function saveChannelProbe(id: number, config: ChannelProbeConfig) {
+  const { data } = await api.put<ProbeResponse<ChannelProbeConfig>>(
+    `/api/channel/${id}/probe`,
+    config,
+    channelActionConfig()
+  )
+  return requireServerSuccess(data).data
+}
+
+export async function previewChannelProbe(id: number, target?: number) {
+  const { data } = await api.post<ProbeResponse<ChannelProbePreview>>(
+    `/api/channel/${id}/probe/preview`,
+    target === undefined ? { saved: true } : { target_tokens: target },
+    channelActionConfig()
+  )
+  return requireServerSuccess(data).data
+}
+
+export async function testChannelProbe(id: number) {
+  const { data } = await api.post<ProbeResponse<ChannelTestResult>>(
+    `/api/channel/${id}/probe/test`,
+    null,
+    channelActionConfig({ timeout: 125_000 })
+  )
+  return requireServerSuccess(data).data
+}
 
 export async function getInferenceStatus(
   channelId: number,

@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -51,6 +54,156 @@ func TestGetChannelDefaultBaseURLsUsesBuiltInDefaults(t *testing.T) {
 	assert.NotContains(t, response.Data, constant.ChannelTypeAzure)
 	assert.NotContains(t, response.Data, constant.ChannelTypeNewAPI)
 	assert.NotContains(t, response.Data, constant.ChannelTypeTaskPlugin)
+}
+
+func TestChannelProbeScheduledAndTrialSendSameRequest(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ChannelTestResult{}, &model.Log{}))
+	oldLogging, oldDisable := common.LogConsumeEnabled, common.AutomaticDisableChannelEnabled
+	historySetting := config.GlobalConfig.Get("channel_test_history_setting").(*operation_setting.ChannelTestHistorySetting)
+	oldHistory, err := historySetting.ConfigToMap()
+	require.NoError(t, err)
+	common.LogConsumeEnabled, common.AutomaticDisableChannelEnabled = true, true
+	require.NoError(t, historySetting.UpdateConfigFromMap(map[string]string{"enabled": "true"}))
+	t.Cleanup(func() {
+		common.LogConsumeEnabled, common.AutomaticDisableChannelEnabled = oldLogging, oldDisable
+		require.NoError(t, historySetting.UpdateConfigFromMap(oldHistory))
+	})
+	config, probe, estimate, err := generateChannelProbe("gpt-4o-mini", 0)
+	require.NoError(t, err)
+	assert.InDelta(t, 24000, estimate, 240)
+	config.GrokConvID = true
+	rawConfig, err := common.Marshal(config)
+	require.NoError(t, err)
+	type requestSample struct{ body, conversationID string }
+	requests := make(chan requestSample, 8)
+	waiting, canceled := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, probeChatPath, r.URL.Path)
+		assert.Equal(t, "Bearer local-test-key", r.Header.Get("Authorization"))
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		requests <- requestSample{string(body), r.Header.Get(probeConversationHeader)}
+		answer, details := probe.answer, `"prompt_tokens_details":{"cached_tokens":0},`
+		switch calls.Add(1) {
+		case 2:
+			details = `"prompt_tokens_details":{"cached_tokens":24576},`
+			answer = "wrong-answer"
+		case 3:
+			details = ""
+		case 4:
+			close(waiting)
+			select {
+			case <-r.Context().Done():
+				close(canceled)
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":"test","object":"chat.completion","model":"grok-test","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%q}}],"usage":{"prompt_tokens":24606,%s"completion_tokens":3,"total_tokens":24609}}`, "  "+answer+"  ", details)
+	}))
+	t.Cleanup(upstream.Close)
+	user := &model.User{Username: "probe-user", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default"}
+	user.SetSetting(dto.UserSetting{AcceptUnsetRatioModel: true})
+	require.NoError(t, db.Create(user).Error)
+	channel := &model.Channel{
+		Type: constant.ChannelTypeXai, Status: common.ChannelStatusEnabled, Key: "disabled-key\nlocal-test-key\nrotation-key",
+		Name: "Probe", Models: "gpt-4o-mini", Group: "default", BaseURL: &upstream.URL,
+		ModelMapping: common.GetPointer(`{"gpt-4o-mini":"grok-test"}`), ResponseTime: 73, TestTime: 123,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModePolling, MultiKeyPollingIndex: 2,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled}},
+	}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, model.SaveChannelProbe(channel.Id, channel.Type, rawConfig))
+	ctx := context.Background()
+	first := runLongChannelProbe(ctx, channel, user.Id, config, channelTestHistoryContext{RequestID: "trial", Source: "manual_single"})
+	require.Equal(t, service.ChannelTestStatusSucceeded, first.Status, "%+v", first)
+	require.NotNil(t, first.ProbeCachedTokens)
+	assert.Zero(t, *first.ProbeCachedTokens)
+	target := automaticChannelTestTarget{Channel: channel, AllowDisable: true, RecordAutomaticTestTime: true, HealthCheckMode: "scheduled"}
+	summary := testChannelForHealthCheck(ctx, target, user.Id, channelTestHistoryContext{Source: "scheduled"}, -1)
+	assert.Equal(t, channelTestSummary{Tested: 1, Failed: 1}, summary)
+	var saved model.ChannelTestResult
+	require.NoError(t, db.Where("source = ?", "scheduled").First(&saved).Error)
+	assert.Equal(t, service.ChannelTestFailureKindResponseInvalid, saved.FailureKind)
+	assert.Equal(t, service.ChannelTestActionNone, saved.StateAction)
+	require.NotNil(t, saved.ProbeInputTokens)
+	require.NotNil(t, saved.ProbeCachedTokens)
+	assert.Equal(t, 24606, *saved.ProbeInputTokens)
+	assert.Equal(t, 24576, *saved.ProbeCachedTokens)
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, 73, stored.ResponseTime)
+	assert.EqualValues(t, 123, stored.TestTime)
+	assert.Positive(t, stored.LastAutoTestTime)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+	assert.Equal(t, 2, stored.ChannelInfo.MultiKeyPollingIndex)
+	require.NotNil(t, saved.KeyIndex)
+	assert.Equal(t, 1, *saved.KeyIndex)
+	require.Equal(t, int32(2), calls.Load())
+	trialRequest, scheduledRequest := <-requests, <-requests
+	assert.NotEmpty(t, trialRequest.conversationID)
+	assert.Equal(t, trialRequest, scheduledRequest)
+	assert.Contains(t, trialRequest.body, `"model":"grok-test"`)
+	assert.Contains(t, trialRequest.body, probe.answer)
+
+	third := runLongChannelProbe(ctx, channel, user.Id, config, channelTestHistoryContext{RequestID: "missing-cache", Source: "manual_single"})
+	assert.Equal(t, service.ChannelTestStatusSucceeded, third.Status)
+	require.NotNil(t, third.ProbeInputTokens)
+	assert.Nil(t, third.ProbeCachedTokens)
+	var logs int64
+	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&logs).Error)
+	assert.EqualValues(t, 3, logs, "an invalid answer still produces a successful upstream consumption log")
+
+	channel.ParamOverride = common.GetPointer(`{"stream":true}`)
+	blocked := runLongChannelProbe(ctx, channel, user.Id, config, channelTestHistoryContext{RequestID: "override", Source: "manual_single"})
+	assert.Equal(t, service.ChannelTestFailureKindSetup, blocked.FailureKind)
+	assert.Equal(t, int32(3), calls.Load(), "an unsafe override does not contact upstream")
+
+	channel.ParamOverride = nil
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan *model.ChannelTestResult, 1)
+	go func() {
+		done <- runLongChannelProbe(cancelCtx, channel, user.Id, config, channelTestHistoryContext{RequestID: "canceled", Source: "manual_single"})
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("probe did not reach upstream")
+	}
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream did not receive cancellation")
+	}
+	result := <-done
+	assert.Equal(t, service.ChannelTestStatusCancelled, result.Status)
+}
+
+func TestChannelProbeRawUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name, usage string
+		wantInput   *int
+		wantCached  *int
+	}{
+		{"missing", `{}`, nil, nil},
+		{"null cache", `{"prompt_tokens":200,"prompt_tokens_details":{"cached_tokens":null}}`, common.GetPointer(200), nil},
+		{"invalid range", `{"prompt_tokens":200,"prompt_tokens_details":{"cached_tokens":201}}`, common.GetPointer(200), nil},
+		{"zero", `{"prompt_tokens":200,"prompt_tokens_details":{"cached_tokens":0}}`, common.GetPointer(200), common.GetPointer(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := &channelProbeResponse{ReadCloser: io.NopCloser(strings.NewReader(`{"usage":` + tc.usage + `}`))}
+			_, err := io.ReadAll(response)
+			require.NoError(t, err)
+			input, cached := response.usage()
+			assert.Equal(t, tc.wantInput, input)
+			assert.Equal(t, tc.wantCached, cached)
+		})
+	}
 }
 
 func TestValidateChannelProxy(t *testing.T) {

@@ -18,6 +18,9 @@ type ChannelTestResult struct {
 	ChannelGroups      string `json:"channel_groups" gorm:"type:varchar(4096)"`
 	Source             string `json:"source" gorm:"type:varchar(32);index"`
 	HealthCheckMode    string `json:"health_check_mode,omitempty" gorm:"type:varchar(32)"`
+	ProbeMode          string `json:"probe_mode,omitempty" gorm:"type:varchar(16)"`
+	ProbeInputTokens   *int   `json:"probe_input_tokens,omitempty"`
+	ProbeCachedTokens  *int   `json:"probe_cached_tokens,omitempty"`
 	ModelName          string `json:"model_name" gorm:"type:varchar(255);index"`
 	EndpointType       string `json:"endpoint_type,omitempty" gorm:"type:varchar(64)"`
 	RequestPath        string `json:"request_path" gorm:"type:varchar(255)"`

@@ -558,23 +558,36 @@ func getTaskOriginModelName(c *gin.Context) string {
 	return ""
 }
 
+type channelKeyPurpose int
+
+const (
+	channelKeyForRelay channelKeyPurpose = iota
+	channelKeyForTest
+	channelKeyForRecovery
+	channelKeyForProbe
+)
+
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
-	return setupContextForSelectedChannel(c, channel, modelName, false, false)
+	return setupContextForSelectedChannel(c, channel, modelName, channelKeyForRelay)
 }
 
 // SetupContextForChannelTest keeps the single-channel test diagnostic: an
 // auto-disabled key is used only when no enabled key exists.
 func SetupContextForChannelTest(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
-	return setupContextForSelectedChannel(c, channel, modelName, true, false)
+	return setupContextForSelectedChannel(c, channel, modelName, channelKeyForTest)
 }
 
 // SetupContextForChannelHealthCheck prefers auto-disabled keys so every
 // pending key is eventually probed and can recover independently.
 func SetupContextForChannelHealthCheck(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
-	return setupContextForSelectedChannel(c, channel, modelName, true, true)
+	return setupContextForSelectedChannel(c, channel, modelName, channelKeyForRecovery)
 }
 
-func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string, isChannelTest, isHealthCheck bool) *types.NewAPIError {
+func SetupContextForChannelProbe(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	return setupContextForSelectedChannel(c, channel, modelName, channelKeyForProbe)
+}
+
+func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string, purpose channelKeyPurpose) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	expectedPlugin := c.GetString("expected_task_plugin_key")
 	if channel == nil {
@@ -649,12 +662,15 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	var index int
 	keyStatus := common.ChannelStatusEnabled
 	var newAPIError *types.NewAPIError
-	if isHealthCheck {
+	switch purpose {
+	case channelKeyForProbe:
+		key, index, newAPIError = channel.GetStableProbeKey()
+	case channelKeyForRecovery:
 		selection, err := channel.GetNextHealthCheckKey()
 		key, index, keyStatus, newAPIError = selection.Key, selection.Index, selection.OriginalStatus, err
-	} else if isChannelTest {
+	case channelKeyForTest:
 		key, index, newAPIError = channel.GetNextTestKey()
-	} else {
+	default:
 		key, index, newAPIError = channel.GetNextEnabledKey()
 	}
 	if newAPIError != nil {

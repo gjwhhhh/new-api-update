@@ -753,6 +753,10 @@ func BatchDeleteChannels(ids []int) (int64, error) {
 			return 0, result.Error
 		}
 		deletedCount += result.RowsAffected
+		if err := deleteChannelProbes(tx, chunk); err != nil {
+			tx.Rollback()
+			return 0, err
+		}
 		if err := tx.Where("channel_id in (?)", chunk).Delete(&Ability{}).Error; err != nil {
 			tx.Rollback()
 			return 0, err
@@ -886,6 +890,9 @@ func (channel *Channel) Delete() error {
 	var userIds []int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(channel).Error; err != nil {
+			return err
+		}
+		if err := deleteChannelProbes(tx, []int{channel.Id}); err != nil {
 			return err
 		}
 		if err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error; err != nil {
@@ -1381,6 +1388,9 @@ func deleteChannelsByStatus(statuses []int64) (int64, error) {
 			return result.Error
 		}
 		deletedCount = result.RowsAffected
+		if err := deleteChannelProbes(tx, channelIds); err != nil {
+			return err
+		}
 		var err error
 		userIds, err = deleteChannelPrioritiesWithTx(tx, channelIds)
 		return err

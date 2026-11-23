@@ -8,15 +8,34 @@ import (
 const CyberPolicyOptionKey = "CyberSessionPolicy"
 
 type CyberPolicy struct {
-	Mode         string `json:"mode"`
-	Scope        string `json:"scope"`
-	TokenIDs     []int  `json:"token_ids"`
-	ChannelIDs   []int  `json:"channel_ids"`
-	TTLSeconds   int    `json:"ttl_seconds"`
-	MatchMessage bool   `json:"match_message"`
+	Mode              string `json:"mode"`
+	Scope             string `json:"scope"`
+	TokenIDs          []int  `json:"token_ids"`
+	ChannelIDs        []int  `json:"channel_ids"`
+	TTLSeconds        int    `json:"ttl_seconds"`
+	MatchMessage      bool   `json:"match_message"`
+	BlockedAction     string `json:"blocked_action"`
+	FallbackChannelID int    `json:"fallback_channel_id"`
+}
+
+// Normalize preserves the blocking behavior of policies saved before rerouting.
+func (p *CyberPolicy) Normalize() {
+	if p.BlockedAction == "" {
+		p.BlockedAction = "block"
+	}
+	if p.BlockedAction == "block" {
+		p.FallbackChannelID = 0
+	}
 }
 
 func (p CyberPolicy) Validate() error {
+	p.Normalize()
+	if p.BlockedAction != "block" && p.BlockedAction != "reroute" {
+		return fmt.Errorf("invalid Cyber blocked action")
+	}
+	if p.BlockedAction == "reroute" && p.FallbackChannelID < 1 {
+		return fmt.Errorf("a positive fallback channel ID is required")
+	}
 	if p.Mode != "off" && p.Mode != "shadow" && p.Mode != "enforce" {
 		return fmt.Errorf("invalid Cyber policy mode")
 	}

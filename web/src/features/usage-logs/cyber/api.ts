@@ -27,6 +27,18 @@ export type CyberPolicy = {
   channel_ids: number[] | null
   ttl_seconds: number
   match_message: boolean
+  blocked_action?: 'block' | 'reroute'
+  fallback_channel_id?: number
+}
+
+export type CyberFallbackRoute = {
+  batch_id: string
+  source_channel_id: number
+  target_channel_id: number
+  actual_channel_id: number
+  group: string
+  outcome: string
+  reason: string
 }
 
 export type CyberEvent = {
@@ -41,6 +53,7 @@ export type CyberEvent = {
   action: string
   reason?: string
   fingerprint?: string
+  fallback?: CyberFallbackRoute
 }
 
 export type CyberBan = {

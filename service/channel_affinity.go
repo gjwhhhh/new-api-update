@@ -1027,7 +1027,7 @@ func appendChannelAffinityTemplateAdminInfo(c *gin.Context, meta channelAffinity
 
 // ApplyChannelAffinityOverrideTemplate merges per-rule channel override templates onto the selected channel override config.
 func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[string]any) (map[string]any, bool) {
-	if c == nil {
+	if c == nil || IsCyberFallback(c) {
 		return paramOverride, false
 	}
 	meta, ok := getChannelAffinityMeta(c)
@@ -1153,7 +1153,7 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 }
 
 func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
-	if c == nil {
+	if c == nil || IsCyberFallback(c) {
 		return false
 	}
 	if RequestPolicy(c).UserSessionAffinityDisabled {
@@ -1174,6 +1174,10 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 }
 
 func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
+	if c != nil && (IsCyberFallback(c) || c.GetBool("cyber_affinity_clear_deferred")) {
+		c.Set("cyber_affinity_clear_pending", true)
+		return false
+	}
 	if c == nil {
 		return false
 	}
@@ -1235,7 +1239,7 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 }
 
 func AppendChannelAffinityAdminInfo(c *gin.Context, other *model.LogOther) {
-	if c == nil || other == nil {
+	if c == nil || other == nil || IsCyberFallback(c) {
 		return
 	}
 	anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo)
@@ -1253,6 +1257,9 @@ func AppendChannelAffinityAdminInfo(c *gin.Context, other *model.LogOther) {
 }
 
 func RecordChannelAffinity(c *gin.Context, channelID int) {
+	if c != nil && IsCyberFallback(c) {
+		return
+	}
 	if channelID <= 0 {
 		return
 	}

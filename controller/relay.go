@@ -567,6 +567,10 @@ func executeTaskSubmissionWith(
 				break
 			}
 		}
+		if apiErr := service.ValidateCyberFallbackChannel(c, channel.Id); apiErr != nil {
+			taskErr = service.TaskErrorWrapperLocal(apiErr, string(apiErr.GetErrorCode()), apiErr.StatusCode)
+			break
+		}
 		diagnostics.attempt(retryParam.GetRetry()+1, channel, relayInfo.LockedChannel != nil)
 
 		service.AppendUsedChannel(c, channel.Id)
@@ -725,6 +729,7 @@ func executeTaskSubmissionWith(
 		return nil, taskErr
 	}
 	durable = true
+	service.MarkCyberFallbackSubmitted(c, task.Status == model.TaskStatusSuccess)
 	stage = "settle"
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
@@ -800,6 +805,9 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 }
 
 func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
+	if service.IsCyberFallback(c) || service.IsCyberFallbackError(taskErr.Code) {
+		service.SetRelayFinalError(c, taskSubmissionAPIError(taskErr))
+	}
 	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
 	newTaskPluginSubmitDiagnostics(c).presentError(taskErr)
 	if middleware.RespondTaskPluginError(c, taskErr) {
@@ -819,6 +827,12 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 // taskSubmissionAPIError adapts a task error for the shared relay error paths.
 // TaskError.Error is nil for many local rejections, so fall back to the message.
 func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
+	if service.IsCyberFallbackError(taskErr.Code) {
+		return types.NewErrorWithStatusCode(errors.New(taskErr.Message), types.ErrorCode(taskErr.Code), taskErr.StatusCode, types.ErrOptionWithSkipRetry())
+	}
+	if taskErr.Code == relaycommon.CyberPolicyCode && !taskErr.LocalError {
+		return service.CyberPolicyError(taskErr.StatusCode)
+	}
 	err := taskErr.Error
 	if err == nil {
 		err = errors.New(taskErr.Message)
@@ -834,6 +848,8 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 	switch {
 	case taskErr == nil:
 		stop.Reason = "request_completed"
+	case taskErr.Code == relaycommon.CyberPolicyCode:
+		stop.Reason = "upstream_cyber"
 	case taskErr.NoRetry:
 		stop.Reason = "task_accepted"
 	case service.ShouldSkipRetryAfterChannelAffinityFailure(c):

@@ -62,6 +62,9 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 	if info.OriginTaskID == "" {
 		return nil
 	}
+	if service.IsCyberFallback(c) {
+		return service.TaskErrorWrapperLocal(errors.New("origin task context cannot migrate to a fallback channel"), "cyber_fallback_stateful_context", http.StatusConflict)
+	}
 
 	// 查找原始任务
 	originTask, exist, err := model.GetByTaskId(info.UserId, info.OriginTaskID)
@@ -149,6 +152,14 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 // context onto RelayInfo and, when the resolved pin retries on the same
 // channel, writes LockedChannel. ResolveOriginTask is unchanged.
 func ApplyChannelPin(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if service.IsCyberFallback(c) {
+		if tasks, ok := common.GetContextKeyType[[]*model.Task](c, constant.ContextKeyOriginTasks); ok && len(tasks) > 0 {
+			return service.TaskErrorWrapperLocal(errors.New("origin task context cannot migrate to a fallback channel"), "cyber_fallback_stateful_context", http.StatusConflict)
+		}
+		if err := service.ValidateCyberFallbackChannel(c, c.GetInt("channel_id")); err != nil {
+			return service.TaskErrorWrapperLocal(err, string(err.GetErrorCode()), err.StatusCode)
+		}
+	}
 	if info == nil {
 		return nil
 	}
@@ -357,6 +368,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// or 202 Accepted, and parseSubmitResponse receives the exact status code.
 	if resp.StatusCode/100 != 2 {
 		responseBody, _ := io.ReadAll(resp.Body)
+		parsedResponse := *resp
+		parsedResponse.Body = io.NopCloser(bytes.NewReader(responseBody))
+		if apiErr := service.RelayErrorHandler(c.Request.Context(), &parsedResponse, false); apiErr.GetErrorCode() == relaycommon.CyberPolicyCode {
+			service.SetRelayFinalError(c, apiErr)
+			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 

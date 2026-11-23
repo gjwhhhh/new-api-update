@@ -18,9 +18,10 @@ var ErrCyberRedisUnavailable = errors.New("Cyber ban storage unavailable")
 var ErrCyberBanChanged = errors.New("Cyber ban no longer exists or has changed")
 
 type CyberBanMetadata struct {
-	ID        string `json:"id"`
-	RequestID string `json:"request_id"`
-	CreatedAt int64  `json:"created_at"`
+	SourceChannelID int    `json:"source_channel_id,omitempty"`
+	ID              string `json:"id"`
+	RequestID       string `json:"request_id"`
+	CreatedAt       int64  `json:"created_at"`
 }
 
 type CyberBanTarget struct {
@@ -136,6 +137,7 @@ func ListCyberBans(ctx context.Context, cursor uint64) ([]CyberBan, uint64, erro
 
 var revokeCyberBanScript = redis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then
+    redis.call('DEL', KEYS[2])
     return redis.call('DEL', KEYS[1])
 end
 return 0
@@ -161,7 +163,9 @@ func RevokeCyberBan(ctx context.Context, target CyberBanTarget, generation strin
 	if fmt.Sprintf("%x", sha256.Sum256([]byte(value))) != generation {
 		return ErrCyberBanChanged
 	}
-	deleted, err := revokeCyberBanScript.Run(ctx, common.RDB, []string{key}, value).Int()
+	var meta CyberBanMetadata
+	_ = common.UnmarshalJsonStr(value, &meta)
+	deleted, err := revokeCyberBanScript.Run(ctx, common.RDB, []string{key, cyberFallbackSetKey(key, meta.ID)}, value).Int()
 	if err != nil {
 		return ErrCyberRedisUnavailable
 	}

@@ -141,6 +141,7 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 		c.Next()
 
 		failure, failed := FinalRelayFailure(c)
+		recordCyberFallbackOutcome(c, failed)
 		if !failed {
 			return
 		}
@@ -150,7 +151,7 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 		localSensitive = localSensitive && failure.Code == string(types.ErrorCodeSensitiveWordsDetected)
 		if isCyber {
 			counters.cyber.Add(1)
-		} else if !localSensitive && failure.Code != CyberSessionBlockedCode && !constant.ErrorLogEnabled {
+		} else if !localSensitive && failure.Code != CyberSessionBlockedCode && !IsCyberFallback(c) && !IsCyberFallbackError(failure.Code) && !constant.ErrorLogEnabled {
 			counters.ignored.Add(1)
 			return
 		}
@@ -195,8 +196,12 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 		if isCyber {
 			message = "Request rejected by an upstream content policy (cyber_policy)"
 		}
+		logCode := failure.Code
+		if IsCyberFallback(c) && !isCyber {
+			logCode = model.CyberFallbackFailedCode
+		}
 		if err := model.RecordErrorLog(c, c.GetInt("id"), c.GetInt("channel_id"), common.GetContextKeyString(c, constant.ContextKeyOriginalModel), c.GetString("token_name"), message,
-			c.GetInt("token_id"), elapsed, failure.Protocol != "http", c.GetString("group"), failure.Code, other); err != nil {
+			c.GetInt("token_id"), elapsed, failure.Protocol != "http", c.GetString("group"), logCode, other); err != nil {
 			counters.failed.Add(1)
 			logger.LogError(c, fmt.Sprintf("relay_failure_log protocol=%s code=%s result=write_failed", failure.Protocol, failure.Code))
 			return

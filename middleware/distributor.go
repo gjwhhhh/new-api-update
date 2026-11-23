@@ -133,7 +133,13 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if channel != nil {
+			if apiErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); apiErr != nil {
+				service.SetRelayFinalError(c, apiErr)
+				c.AbortWithStatusJSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})
+				return
+			}
+		}
 		service.UnlockGroupMutationRead()
 		groupGateLocked = false
 		c.Next()

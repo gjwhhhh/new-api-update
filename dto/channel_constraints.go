@@ -40,6 +40,7 @@ const (
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
 	FilterExcludedChannelIDs ChannelFilterKind = "excluded_channel_ids"
+	FilterAllowedChannelIDs  ChannelFilterKind = "allowed_channel_ids"
 )
 
 type ChannelFilter struct {
@@ -49,6 +50,7 @@ type ChannelFilter struct {
 	TaskPluginKeys         []string
 	TaskPluginChannelTypes []int
 	ExcludedChannelIDs     map[int]struct{}
+	AllowedChannelIDs      []int
 }
 
 type ChannelConstraints struct {

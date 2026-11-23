@@ -38,6 +38,7 @@ import {
 import { getServerErrorMessage } from '@/lib/server-error-message'
 
 import { fetchCyber } from './api'
+import { fallbackOutcomeLabel, fallbackReasonLabel } from './fallback-labels'
 
 const pageSize = 25
 
@@ -58,6 +59,19 @@ export function CyberEvents(props: { userId: number }) {
     skipped: t('No ban applied'),
     store_failed: t('Ban write not confirmed'),
     unknown: t('Not recorded'),
+    ...Object.fromEntries(
+      [
+        'selected',
+        'submitted',
+        'completed',
+        'failed',
+        'rejected',
+        'interrupted',
+      ].map((outcome) => [
+        `reroute_${outcome}`,
+        fallbackOutcomeLabel(outcome, t),
+      ])
+    ),
   }
   const reasons: Record<string, string> = {
     guard_off: t('Guard disabled'),
@@ -204,7 +218,8 @@ export function CyberEvents(props: { userId: number }) {
                       </Badge>
                       {row.reason && (
                         <div className='text-muted-foreground text-xs'>
-                          {reasons[row.reason] ?? row.reason}
+                          {reasons[row.reason] ??
+                            fallbackReasonLabel(row.reason, t)}
                         </div>
                       )}
                     </div>
@@ -230,7 +245,34 @@ export function CyberEvents(props: { userId: number }) {
                 {
                   id: 'channel',
                   header: t('Channel ID'),
-                  cell: (row) => (row.channel_id ? `#${row.channel_id}` : '–'),
+                  cell: (row) => {
+                    if (!row.fallback) {
+                      return row.channel_id ? `#${row.channel_id}` : '–'
+                    }
+                    return (
+                      <div className='space-y-1 text-xs'>
+                        <div>
+                          {t('Source channel')}:{' '}
+                          {row.fallback.source_channel_id
+                            ? `#${row.fallback.source_channel_id}`
+                            : t('Unknown')}
+                        </div>
+                        <div>
+                          {t('Fallback channel')}: #
+                          {row.fallback.target_channel_id}
+                        </div>
+                        <div>
+                          {t('Channel ID')}:{' '}
+                          {row.fallback.actual_channel_id
+                            ? `#${row.fallback.actual_channel_id}`
+                            : '–'}
+                        </div>
+                        <div>
+                          {t('Group')}: {row.fallback.group || '–'}
+                        </div>
+                      </div>
+                    )
+                  },
                 },
                 {
                   id: 'session',

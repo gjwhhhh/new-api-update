@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -20,12 +21,101 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestCyberFallbackPluginSubmissionAndTerminalOutcomes(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	previousRedis, previousClient := common.RedisEnabled, common.RDB
+	common.RedisEnabled, common.RDB = true, client
+	common.OptionMapRWMutex.Lock()
+	previousOptions := common.OptionMap
+	common.OptionMap = map[string]string{operation_setting.CyberPolicyOptionKey: `{"mode":"enforce","scope":"all","ttl_seconds":600,"blocked_action":"reroute","fallback_channel_id":12}`}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.RedisEnabled, common.RDB = previousRedis, previousClient
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptions
+		common.OptionMapRWMutex.Unlock()
+		require.NoError(t, client.Close())
+	})
+	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
+	parent := fmt.Sprintf("new-api:cyber-session:v1:enforce:81:%x", sha256.Sum256([]byte(session)))
+	require.NoError(t, client.Set(t.Context(), parent, "1", time.Minute).Err())
+	pinned := compilePluginProtocolTestEndpoint(t, "fallback-outcome", `
+		export const protocols = {openai_responses: {
+			renderEvents: function() { return {events: [], done: true}; },
+			renderFinal: function() { return {}; }
+		}};
+	`)
+	for _, tc := range []struct {
+		name, outcome, responseStatus string
+		background, stream, conflict  bool
+		taskStatus                    model.TaskStatus
+	}{
+		{name: "accepted background is pending", background: true, outcome: "submitted", responseStatus: "queued"},
+		{name: "sync completion", taskStatus: model.TaskStatusSuccess, outcome: "completed", responseStatus: "completed"},
+		{name: "sync failure in HTTP 200", taskStatus: model.TaskStatusFailure, outcome: "failed", responseStatus: "failed"},
+		{name: "stream completion", stream: true, taskStatus: model.TaskStatusSuccess, outcome: "completed", responseStatus: "completed"},
+		{name: "stream failure", stream: true, taskStatus: model.TaskStatusFailure, outcome: "failed", responseStatus: "failed"},
+		{name: "hidden origin pin rejected before submit", conflict: true, outcome: "rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, recorder := newPluginProtocolTestContext(tc.stream, tc.stream)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"video-model","input":"hello","prompt_cache_key":"`+session+`"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			service.CyberSessionGuard(c)
+			require.False(t, c.IsAborted(), recorder.Body.String())
+			require.True(t, service.IsCyberFallback(c))
+			common.SetContextKey(c, constant.ContextKeyChannelId, 12)
+			if tc.conflict {
+				service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 12, Rank: dto.PinRankToken})
+				service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 13, Rank: dto.PinRankOriginTask})
+			}
+			setProtocolRequestBackground(c, tc.background)
+			submits := 0
+			deps := pluginProtocolTestDeps()
+			deps.submit = func(_ *gin.Context, info *relaycommon.RelayInfo) (*taskSubmissionOutcome, *dto.TaskError) {
+				submits++
+				return pluginProtocolTestOutcome(info, pinned.Plugin.Meta.Key, "task_fallback_outcome"), nil
+			}
+			deps.loadTask = func(context.Context, int, constant.TaskPlatform, string) (*model.Task, bool, error) {
+				return &model.Task{TaskID: "task_fallback_outcome", Platform: constant.TaskPlatform(pinned.Plugin.Meta.Key), UserId: 71, Status: tc.taskStatus}, true, nil
+			}
+			serveTaskPluginProtocol(c, pinned, deps)
+			if tc.conflict {
+				assert.Zero(t, submits)
+				assert.Equal(t, http.StatusConflict, recorder.Code)
+				assert.Contains(t, recorder.Body.String(), "cyber_fallback_binding_conflict")
+			} else {
+				assert.Equal(t, 1, submits)
+				assert.Equal(t, http.StatusOK, recorder.Code)
+				assert.Contains(t, recorder.Body.String(), `"status":"`+tc.responseStatus+`"`)
+			}
+			// A successful HTTP envelope must never upgrade a submitted or failed task.
+			service.RequestPolicy(c).Successful = true
+			other := model.NewLogOther()
+			service.AppendRelayLogAdminInfo(c, nil, other)
+			var stored struct {
+				Admin struct {
+					Fallback struct {
+						Outcome string `json:"outcome"`
+					} `json:"cyber_fallback"`
+				} `json:"admin_info"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(other.JSONString(), &stored))
+			assert.Equal(t, tc.outcome, stored.Admin.Fallback.Outcome)
+		})
+	}
+}
 
 func TestServeTaskPluginProtocolWaitsForDurableSubmissionBeforeWriting(t *testing.T) {
 	pinned := compilePluginProtocolTestEndpoint(t, "durable-barrier", `

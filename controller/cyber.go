@@ -23,6 +23,14 @@ func SaveCyberPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid Cyber policy"})
 		return
 	}
+	policy.Normalize()
+	if policy.BlockedAction == "reroute" {
+		channel, err := model.GetChannelById(policy.FallbackChannelID, false)
+		if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "The fallback channel must exist and be enabled"})
+			return
+		}
+	}
 	data, err := common.Marshal(policy)
 	if err == nil {
 		err = model.UpdateOption(operation_setting.CyberPolicyOptionKey, string(data))
@@ -31,7 +39,7 @@ func SaveCyberPolicy(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryOperation, Action: "cyber_policy_updated", Content: "Cyber policy updated", Success: true, Other: model.AuditOther{Op: &model.AuditOperation{Action: "cyber_policy_updated", Params: map[string]any{"mode": policy.Mode, "scope": policy.Scope, "token_ids": policy.TokenIDs, "channel_ids": policy.ChannelIDs, "ttl_seconds": policy.TTLSeconds, "match_message": policy.MatchMessage}}}})
+	model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryOperation, Action: "cyber_policy_updated", Content: "Cyber policy updated", Success: true, Other: model.AuditOther{Op: &model.AuditOperation{Action: "cyber_policy_updated", Params: map[string]any{"mode": policy.Mode, "scope": policy.Scope, "token_ids": policy.TokenIDs, "channel_ids": policy.ChannelIDs, "ttl_seconds": policy.TTLSeconds, "match_message": policy.MatchMessage, "blocked_action": policy.BlockedAction, "fallback_channel_id": policy.FallbackChannelID}}}})
 	common.ApiSuccess(c, service.CurrentCyberPolicy())
 }
 

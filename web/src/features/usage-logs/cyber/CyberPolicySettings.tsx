@@ -32,7 +32,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
-import { getServerErrorMessage } from '@/lib/server-error-message'
+import { getChannelTestFilterOptions } from '@/features/channel-test-history/api'
+import {
+  getServerErrorMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
 import { fetchCyber, saveCyberPolicy, type CyberPolicy } from './api'
 
@@ -59,8 +63,13 @@ const schema = z
     channel_ids: ids,
     ttl_seconds: z.number().int(),
     match_message: z.boolean(),
+    blocked_action: z.enum(['block', 'reroute']),
+    fallback_channel_id: z.number().int(),
   })
   .superRefine((value, ctx) => {
+    if (value.blocked_action === 'reroute' && value.fallback_channel_id < 1) {
+      ctx.addIssue({ code: 'custom', path: ['fallback_channel_id'] })
+    }
     if (value.mode !== 'off') {
       if (value.scope === 'token' && !value.token_ids) {
         ctx.addIssue({ code: 'custom', path: ['token_ids'] })
@@ -118,16 +127,33 @@ function PolicyForm(props: {
     resolver: zodResolver(schema),
     defaultValues: {
       ...props.policy,
+      blocked_action: props.policy.blocked_action ?? 'block',
+      fallback_channel_id: props.policy.fallback_channel_id ?? 0,
       token_ids: props.policy.token_ids?.join(', ') ?? '',
       channel_ids: props.policy.channel_ids?.join(', ') ?? '',
     },
   })
   const scope = form.watch('scope')
+  const blockedAction = form.watch('blocked_action')
+  const channelsQuery = useQuery({
+    queryKey: ['cyber', props.userId, 'fallback-channels'],
+    queryFn: async () => {
+      const response = await getChannelTestFilterOptions()
+      return requireServerSuccess(response).data?.channels ?? []
+    },
+    enabled: blockedAction === 'reroute' && props.canWrite,
+    retry: false,
+    meta: { errorToast: false },
+    refetchOnWindowFocus: false,
+  })
+  const channels = channelsQuery.data ?? []
   const errors = form.formState.errors
   const mutation = useMutation({
     mutationFn: (value: z.infer<typeof schema>) =>
       saveCyberPolicy({
         ...value,
+        fallback_channel_id:
+          value.blocked_action === 'reroute' ? value.fallback_channel_id : 0,
         token_ids: value.token_ids
           ? [...new Set(value.token_ids.split(',').map(Number))]
           : [],
@@ -148,6 +174,17 @@ function PolicyForm(props: {
       <form
         onSubmit={form.handleSubmit((value) => {
           if (props.canWrite) {
+            if (
+              value.blocked_action === 'reroute' &&
+              !channels.some(
+                (channel) =>
+                  channel.id === value.fallback_channel_id &&
+                  channel.status === 1
+              )
+            ) {
+              form.setError('fallback_channel_id', { type: 'validate' })
+              return
+            }
             mutation.reset()
             setPending(value)
           }
@@ -185,6 +222,74 @@ function PolicyForm(props: {
               </NativeSelectOption>
             </NativeSelect>
           </label>
+          <label className='grid gap-1.5 text-sm'>
+            {t('Action for blocked sessions')}
+            <NativeSelect
+              className='w-full'
+              {...form.register('blocked_action')}
+            >
+              <NativeSelectOption value='block'>
+                {t('Block request')}
+              </NativeSelectOption>
+              <NativeSelectOption value='reroute'>
+                {t('Route to fallback channel')}
+              </NativeSelectOption>
+            </NativeSelect>
+          </label>
+          {blockedAction === 'reroute' && (
+            <div className='grid gap-1.5 text-sm'>
+              <label className='grid gap-1.5'>
+                {t('Fallback channel')}
+                <NativeSelect
+                  className='w-full'
+                  aria-invalid={!!errors.fallback_channel_id}
+                  {...form.register('fallback_channel_id', {
+                    valueAsNumber: true,
+                  })}
+                >
+                  <NativeSelectOption value='0'>
+                    {t('Select a channel')}
+                  </NativeSelectOption>
+                  {!channels.some(
+                    (channel) => channel.id === props.policy.fallback_channel_id
+                  ) &&
+                    !!props.policy.fallback_channel_id && (
+                      <NativeSelectOption
+                        value={props.policy.fallback_channel_id}
+                        disabled
+                      >
+                        #{props.policy.fallback_channel_id}
+                      </NativeSelectOption>
+                    )}
+                  {channels.map((channel) => (
+                    <NativeSelectOption
+                      key={channel.id}
+                      value={channel.id}
+                      disabled={channel.status !== 1}
+                    >
+                      #{channel.id} {channel.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </label>
+              {props.canWrite && channelsQuery.isPending && <LoadingState />}
+              {channelsQuery.isError && (
+                <ErrorState
+                  description={getServerErrorMessage(channelsQuery.error)}
+                  onRetry={() => void channelsQuery.refetch()}
+                />
+              )}
+              {channelsQuery.isSuccess &&
+                !channels.some((channel) => channel.status === 1) && (
+                  <span>{t('No available channels')}</span>
+                )}
+              {errors.fallback_channel_id && (
+                <span className='text-destructive'>
+                  {t('Select an enabled fallback channel')}
+                </span>
+              )}
+            </div>
+          )}
           {scope === 'token' && (
             <label className='grid gap-1.5 text-sm sm:col-span-2'>
               {t('Token IDs')}
@@ -267,7 +372,13 @@ function PolicyForm(props: {
           if (!open && !mutation.isPending) setPending(null)
         }}
         title={t('Save Cyber policy?')}
-        desc={t('The new policy applies to new requests without a restart.')}
+        desc={
+          pending?.blocked_action === 'reroute'
+            ? t(
+                'Request context will be sent to the fallback upstream. Costs, latency and model behavior may change. Stateful continuations may require independent context.'
+              )
+            : t('The new policy applies to new requests without a restart.')
+        }
         confirmText={t('Save')}
         isLoading={mutation.isPending}
         handleConfirm={() => {

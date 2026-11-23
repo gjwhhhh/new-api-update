@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"unicode/utf8"
 
@@ -60,7 +61,16 @@ func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string,
 	c.Set(relaySensitiveScopeKey, scope)
 	code := types.ErrorCodeSensitiveWordsDetected
 	RequestPolicy(c).AddEvent(PolicyEvent{ChannelID: channelID, ErrorCode: string(code), ErrorSource: "local", Decision: PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
-	return types.NewError(errors.New("Request rejected by the local sensitive word policy"), code, types.ErrOptionWithSkipRetry())
+	// Keep the local rule for logs and audit. Clients receive the policy error
+	// shape that Codex recognizes: HTTP 400 with code cyber_policy.
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Type: "invalid_request", Code: code,
+		Message: "Request rejected by the local sensitive word policy",
+	}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	clientErr := CyberPolicyError(http.StatusBadRequest).ToOpenAIError()
+	clientErr.Message = "Request rejected by the local sensitive word policy"
+	apiErr.RelayError = clientErr
+	return apiErr
 }
 
 type sensitiveTextPart struct {

@@ -82,8 +82,8 @@ func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
 			request.Header.Set("X-Test-Request-ID", tc.id)
 			response := httptest.NewRecorder()
 			engine.ServeHTTP(response, request)
-			assert.Equal(t, http.StatusInternalServerError, response.Code)
-			assert.Contains(t, response.Body.String(), "sensitive_words_detected")
+			assert.Equal(t, http.StatusBadRequest, response.Code)
+			assert.Contains(t, response.Body.String(), "cyber_policy")
 			assert.NotContains(t, response.Body.String(), word)
 
 			var log model.Log

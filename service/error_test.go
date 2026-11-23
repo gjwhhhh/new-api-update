@@ -191,9 +191,9 @@ func TestCodexHTTPCyberPolicyShapeMatrix(t *testing.T) {
 			wantRecognized: false,
 		},
 		{
-			name:   "current_local_sensitive_500",
-			status: http.StatusInternalServerError, code: "sensitive_words_detected", typ: "new_api_error",
-			wantRecognized: false,
+			name:   "local_sensitive_uses_recognized_shape",
+			status: http.StatusBadRequest, code: "cyber_policy", typ: "invalid_request",
+			wantRecognized: true,
 		},
 		{
 			name:   "400_but_wrong_code",

@@ -357,29 +357,107 @@ describe('request policy settings', () => {
   it.each([
     ['x'.repeat(79), 'Each template must contain at least 80 characters.'],
     ['测'.repeat(2731), 'Each template must not exceed 8 KiB.'],
+    [
+      `${'x'.repeat(80)}\n---\n${'y'.repeat(80)}`,
+      'Use a separate input for each template.',
+    ],
   ])('rejects an invalid template before saving', async (template, message) => {
     await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Add template' })
+    )
     fireEvent.change(
-      await screen.findByRole('textbox', {
-        name: 'Dangerous prompt templates',
+      screen.getByRole('textbox', {
+        name: 'Template 1',
       }),
       { target: { value: template } }
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Template 1' }))
+    expect(screen.getByRole('button', { name: 'Template 1' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
     )
     await userEvent.click(
       screen.getByRole('button', { name: 'Save sensitive words' })
     )
     expect(await screen.findByText(message)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Template 1' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByRole('textbox', { name: 'Template 1' })).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Template 1' })).toHaveFocus()
+    )
     expect(api.patch).not.toHaveBeenCalled()
   })
 
-  it('saves Unicode templates separated by a standalone separator', async () => {
+  it('adding templates expands and focuses separate inputs and saves the compatible format', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    const template = `${'测'.repeat(80)}\n---\n${'界'.repeat(80)}`
-    fireEvent.change(
-      await screen.findByRole('textbox', {
-        name: 'Dangerous prompt templates',
-      }),
-      { target: { value: template } }
+    const first = '测'.repeat(80)
+    const second = '界'.repeat(80)
+    const add = await screen.findByRole('button', { name: 'Add template' })
+    await userEvent.click(add)
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Template 1' })).toHaveFocus()
+    )
+    fireEvent.change(screen.getByRole('textbox', { name: 'Template 1' }), {
+      target: { value: first },
+    })
+    await userEvent.click(add)
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Template 2' })).toHaveFocus()
+    )
+    fireEvent.change(screen.getByRole('textbox', { name: 'Template 2' }), {
+      target: { value: second },
+    })
+    // Empty drafts do not create an empty template in the persisted configuration.
+    await userEvent.click(add)
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: { PromptSimilarityTemplates: `${first}\n---\n${second}` },
+        }
+      )
+    )
+  })
+
+  it('preserves edited and collapsed legacy templates when another template is removed', async () => {
+    const first = 'first '.repeat(20)
+    const second = 'second '.repeat(20)
+    const third = 'third '.repeat(20)
+    const edited = 'edited '.repeat(20).trim()
+    settings.PromptSimilarityTemplates = `  ${first}\r\n  ---  \r\n${second}\r\n---\r\n${third}  `
+    await renderPolicies('/system-settings/request-policies/filtering')
+    expect(
+      await screen.findByRole('textbox', { name: 'Template 1' })
+    ).toHaveValue(first.trim())
+    const secondToggle = screen.getByRole('button', { name: 'Template 2' })
+    expect(secondToggle).toHaveAttribute('aria-expanded', 'false')
+    secondToggle.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(secondToggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Template 2' }), {
+      target: { value: edited },
+    })
+    await userEvent.keyboard(' ')
+    expect(secondToggle).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Remove template 1' })
+    )
+    expect(screen.getByRole('button', { name: 'Add template' })).toHaveFocus()
+    const remaining = screen.getByRole('button', { name: 'Template 1' })
+    expect(remaining).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(remaining)
+    expect(screen.getByRole('textbox', { name: 'Template 1' })).toHaveValue(
+      edited
     )
     await userEvent.click(
       screen.getByRole('button', { name: 'Save sensitive words' })
@@ -388,13 +466,39 @@ describe('request policy settings', () => {
       expect(api.patch).toHaveBeenCalledExactlyOnceWith(
         '/api/option/request_policy',
         {
-          options: { PromptSimilarityTemplates: template },
+          options: {
+            PromptSimilarityTemplates: `${edited}\n---\n${third.trim()}`,
+          },
+        }
+      )
+    )
+  })
+
+  it('removing the last template clears the list only after saving', async () => {
+    settings.PromptSimilarityTemplates = 'existing '.repeat(20)
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Remove template 1' })
+    )
+    expect(
+      screen.queryByRole('textbox', { name: 'Template 1' })
+    ).not.toBeInTheDocument()
+    expect(api.patch).not.toHaveBeenCalled()
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: { PromptSimilarityTemplates: '' },
         }
       )
     )
   })
 
   it('turning filtering off preserves the prompt switch and keyword list', async () => {
+    settings.PromptSimilarityTemplates = `  ${'existing '.repeat(20)}\r\n---\r\n${'another '.repeat(20)}  `
     await renderPolicies('/system-settings/request-policies/filtering')
     await userEvent.click(
       await screen.findByRole('switch', { name: 'Enable filtering' })

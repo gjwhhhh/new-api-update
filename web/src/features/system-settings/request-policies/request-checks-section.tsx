@@ -65,6 +65,7 @@ import {
 } from './api'
 import type { FilteringSettings } from './defaults'
 import { promptTextFilterScopeLabel } from './policy-label'
+import { PromptTemplateEditor } from './prompt-template-editor'
 import { useSavePolicy } from './use-save-policy'
 
 const maxTargets = 100
@@ -135,32 +136,30 @@ const sensitiveSchema = z.object({
     const n = Number(value)
     return Number.isFinite(n) && n >= 0.6 && n <= 0.95
   }, 'Threshold must be between 0.60 and 0.95'),
-  PromptSimilarityTemplates: z
-    .string()
-    .optional()
-    .superRefine((value, ctx) => {
-      const templates = (value ?? '')
-        .replaceAll('\r\n', '\n')
-        .split(/^[^\S\n]*---[^\S\n]*$/m)
-        .map((template) => template.trim())
-        .filter((template) => template.length > 0)
-      for (const template of templates) {
-        if ([...template].length < 80) {
+  PromptSimilarityTemplates: z.array(
+    z.object({
+      text: z.string().superRefine((value, ctx) => {
+        const template = value.trim()
+        if (!template) return
+        if (/^[^\S\n]*---[^\S\n]*$/m.test(template)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Use a separate input for each template.',
+          })
+        } else if ([...template].length < 80) {
           ctx.addIssue({
             code: 'custom',
             message: 'Each template must contain at least 80 characters.',
           })
-          return
-        }
-        if (new TextEncoder().encode(template).byteLength > 8192) {
+        } else if (new TextEncoder().encode(template).byteLength > 8192) {
           ctx.addIssue({
             code: 'custom',
             message: 'Each template must not exceed 8 KiB.',
           })
-          return
         }
-      }
-    }),
+      }),
+    })
+  ),
   PromptRejectMode: z.enum(['sensitive', 'cyber']),
   PromptRejectBanSession: z.boolean(),
   target: z
@@ -193,6 +192,15 @@ const sensitiveSchema = z.object({
 })
 
 type SensitiveFormValues = z.infer<typeof sensitiveSchema>
+
+function serializePromptTemplates(
+  templates: SensitiveFormValues['PromptSimilarityTemplates']
+) {
+  return templates
+    .map((template) => template.text.trim())
+    .filter(Boolean)
+    .join('\n---\n')
+}
 
 function serializeFilterTarget(target: SensitiveFormValues['target']) {
   if (target.scope === null) return undefined
@@ -373,7 +381,14 @@ export function RequestChecksSection({
       SensitiveWords,
       PromptSimilarityEnabled,
       PromptSimilarityThreshold,
-      PromptSimilarityTemplates,
+      PromptSimilarityTemplates: PromptSimilarityTemplates.replaceAll(
+        '\r\n',
+        '\n'
+      )
+        .split(/^[^\S\n]*---[^\S\n]*$/m)
+        .map((text) => text.trim())
+        .filter(Boolean)
+        .map((text) => ({ text })),
       PromptRejectMode,
       PromptRejectBanSession,
       target: parseFilterTarget(PromptTextFilterTarget),
@@ -413,6 +428,7 @@ export function RequestChecksSection({
   const onSubmit = async ({
     target,
     exempt,
+    PromptSimilarityTemplates: templates,
     ...values
   }: SensitiveFormValues) => {
     const options = Object.fromEntries(
@@ -423,6 +439,13 @@ export function RequestChecksSection({
         )
         .map(([key, value]) => [key, String(value ?? '')])
     )
+    const serializedTemplates = serializePromptTemplates(templates)
+    if (
+      serializedTemplates !==
+      serializePromptTemplates(initialValues.PromptSimilarityTemplates)
+    ) {
+      options.PromptSimilarityTemplates = serializedTemplates
+    }
     const serializedTarget = serializeFilterTarget(target)
     if (
       serializedTarget &&
@@ -464,7 +487,9 @@ export function RequestChecksSection({
               form.watch('CheckSensitiveOnPromptEnabled') &&
               (form.watch('SensitiveWords')?.trim() ||
                 (form.watch('PromptSimilarityEnabled') &&
-                  form.watch('PromptSimilarityTemplates')?.trim()))
+                  form
+                    .watch('PromptSimilarityTemplates')
+                    .some((template) => template.text.trim())))
                 ? t(
                     'Prompt text filtering is active with the current form values.'
                   )
@@ -767,30 +792,7 @@ export function RequestChecksSection({
             )}
           />
 
-          <FormField
-            control={form.control}
-            name='PromptSimilarityTemplates'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Dangerous prompt templates')}</FormLabel>
-                <FormControl>
-                  <Textarea
-                    rows={12}
-                    placeholder={t(
-                      'Paste stable prompt fragments. Separate templates with a line that only contains ---.'
-                    )}
-                    {...field}
-                  />
-                </FormControl>
-                <FormDescription>
-                  {t(
-                    'Each template must contain at least 80 characters and at most 8 KiB. Separate templates with a single --- line.'
-                  )}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <PromptTemplateEditor />
         </SettingsForm>
       </Form>
     </SettingsSection>

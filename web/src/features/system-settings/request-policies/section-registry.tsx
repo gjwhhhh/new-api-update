@@ -34,6 +34,11 @@ const POLICY_SECTIONS = [
           SensitiveWords: settings.SensitiveWords,
           PromptTextFilterTarget: settings.PromptTextFilterTarget,
           PromptTextFilterExempt: settings.PromptTextFilterExempt,
+          PromptSimilarityEnabled: settings.PromptSimilarityEnabled,
+          PromptSimilarityThreshold: settings.PromptSimilarityThreshold,
+          PromptSimilarityTemplates: settings.PromptSimilarityTemplates,
+          PromptRejectMode: settings.PromptRejectMode,
+          PromptRejectBanSession: settings.PromptRejectBanSession,
         }}
       />
     ),

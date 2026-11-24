@@ -125,6 +125,13 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			legacy, err := buildPromptTextFilterPolicy(nil)
 			require.NoError(t, err)
 			assert.True(t, legacy.Target.Matches(0, 0), "missing scope preserves global filtering")
+			assert.Equal(t, PromptRejectModeCyber, legacy.NormalizedRejectMode(), "new installations default to Cyber")
+			for _, mode := range []string{PromptRejectModeSensitive, PromptRejectModeCyber} {
+				require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptRejectMode": mode}))
+				loadOptionsFromDatabase()
+				assert.Equal(t, mode, CurrentPromptTextFilterPolicy().NormalizedRejectMode(), "saved rejection modes survive reload")
+			}
+
 			const optionKey = "PromptTextFilterTarget"
 			for _, value := range []string{`null`, `{"scope":"channel"}`, `{"scope":"token","token_ids":[-1]}`, `{"scope":"channel_token","channel_ids":[79]}`, `{"scope":"all","token_ids":[82]}`} {
 				assert.Error(t, UpdateRequestPolicyOptions(map[string]string{optionKey: value}))
@@ -144,23 +151,39 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, target, RequestPolicyOptions()[optionKey])
 			assert.Equal(t, policy.Target, CurrentPromptTextFilterPolicy().Target)
 
-			const exemptKey = "PromptTextFilterExempt"
-			const whitelist = `{"channel_ids":[79],"token_ids":[82]}`
-			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{exemptKey: whitelist}))
+			exemptOptions := map[string]string{"PromptTextFilterExempt": `{"token_ids":[82]}`}
+			require.NoError(t, UpdateRequestPolicyOptions(exemptOptions))
 			exemptPolicy := CurrentPromptTextFilterPolicy()
-			assert.True(t, exemptPolicy.Exempted(79, 83))
-			assert.True(t, exemptPolicy.Exempted(80, 82))
-			assert.False(t, exemptPolicy.Exempted(80, 83))
+			assert.True(t, exemptPolicy.Exempted(79, 82))
+			assert.False(t, exemptPolicy.Exempted(79, 83))
 			overLimit := `{"token_ids":[` + strings.Repeat("1,", MaxPromptFilterTargets) + `1]}`
 			for _, invalid := range []string{`{`, `{"token_ids":[0]}`, overLimit} {
-				require.Error(t, UpdateRequestPolicyOptions(map[string]string{exemptKey: invalid}))
+				require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptTextFilterExempt": invalid}))
 				assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
 			}
+			for _, invalid := range []string{"NaN", "+Inf", "-Inf", "0.59", "0.96"} {
+				require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityThreshold": invalid}))
+				assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			}
+			require.False(t, exemptPolicy.BanSession, "old settings do not opt into session bans")
+			require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptRejectBanSession": "invalid"}))
+			assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplates": strings.Repeat("x", 8193)}))
+			assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptRejectBanSession": "true"}))
 			loadOptionsFromDatabase()
-			assert.Equal(t, whitelist, RequestPolicyOptions()[exemptKey])
-			assert.True(t, CurrentPromptTextFilterPolicy().Exempted(80, 82))
-			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{exemptKey: `{}`}))
-			assert.False(t, CurrentPromptTextFilterPolicy().Exempted(79, 82))
+			loadOptionsFromDatabase()
+			assert.True(t, CurrentPromptTextFilterPolicy().BanSession)
+			assert.Equal(t, "true", RequestPolicyOptions()["PromptRejectBanSession"])
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptRejectBanSession": "false"}))
+			loadOptionsFromDatabase()
+			assert.False(t, CurrentPromptTextFilterPolicy().BanSession)
+			exemptPolicy = CurrentPromptTextFilterPolicy()
+			require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptRejectMode": "invalid"}))
+			assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			loadOptionsFromDatabase()
+			assert.Equal(t, exemptOptions["PromptTextFilterExempt"], RequestPolicyOptions()["PromptTextFilterExempt"])
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptTextFilterExempt": `{}`}))
 
 			const affinityKey = "channel_affinity_setting.rules"
 			const invalidRules = `[{"name":"legacy rule","model_regex":["["]}]`

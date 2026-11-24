@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -34,6 +35,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -43,7 +45,9 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { fetchCyber } from '@/features/usage-logs/cyber/api'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   SettingsForm,
@@ -126,6 +130,39 @@ const sensitiveSchema = z.object({
   CheckSensitiveEnabled: z.boolean(),
   CheckSensitiveOnPromptEnabled: z.boolean(),
   SensitiveWords: z.string().optional(),
+  PromptSimilarityEnabled: z.boolean(),
+  PromptSimilarityThreshold: z.string().refine((value) => {
+    const n = Number(value)
+    return Number.isFinite(n) && n >= 0.6 && n <= 0.95
+  }, 'Threshold must be between 0.60 and 0.95'),
+  PromptSimilarityTemplates: z
+    .string()
+    .optional()
+    .superRefine((value, ctx) => {
+      const templates = (value ?? '')
+        .replaceAll('\r\n', '\n')
+        .split(/^[^\S\n]*---[^\S\n]*$/m)
+        .map((template) => template.trim())
+        .filter((template) => template.length > 0)
+      for (const template of templates) {
+        if ([...template].length < 80) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Each template must contain at least 80 characters.',
+          })
+          return
+        }
+        if (new TextEncoder().encode(template).byteLength > 8192) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Each template must not exceed 8 KiB.',
+          })
+          return
+        }
+      }
+    }),
+  PromptRejectMode: z.enum(['sensitive', 'cyber']),
+  PromptRejectBanSession: z.boolean(),
   target: z
     .object({
       scope: filterScope.nullable(),
@@ -287,18 +324,58 @@ export function RequestChecksSection({
 }: RequestChecksSectionProps) {
   const { t } = useTranslation()
   const updateOption = useSavePolicy()
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const cyberPolicy = useQuery({
+    queryKey: ['cyber', userId, 'policy'],
+    queryFn: ({ signal }) => fetchCyber('policy', undefined, signal),
+    enabled: userId !== undefined,
+    retry: false,
+    meta: { errorToast: false },
+  })
+  let cyberStatus = t('Unable to load the session protection policy.')
+  if (cyberPolicy.isPending) {
+    cyberStatus = t('Loading...')
+  } else if (!cyberPolicy.isError) {
+    switch (cyberPolicy.data.mode) {
+      case 'off':
+        cyberStatus = t(
+          'Session protection is disabled. Local matches will only reject the current request.'
+        )
+        break
+      case 'shadow':
+        cyberStatus = t(
+          'Session protection is in observation mode. Fingerprints are recorded without enforcement.'
+        )
+        break
+      case 'enforce':
+        cyberStatus = t(
+          'Session protection is enforced. Scope, duration and blocked-session action follow the Cyber policy.'
+        )
+        break
+    }
+  }
   const {
     CheckSensitiveEnabled,
     CheckSensitiveOnPromptEnabled,
     SensitiveWords,
     PromptTextFilterTarget,
     PromptTextFilterExempt,
+    PromptSimilarityEnabled,
+    PromptSimilarityThreshold,
+    PromptSimilarityTemplates,
+    PromptRejectMode,
+    PromptRejectBanSession,
   } = defaultValues
   const initialValues = useMemo(
     () => ({
       CheckSensitiveEnabled,
       CheckSensitiveOnPromptEnabled,
       SensitiveWords,
+      PromptSimilarityEnabled,
+      PromptSimilarityThreshold,
+      PromptSimilarityTemplates,
+      PromptRejectMode,
+      PromptRejectBanSession,
       target: parseFilterTarget(PromptTextFilterTarget),
       exempt: parseFilterExempt(PromptTextFilterExempt),
     }),
@@ -308,6 +385,11 @@ export function RequestChecksSection({
       SensitiveWords,
       PromptTextFilterTarget,
       PromptTextFilterExempt,
+      PromptSimilarityEnabled,
+      PromptSimilarityThreshold,
+      PromptSimilarityTemplates,
+      PromptRejectMode,
+      PromptRejectBanSession,
     ]
   )
   const form = useForm<SensitiveFormValues>({
@@ -315,6 +397,10 @@ export function RequestChecksSection({
     defaultValues: initialValues,
   })
   const scope = useWatch({ control: form.control, name: 'target.scope' })
+  const banSession = useWatch({
+    control: form.control,
+    name: 'PromptRejectBanSession',
+  })
   const scopes = filterScopes.map((value) => ({
     value,
     label: promptTextFilterScopeLabel(t, value),
@@ -324,7 +410,11 @@ export function RequestChecksSection({
     form.reset(initialValues)
   }, [initialValues, form])
 
-  const onSubmit = async ({ target, exempt, ...values }: SensitiveFormValues) => {
+  const onSubmit = async ({
+    target,
+    exempt,
+    ...values
+  }: SensitiveFormValues) => {
     const options = Object.fromEntries(
       Object.entries(values)
         .filter(
@@ -372,12 +462,14 @@ export function RequestChecksSection({
             <AlertDescription>
               {form.watch('CheckSensitiveEnabled') &&
               form.watch('CheckSensitiveOnPromptEnabled') &&
-              form.watch('SensitiveWords')?.trim()
+              (form.watch('SensitiveWords')?.trim() ||
+                (form.watch('PromptSimilarityEnabled') &&
+                  form.watch('PromptSimilarityTemplates')?.trim()))
                 ? t(
                     'Prompt text filtering is active with the current form values.'
                   )
                 : t(
-                    'Prompt text filtering needs both switches enabled and a non-empty keyword list.'
+                    'Prompt text filtering needs both switches enabled and either keywords or similarity templates.'
                   )}
             </AlertDescription>
           </Alert>
@@ -544,6 +636,155 @@ export function RequestChecksSection({
                 <FormDescription>
                   {t(
                     'Each line represents one keyword. Leave blank to disable the list but keep the switch states.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='PromptRejectMode'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Local rejection response')}</FormLabel>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={[
+                    { value: 'cyber', label: t('Cyber policy error (403)') },
+                    { value: 'sensitive', label: t('Sensitive word error') },
+                  ]}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value='cyber'>
+                      {t('Cyber policy error (403)')}
+                    </SelectItem>
+                    <SelectItem value='sensitive'>
+                      {t('Sensitive word error')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {t(
+                    'Local rejections are not charged. Session fingerprint bans follow the separate switch and Cyber policy.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <SettingsControlGroup>
+            <FormField
+              control={form.control}
+              name='PromptRejectBanSession'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>
+                      {t('Ban session fingerprint on local rejection')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Apply the Cyber session policy after a local keyword or template match. Requires a request within its scope, a valid session fingerprint and Redis.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+            {banSession && (
+              <SettingsControlChildren>
+                <p className='text-muted-foreground text-sm' aria-live='polite'>
+                  {cyberStatus}
+                </p>
+                <Link
+                  to='/usage-logs/cyber'
+                  className='text-primary text-sm underline underline-offset-4'
+                >
+                  {t('Configure Cyber policy')}
+                </Link>
+              </SettingsControlChildren>
+            )}
+          </SettingsControlGroup>
+
+          <SettingsControlGroup>
+            <FormField
+              control={form.control}
+              name='PromptSimilarityEnabled'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>
+                      {t('Enable template similarity matching')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Reject requests that closely contain a configured dangerous prompt template.'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+          </SettingsControlGroup>
+
+          <FormField
+            control={form.control}
+            name='PromptSimilarityThreshold'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Similarity threshold')}</FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Containment score from 0.60 to 0.95. Default 0.80. Higher values reduce false positives.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='PromptSimilarityTemplates'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Dangerous prompt templates')}</FormLabel>
+                <FormControl>
+                  <Textarea
+                    rows={12}
+                    placeholder={t(
+                      'Paste stable prompt fragments. Separate templates with a line that only contains ---.'
+                    )}
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Each template must contain at least 80 characters and at most 8 KiB. Separate templates with a single --- line.'
                   )}
                 </FormDescription>
                 <FormMessage />

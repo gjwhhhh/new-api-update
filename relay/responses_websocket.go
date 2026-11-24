@@ -222,17 +222,20 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 	request.Body = io.NopCloser(bytes.NewReader(message))
 	request.ContentLength = int64(len(message))
 	request.Header.Set("Content-Type", "application/json")
+	localPromptRejected := false
 	apiErr = s.runner(request, requestID, func(c *gin.Context) *types.NewAPIError {
 		if parseErr != nil {
 			return newResponsesWSInvalidRequestError(parseErr)
 		}
-		return s.runCall(c, state, create)
+		err := s.runCall(c, state, create)
+		localPromptRejected = err != nil && err.GetErrorCode() == relaycommon.CyberPolicyCode && service.IsLocalPromptReject(c)
+		return err
 	})
 	if apiErr != nil && service.IsCyberFallbackError(string(apiErr.GetErrorCode())) {
 		state.closeAfter = true
 	}
 	if apiErr != nil && (apiErr.StatusCode == http.StatusUnauthorized ||
-		apiErr.StatusCode == http.StatusForbidden && apiErr.GetErrorCode() != service.CyberSessionBlockedCode) {
+		apiErr.StatusCode == http.StatusForbidden && apiErr.GetErrorCode() != service.CyberSessionBlockedCode && !localPromptRejected) {
 		state.closeAfter = true
 	}
 }

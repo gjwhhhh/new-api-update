@@ -67,7 +67,7 @@ type RelayFailure struct {
 func SetRelayFinalError(c *gin.Context, err *types.NewAPIError) {
 	if err != nil {
 		c.Set(relayFinalErrorKey, err)
-		if err.GetErrorCode() == relaycommon.CyberPolicyCode {
+		if shouldArmCyberSession(c, string(err.GetErrorCode())) {
 			if arm, ok := c.Get(cyberSessionArmKey); ok {
 				arm.(func())()
 			}
@@ -183,9 +183,8 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 			return
 		}
 		counters := relayFailureLogMetrics[failure.Protocol]
-		isCyber := failure.Code == relaycommon.CyberPolicyCode
 		_, localSensitive := RelayPromptSensitiveMatch(c)
-		localSensitive = localSensitive && failure.Code == string(types.ErrorCodeSensitiveWordsDetected)
+		isCyber := failure.Code == relaycommon.CyberPolicyCode && !localSensitive
 		if isCyber {
 			counters.cyber.Add(1)
 		} else if !localSensitive && failure.Code != CyberSessionBlockedCode && !IsCyberFallback(c) && !IsCyberFallbackError(failure.Code) && !constant.ErrorLogEnabled {
@@ -206,7 +205,7 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 		AppendRelayLogAdminInfo(c, nil, other)
 		if guard, ok := c.Get(cyberSessionLogKey); ok {
 			other.SetAdmin("cyber_session_guard", guard)
-		} else if isCyber {
+		} else if isCyber || localSensitive {
 			reason := c.GetString(cyberSessionSkipKey)
 			if reason == "" {
 				reason = "unsupported_request"
@@ -230,7 +229,9 @@ func RelayFailureLog(protocol string) gin.HandlerFunc {
 			elapsed = max(0, int(time.Since(started).Seconds()))
 		}
 		message := fmt.Sprintf("Relay request failed (%s)", failure.Code)
-		if isCyber {
+		if localSensitive {
+			message = fmt.Sprintf("Request rejected by the local prompt text filter (%s)", failure.Code)
+		} else if isCyber {
 			message = "Request rejected by an upstream content policy (cyber_policy)"
 		}
 		logCode := failure.Code

@@ -73,7 +73,7 @@
       </table>
       <div class="pager"><button class="secondary" id="previous" type="button">上一页</button><span id="page">第 1 页</span><button class="secondary" id="next" type="button">下一页</button></div>
     </main>
-    <dialog id="detail"><div class="dialog-head"><h2>会话详情</h2><button class="secondary" id="close" type="button">关闭</button></div><p id="meta"></p><section id="sensitiveMatch" hidden><h3>本地敏感词命中</h3><pre id="sensitiveMatchText"></pre></section><h3>请求</h3><pre id="request"></pre><h3>回复</h3><pre id="response"></pre></dialog>
+    <dialog id="detail"><div class="dialog-head"><h2>会话详情</h2><button class="secondary" id="close" type="button">关闭</button></div><p id="meta"></p><section id="sensitiveMatch" hidden><h3>网关本地文本拦截</h3><pre id="sensitiveMatchText"></pre></section><h3>请求</h3><pre id="request"></pre><h3>回复</h3><pre id="response"></pre></dialog>
     <script>
       const state = { page: 1, total: 0, pageSize: 20, accessToken: '' };
       const rows = document.getElementById('rows');
@@ -185,6 +185,8 @@
         const noBodyNote = !payload.data.request && !payload.data.response && !responsePartCount && payload.data.audit.capture_error ? ` · 无正文 (${payload.data.audit.capture_error})` : '';
         document.getElementById('meta').textContent = `${payload.data.audit.username} · ${payload.data.audit.model_name} · ${payload.data.audit.request_id}${failureNote}${fullPayloadNote}${mergeNote}${truncation ? ` · ${truncation}` : ''}${noBodyNote}`;
         const match = payload.data.local_sensitive_match;
+        const similarity = match?.rule === 'local_prompt_template_similarity';
+        const hasRequestEvidence = match?.content && (!similarity || match.template_id);
         const sourceLabels = {
           current_user_text: '本轮用户文本', input_context: '请求携带的上下文', tool_context: '工具调用或结果',
           instructions: '指令', metadata: '元数据', text_settings: '文本设置', tool_choice: '工具选择',
@@ -194,11 +196,12 @@
         document.getElementById('sensitiveMatchText').textContent = match
           ? [
               `规则：${match.rule}`,
-              `命中词：${match.word}${match.truncated ? '（已截断）' : ''}`,
-              `来源：${Object.hasOwn(sourceLabels, match.source) ? sourceLabels[match.source] : '未知'}（命中内容不一定等于本轮用户输入）`,
-              match.content
-                ? `命中内容${match.content_truncated ? '（已截断）' : ''}：\n${match.content}`
-                : '命中内容：无',
+              similarity ? `模板标识：${match.template_id || '未记录'}` : `命中词：${match.word}${match.truncated ? '（已截断）' : ''}`,
+              ...(similarity && Number.isFinite(match.score) ? [`相似度：${(match.score * 100).toFixed(1)}%`] : []),
+              `来源：${hasRequestEvidence && Object.hasOwn(sourceLabels, match.source) ? sourceLabels[match.source] : '未知'}`,
+              hasRequestEvidence
+                ? `请求证据${match.content_truncated ? '（已截断）' : ''}：\n${match.content}`
+                : '请求证据：未定位',
             ].join('\n')
           : '';
         document.getElementById('request').textContent = fullPayload ? rawPayloadText(payload.data.request) : auditText(payload.data.request, 'user_input');

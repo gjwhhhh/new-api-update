@@ -1,12 +1,18 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/promptsim"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting"
@@ -14,15 +20,25 @@ import (
 )
 
 const relaySensitiveMatchKey = "relay_sensitive_match"
+const relaySensitiveBanSessionKey = "relay_sensitive_ban_session"
+
+func LocalPromptCyberError() *types.NewAPIError {
+	return types.WithOpenAIError(types.OpenAIError{
+		Type: "content_policy_violation", Code: relaycommon.CyberPolicyCode,
+		Message: "Request rejected by the gateway's local content policy",
+	}, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+}
 
 // RelaySensitiveMatch is private request evidence. Never attach it to usage logs or client errors.
 type RelaySensitiveMatch struct {
-	Rule             string `json:"rule"`
-	Word             string `json:"word"`
-	Source           string `json:"source"`
-	Content          string `json:"content,omitempty"`
-	Truncated        bool   `json:"truncated,omitempty"`
-	ContentTruncated bool   `json:"content_truncated,omitempty"`
+	Rule             string  `json:"rule"`
+	Word             string  `json:"word,omitempty"`
+	TemplateID       string  `json:"template_id,omitempty"`
+	Source           string  `json:"source"`
+	Content          string  `json:"content,omitempty"`
+	Score            float64 `json:"score,omitempty"`
+	Truncated        bool    `json:"truncated,omitempty"`
+	ContentTruncated bool    `json:"content_truncated,omitempty"`
 }
 
 const relaySensitiveScopeKey = "relay_sensitive_scope"
@@ -37,15 +53,47 @@ func RelayPromptSensitiveMatch(c *gin.Context) (RelaySensitiveMatch, bool) {
 	return match, ok
 }
 
-func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string, keywords []string, scope string, channelID int) *types.NewAPIError {
-	matched, words := AcSearch(strings.ToLower(text), keywords, true)
-	if !matched {
+func IsLocalPromptReject(c *gin.Context) bool {
+	_, ok := RelayPromptSensitiveMatch(c)
+	return ok
+}
+
+func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string, policy *model.PromptTextFilterPolicy, channelID int) *types.NewAPIError {
+	if policy == nil || !policy.ShouldScan() {
 		return nil
 	}
-	match := RelaySensitiveMatch{Rule: "local_prompt_sensitive_words", Word: words[0], Source: "unknown"}
-	if responses, ok := request.(*dto.OpenAIResponsesRequest); ok {
-		match.Source, match.Content = responsesSensitiveMatch(responses, text, match.Word)
+	if len(policy.Keywords) > 0 {
+		matched, words := AcSearch(strings.ToLower(text), policy.Keywords, true)
+		if matched {
+			match := RelaySensitiveMatch{Rule: "local_prompt_sensitive_words", Word: words[0], Source: "unknown"}
+			if responses, ok := request.(*dto.OpenAIResponsesRequest); ok {
+				match.Source, match.Content = responsesSensitiveMatch(responses, text, match.Word)
+			}
+			return finishLocalPromptReject(c, match, policy, channelID)
+		}
 	}
+	if policy.SimilarityEnabled && len(policy.SimilarityTemplates) > 0 {
+		hit, ok := promptsim.BestMatch(text, policy.SimilarityTemplates, policy.SimilarityThreshold, promptsim.DefaultNGram)
+		if ok {
+			digest := sha256.Sum256([]byte(hit.Text))
+			match := RelaySensitiveMatch{
+				Rule:       "local_prompt_template_similarity",
+				TemplateID: fmt.Sprintf("%x", digest[:8]),
+				Source:     "unknown",
+				Score:      hit.Score,
+			}
+			// An aggregate similarity score does not identify a request span.
+			// Only attribute a literal, whole-template match within the scanned text.
+			if responses, ok := request.(*dto.OpenAIResponsesRequest); ok && strings.Contains(strings.ToLower(text), strings.ToLower(hit.Text)) {
+				match.Source, match.Content = responsesSensitiveMatch(responses, text, hit.Text)
+			}
+			return finishLocalPromptReject(c, match, policy, channelID)
+		}
+	}
+	return nil
+}
+
+func finishLocalPromptReject(c *gin.Context, match RelaySensitiveMatch, policy *model.PromptTextFilterPolicy, channelID int) *types.NewAPIError {
 	for i := range match.Word {
 		if i >= 120 {
 			match.Word, match.Truncated = match.Word[:i], true
@@ -57,10 +105,24 @@ func CheckRelayPromptSensitive(c *gin.Context, request dto.Request, text string,
 		match.ContentTruncated = true
 	}
 	c.Set(relaySensitiveMatchKey, match)
-	c.Set(relaySensitiveScopeKey, scope)
-	code := types.ErrorCodeSensitiveWordsDetected
-	RequestPolicy(c).AddEvent(PolicyEvent{ChannelID: channelID, ErrorCode: string(code), ErrorSource: "local", Decision: PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
-	return types.NewError(errors.New("Request rejected by the local sensitive word policy"), code, types.ErrOptionWithSkipRetry())
+	c.Set(relaySensitiveScopeKey, policy.Target.Scope)
+	// Keep the decision from the policy that actually matched this request.
+	c.Set(relaySensitiveBanSessionKey, policy.BanSession)
+	if !policy.BanSession {
+		c.Set(cyberSessionSkipKey, "local_prompt_ban_disabled")
+	}
+	apiErr := LocalPromptCyberError()
+	if policy.NormalizedRejectMode() == model.PromptRejectModeSensitive {
+		apiErr = types.NewError(errors.New("Request rejected by the local sensitive word policy"), types.ErrorCodeSensitiveWordsDetected, types.ErrOptionWithSkipRetry())
+	}
+	RequestPolicy(c).AddEvent(PolicyEvent{
+		ChannelID:   channelID,
+		ErrorCode:   string(apiErr.GetErrorCode()),
+		ErrorSource: "local",
+		Decision:    PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"},
+		Health:      "unchanged",
+	})
+	return apiErr
 }
 
 type sensitiveTextPart struct {
@@ -204,10 +266,8 @@ func CheckSensitiveMessages(messages []dto.Message) ([]string, error) {
 		arrayContent := message.ParseContent()
 		for _, m := range arrayContent {
 			if m.Type == "image_url" {
-				// TODO: check image url
 				continue
 			}
-			// 检查 text 是否为空
 			if m.Text == "" {
 				continue
 			}

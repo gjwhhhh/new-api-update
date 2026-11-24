@@ -24,7 +24,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import type { CyberPolicy } from '../api'
+import { fetchCyber, type CyberPolicy } from '../api'
 import { CyberBans } from '../CyberBans'
 import { CyberEvents } from '../CyberEvents'
 import { CyberPolicySettings } from '../CyberPolicySettings'
@@ -283,4 +283,28 @@ it('defaults Cyber full payload capture on and persists an explicit off selectio
       name: 'Record full Cyber requests and responses',
     })
   ).not.toBeChecked()
+})
+
+it('loads the policy with a fresh signal after an earlier mount cancels its request', async () => {
+  const adapter = api.defaults.adapter
+  api.defaults.adapter = async (config) => ({
+    config,
+    data: { success: true, data: policy },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+  })
+  try {
+    const firstMount = new AbortController()
+    const first = fetchCyber('policy', undefined, firstMount.signal)
+    const canceled = expect(first).rejects.toMatchObject({
+      code: 'ERR_CANCELED',
+    })
+    firstMount.abort()
+    const next = fetchCyber('policy', undefined, new AbortController().signal)
+    await canceled
+    await expect(next).resolves.toEqual(policy)
+  } finally {
+    api.defaults.adapter = adapter
+  }
 })

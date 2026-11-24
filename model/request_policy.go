@@ -58,6 +58,11 @@ func requestPolicyDefaultOptions() map[string]string {
 	defaults["SensitiveWords"] = setting.SensitiveWordsToString()
 	defaults["PromptTextFilterTarget"] = `{"scope":"all"}`
 	defaults["PromptTextFilterExempt"] = `{}`
+	defaults["PromptSimilarityEnabled"] = "false"
+	defaults["PromptSimilarityThreshold"] = "0.80"
+	defaults["PromptSimilarityTemplates"] = ""
+	defaults["PromptRejectMode"] = PromptRejectModeCyber
+	defaults["PromptRejectBanSession"] = "false"
 	defaults["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	defaults["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	return defaults

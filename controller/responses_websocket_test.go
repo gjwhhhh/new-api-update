@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -667,6 +668,7 @@ func TestResponsesPromptTextFilterChecksActualChannelAndNewTurns(t *testing.T) {
 		require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{
 			"CheckSensitiveEnabled": "true", "CheckSensitiveOnPromptEnabled": "true",
 			"SensitiveWords": word, "RetryTimes": "1", "AutomaticRetryStatusCodes": "503",
+			"PromptRejectMode":       model.PromptRejectModeSensitive,
 			"PromptTextFilterTarget": fmt.Sprintf(`{"scope":"channel_token","channel_ids":[%d],"token_ids":[%d]}`, channelID, fixture.token.Id),
 		}))
 	}
@@ -684,6 +686,13 @@ func TestResponsesPromptTextFilterChecksActualChannelAndNewTurns(t *testing.T) {
 	require.IsType(t, map[string]any{}, rejection["error"])
 	assert.Equal(t, "sensitive_words_detected", rejection["error"].(map[string]any)["code"])
 	assert.NotContains(t, fmt.Sprint(rejection), word)
+	require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"PromptRejectMode": model.PromptRejectModeCyber}))
+	localCyber := wsRequest(word)
+	require.Equal(t, "error", localCyber["type"])
+	errorBody, ok := localCyber["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, relaycommon.CyberPolicyCode, errorBody["code"])
+	assert.Contains(t, errorBody["message"], "gateway")
 	require.Equal(t, "response.completed", wsRequest("clean")["type"], "a local rejection must not poison the connection")
 	assert.EqualValues(t, 2, wsCalls.Load())
 
@@ -718,6 +727,168 @@ func TestResponsesPromptTextFilterChecksActualChannelAndNewTurns(t *testing.T) {
 		assert.NoError(collect, model.DB.First(&token, fixture.token.Id).Error)
 		assert.Equal(collect, 1000, token.RemainQuota, "only the two successful turns should be charged")
 	}, 3*time.Second, 10*time.Millisecond)
+}
+
+func TestResponsesLocalPromptBanAcrossHTTPAndWebSocket(t *testing.T) {
+	const session = "019b0ac1-fbc3-7300-876a-d85d2b89c897"
+	const otherSession = "019b0ac1-fbc3-7300-876a-d85d2b89c898"
+	const completed = `{"type":"response.completed","response":{"id":"clean","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`
+	for _, tc := range []struct {
+		name, mode, response string
+		ban, blocked         bool
+	}{
+		{"switch disabled", "enforce", model.PromptRejectModeCyber, false, false},
+		{"temporary ban", "enforce", model.PromptRejectModeCyber, true, true},
+		{"HTTP trigger", "enforce", model.PromptRejectModeCyber, true, true},
+		{"sensitive response", "enforce", model.PromptRejectModeSensitive, true, true},
+		{"guard disabled", "off", model.PromptRejectModeCyber, true, false},
+		{"observation only", "shadow", model.PromptRejectModeCyber, true, false},
+		{"token out of scope", "enforce", model.PromptRejectModeCyber, true, false},
+		{"missing fingerprint", "enforce", model.PromptRejectModeCyber, true, false},
+		{"redis write failure", "enforce", model.PromptRejectModeCyber, true, false},
+		{"template match", "enforce", model.PromptRejectModeCyber, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var upstreamCalls atomic.Int32
+			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
+				for {
+					if _, _, err := ws.ReadMessage(); err != nil {
+						return
+					}
+					event := strings.Replace(completed, `"clean"`, fmt.Sprintf(`"clean-%d"`, upstreamCalls.Add(1)), 1)
+					if err := ws.WriteMessage(websocket.TextMessage, []byte(event)); err != nil {
+						return
+					}
+				}
+			}, completed)
+			require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+			common.OptionMapRWMutex.Lock()
+			previousOptions := common.OptionMap
+			common.OptionMap = map[string]string{}
+			common.OptionMapRWMutex.Unlock()
+			t.Cleanup(func() {
+				common.OptionMapRWMutex.Lock()
+				common.OptionMap = previousOptions
+				common.OptionMapRWMutex.Unlock()
+				service.InitCyberSessionGuard()
+			})
+			previousPolicy := model.RequestPolicyOptions()
+			t.Cleanup(func() { require.NoError(t, model.UpdateRequestPolicyOptions(previousPolicy)) })
+			tokenID := fixture.token.Id
+			if tc.name == "token out of scope" {
+				tokenID++
+			}
+			ttl := 0
+			if tc.name == "temporary ban" || tc.mode == "shadow" {
+				ttl = 60
+			}
+			cyberPolicy := fmt.Sprintf(`{"mode":%q,"scope":"token","token_ids":[%d],"ttl_seconds":%d}`, tc.mode, tokenID, ttl)
+			require.NoError(t, model.UpdateOption(operation_setting.CyberPolicyOptionKey, cyberPolicy))
+			input := "fixture-local-ban"
+			options := map[string]string{
+				"CheckSensitiveEnabled": "true", "CheckSensitiveOnPromptEnabled": "true",
+				"SensitiveWords": input, "PromptRejectMode": tc.response,
+				"PromptRejectBanSession":  strconv.FormatBool(tc.ban),
+				"PromptSimilarityEnabled": "false", "PromptSimilarityTemplates": "",
+				"PromptTextFilterTarget": `{"scope":"all"}`, "PromptTextFilterExempt": `{}`,
+			}
+			if tc.name == "template match" {
+				input = strings.Repeat("Stable dangerous template phrase for gateway tests. ", 3)
+				options["SensitiveWords"] = ""
+				options["PromptSimilarityEnabled"] = "true"
+				options["PromptSimilarityTemplates"] = input
+			}
+			require.NoError(t, model.UpdateRequestPolicyOptions(options))
+			key := session
+			if tc.name == "missing fingerprint" {
+				key = ""
+			}
+			if tc.name == "redis write failure" {
+				fixture.redisServer.SetError("ERR simulated Redis outage")
+			}
+			wsTurn := func(client *websocket.Conn, prompt, cacheKey string) map[string]any {
+				t.Helper()
+				body := fmt.Sprintf(`{"type":"response.create","model":"ws-billing","input":%q,"prompt_cache_key":%q}`, prompt, cacheKey)
+				require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(body)))
+				return readResponsesWSTestEvent(t, client)
+			}
+			post := func(prompt, cacheKey string) (int, string) {
+				t.Helper()
+				payload := fmt.Sprintf(`{"model":"ws-billing","input":%q,"stream":true,"prompt_cache_key":%q}`, prompt, cacheKey)
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(payload))
+				require.NoError(t, err)
+				request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+				request.Header.Set("Content-Type", "application/json")
+				response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
+				require.NoError(t, err)
+				body, err := io.ReadAll(response.Body)
+				require.NoError(t, err)
+				require.NoError(t, response.Body.Close())
+				return response.StatusCode, string(body)
+			}
+			metricsBefore := service.CyberSessionGuardMetrics()
+			if tc.name == "HTTP trigger" {
+				status, body := post(input, key)
+				assert.Equal(t, http.StatusForbidden, status)
+				assert.Contains(t, body, `"code":"cyber_policy"`)
+				<-fixture.httpDone
+			} else {
+				rejected := wsTurn(fixture.client, input, key)
+				require.Equal(t, "error", rejected["type"])
+				wantCode := "cyber_policy"
+				if tc.response == model.PromptRejectModeSensitive {
+					wantCode = "sensitive_words_detected"
+				}
+				assert.Equal(t, wantCode, rejected["error"].(map[string]any)["code"])
+			}
+			var token model.Token
+			require.NoError(t, model.DB.First(&token, fixture.token.Id).Error)
+			assert.Equal(t, 3000, token.RemainQuota, "local rejection must not charge the token")
+			assert.Zero(t, upstreamCalls.Load(), "local rejection must not reach upstream")
+			if tc.name == "redis write failure" {
+				fixture.redisServer.SetError("")
+			}
+			// Turning the local switch off must not revoke an existing ban.
+			require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"PromptRejectBanSession": "false"}))
+			next := wsTurn(fixture.client, "clean", key)
+			if tc.blocked {
+				assert.Equal(t, float64(http.StatusForbidden), next["status"])
+			} else {
+				assert.Equal(t, "response.completed", next["type"])
+			}
+			status, _ := post("clean", key)
+			if tc.blocked {
+				assert.Equal(t, http.StatusForbidden, status)
+				assert.Zero(t, fixture.connections.Load(), "a banned round must not open an upstream socket")
+			} else {
+				assert.Equal(t, http.StatusOK, status)
+			}
+
+			bans, _, err := service.ListCyberBans(t.Context(), 0)
+			require.NoError(t, err)
+			if tc.blocked {
+				require.Len(t, bans, 1)
+				assert.Equal(t, ttl == 0, bans[0].Permanent)
+			} else {
+				assert.Empty(t, bans)
+			}
+			if tc.mode == "shadow" {
+				assert.Equal(t, metricsBefore["would_block"].(uint64)+2, service.CyberSessionGuardMetrics()["would_block"])
+			}
+			if tc.blocked {
+				client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(fixture.gatewayURL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer sk-" + fixture.token.Key}})
+				require.NoError(t, err)
+				require.Equal(t, float64(http.StatusForbidden), wsTurn(client, "clean", key)["status"], "reconnecting must not bypass a ban")
+				require.NoError(t, client.Close())
+				assert.Equal(t, "response.completed", wsTurn(fixture.client, "clean", otherSession)["type"])
+				if ttl > 0 {
+					fixture.redisServer.FastForward(time.Minute)
+					assert.Equal(t, "response.completed", wsTurn(fixture.client, "clean", key)["type"])
+				}
+			}
+			fixture.closeAndWait(t)
+		})
+	}
 }
 
 func TestResponsesInterruptedStreamHealth(t *testing.T) {

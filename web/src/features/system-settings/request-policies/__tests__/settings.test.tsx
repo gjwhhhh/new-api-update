@@ -41,6 +41,7 @@ import { Route as OperationsRoute } from '@/routes/_authenticated/system-setting
 import { Route as PoliciesRoute } from '@/routes/_authenticated/system-settings/request-policies/$section'
 import { Route as PolicyIndexRoute } from '@/routes/_authenticated/system-settings/request-policies/index'
 import { Route as SecurityRoute } from '@/routes/_authenticated/system-settings/security/$section'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { RequestPolicies } from '..'
 import {
@@ -52,6 +53,7 @@ type PolicyBeforeLoad = (context: { params: { section: string } }) => void
 
 let queryClient: QueryClient
 let settings: RequestPolicySettings
+let guardMode: 'off' | 'shadow' | 'enforce' | 'error'
 
 function optionsResponse() {
   return {
@@ -112,6 +114,8 @@ async function renderPolicies(path: string) {
 }
 
 beforeEach(() => {
+  guardMode = 'enforce'
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -148,6 +152,20 @@ beforeEach(() => {
     },
   })
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+    if (url === '/api/cyber/policy') {
+      if (guardMode === 'error') throw new Error('Policy unavailable')
+      return {
+        data: {
+          success: true,
+          data: {
+            mode: guardMode,
+            scope: 'all',
+            ttl_seconds: 600,
+            blocked_action: 'block',
+          },
+        },
+      }
+    }
     if (url === '/api/option/') return { data: optionsResponse() }
     if (url === '/api/option/request_policy/filter_targets') {
       const params: URLSearchParams = config?.params
@@ -208,6 +226,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   queryClient.clear()
+  useAuthStore.getState().auth.setUser(null)
 })
 
 describe('request policy settings', () => {
@@ -254,6 +273,126 @@ describe('request policy settings', () => {
       )
     }
   )
+
+  it.each([false, true])(
+    'saving the local ban switch from %s preserves the response mode',
+    async (initial) => {
+      settings.PromptRejectBanSession = initial
+      settings.PromptRejectMode = 'sensitive'
+      await renderPolicies('/system-settings/request-policies/filtering')
+      const toggle = await screen.findByRole('switch', {
+        name: 'Ban session fingerprint on local rejection',
+      })
+      expect(toggle).toHaveAttribute('aria-checked', String(initial))
+      await userEvent.click(toggle)
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Save sensitive words' })
+      )
+      await waitFor(() =>
+        expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+          '/api/option/request_policy',
+          {
+            options: { PromptRejectBanSession: String(!initial) },
+          }
+        )
+      )
+    }
+  )
+
+  it('defaults to Cyber and can save the sensitive response without enabling a ban', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const response = await screen.findByRole('combobox', {
+      name: 'Local rejection response',
+    })
+    expect(response).toHaveTextContent('Cyber policy error (403)')
+    await userEvent.click(response)
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'Sensitive word error' })
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: { PromptRejectMode: 'sensitive' },
+        }
+      )
+    )
+  })
+
+  it.each([
+    [
+      'off',
+      'Session protection is disabled. Local matches will only reject the current request.',
+    ],
+    [
+      'shadow',
+      'Session protection is in observation mode. Fingerprints are recorded without enforcement.',
+    ],
+    [
+      'enforce',
+      'Session protection is enforced. Scope, duration and blocked-session action follow the Cyber policy.',
+    ],
+    ['error', 'Unable to load the session protection policy.'],
+  ] as const)(
+    'when the guard is %s, enabling the local ban switch displays the actual status',
+    async (mode, status) => {
+      guardMode = mode
+      await renderPolicies('/system-settings/request-policies/filtering')
+      expect(screen.queryByText(status)).not.toBeInTheDocument()
+      await userEvent.click(
+        await screen.findByRole('switch', {
+          name: 'Ban session fingerprint on local rejection',
+        })
+      )
+      expect(await screen.findByText(status)).toBeVisible()
+      expect(
+        screen.getByRole('link', { name: 'Configure Cyber policy' })
+      ).toHaveAttribute('href', '/usage-logs/cyber')
+    }
+  )
+
+  it.each([
+    ['x'.repeat(79), 'Each template must contain at least 80 characters.'],
+    ['测'.repeat(2731), 'Each template must not exceed 8 KiB.'],
+  ])('rejects an invalid template before saving', async (template, message) => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    fireEvent.change(
+      await screen.findByRole('textbox', {
+        name: 'Dangerous prompt templates',
+      }),
+      { target: { value: template } }
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('saves Unicode templates separated by a standalone separator', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const template = `${'测'.repeat(80)}\n---\n${'界'.repeat(80)}`
+    fireEvent.change(
+      await screen.findByRole('textbox', {
+        name: 'Dangerous prompt templates',
+      }),
+      { target: { value: template } }
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: { PromptSimilarityTemplates: template },
+        }
+      )
+    )
+  })
 
   it('turning filtering off preserves the prompt switch and keyword list', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')

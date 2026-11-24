@@ -3,27 +3,65 @@ package model
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/promptsim"
 )
 
 const MaxPromptFilterTargets = 100
 
+const (
+	PromptRejectModeSensitive = "sensitive"
+	PromptRejectModeCyber     = "cyber"
+)
+
 // PromptTextFilterPolicy is independent of channel routing and health policy.
 type PromptTextFilterPolicy struct {
-	Enabled  bool
-	Keywords []string
-	Target   PromptTextFilterTarget
-	Exempt   PromptTextFilterExempt
+	Enabled             bool
+	Keywords            []string
+	Target              PromptTextFilterTarget
+	SimilarityEnabled   bool
+	SimilarityThreshold float64
+	SimilarityTemplates []promptsim.Template
+	RejectMode          string
+	BanSession          bool
+	Exempt              PromptTextFilterExempt
 }
 
-// Exempted reports whether the channel or token is exempt from prompt filtering.
+func (p *PromptTextFilterPolicy) ShouldScan() bool {
+	if p == nil || !p.Enabled {
+		return false
+	}
+	if len(p.Keywords) > 0 {
+		return true
+	}
+	return p.SimilarityEnabled && len(p.SimilarityTemplates) > 0
+}
+
+func (p *PromptTextFilterPolicy) NormalizedRejectMode() string {
+	if p == nil {
+		return PromptRejectModeCyber
+	}
+	switch p.RejectMode {
+	case PromptRejectModeSensitive, PromptRejectModeCyber:
+		return p.RejectMode
+	default:
+		return PromptRejectModeCyber
+	}
+}
+
+// Exempted reports whether the request should skip local prompt filtering.
+// Channel and token exemptions use OR matching.
 func (p *PromptTextFilterPolicy) Exempted(channelID, tokenID int) bool {
-	return p != nil && p.Exempt.Matches(channelID, tokenID)
+	if p == nil {
+		return false
+	}
+	return p.Exempt.Matches(channelID, tokenID)
 }
 
 var promptTextFilterPolicy atomic.Pointer[PromptTextFilterPolicy]
@@ -44,7 +82,10 @@ func CurrentPromptTextFilterPolicy() *PromptTextFilterPolicy {
 
 func isPromptTextFilterOption(key string) bool {
 	switch key {
-	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "PromptTextFilterTarget", "PromptTextFilterExempt":
+	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "PromptTextFilterTarget",
+		"PromptTextFilterExempt",
+		"PromptSimilarityEnabled", "PromptSimilarityThreshold", "PromptSimilarityTemplates",
+		"PromptRejectMode", "PromptRejectBanSession":
 		return true
 	default:
 		return false
@@ -59,22 +100,22 @@ func buildPromptTextFilterPolicy(options map[string]string) (*PromptTextFilterPo
 		}
 		return requestPolicyDefaults[key]
 	}
-	for _, key := range []string{"CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled"} {
+	for _, key := range []string{"CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "PromptSimilarityEnabled"} {
 		if _, err := strconv.ParseBool(value(key)); err != nil {
 			return nil, fmt.Errorf("invalid boolean: %s", key)
 		}
 	}
 	policy.Enabled = value("CheckSensitiveEnabled") == "true" && value("CheckSensitiveOnPromptEnabled") == "true"
+	policy.SimilarityEnabled = value("PromptSimilarityEnabled") == "true"
+	banSession, err := strconv.ParseBool(value("PromptRejectBanSession"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid boolean: PromptRejectBanSession")
+	}
+	policy.BanSession = banSession
 	if err := common.UnmarshalJsonStr(value("PromptTextFilterTarget"), &policy.Target); err != nil {
 		return nil, fmt.Errorf("invalid prompt text filter target: %w", err)
 	}
 	if err := policy.Target.validate(); err != nil {
-		return nil, err
-	}
-	if err := common.UnmarshalJsonStr(value("PromptTextFilterExempt"), &policy.Exempt); err != nil {
-		return nil, fmt.Errorf("invalid prompt text filter exempt list: %w", err)
-	}
-	if err := policy.Exempt.validate(); err != nil {
 		return nil, err
 	}
 	for word := range strings.SplitSeq(value("SensitiveWords"), "\n") {
@@ -82,9 +123,33 @@ func buildPromptTextFilterPolicy(options map[string]string) (*PromptTextFilterPo
 			policy.Keywords = append(policy.Keywords, word)
 		}
 	}
+	threshold, err := strconv.ParseFloat(value("PromptSimilarityThreshold"), 64)
+	if err != nil || math.IsNaN(threshold) || threshold < 0.60 || threshold > 0.95 {
+		return nil, fmt.Errorf("invalid prompt similarity threshold")
+	}
+	policy.SimilarityThreshold = threshold
+	templates, err := promptsim.ParseTemplates(value("PromptSimilarityTemplates"))
+	if err != nil {
+		return nil, err
+	}
+	policy.SimilarityTemplates = promptsim.Compile(templates, promptsim.DefaultNGram)
+	mode := value("PromptRejectMode")
+	switch mode {
+	case PromptRejectModeSensitive, PromptRejectModeCyber:
+		policy.RejectMode = mode
+	default:
+		return nil, fmt.Errorf("invalid prompt reject mode")
+	}
+	if err := common.UnmarshalJsonStr(value("PromptTextFilterExempt"), &policy.Exempt); err != nil {
+		return nil, fmt.Errorf("invalid prompt text filter exempt list: %w", err)
+	}
+	if err := policy.Exempt.validate(); err != nil {
+		return nil, err
+	}
 	return policy, nil
 }
 
+// PromptTextFilterExempt is an OR whitelist: matching channel or token skips filtering.
 type PromptTextFilterExempt struct {
 	ChannelIDs []int `json:"channel_ids,omitempty"`
 	TokenIDs   []int `json:"token_ids,omitempty"`
@@ -100,8 +165,13 @@ func (exempt PromptTextFilterExempt) validate() error {
 }
 
 func (exempt PromptTextFilterExempt) Matches(channelID, tokenID int) bool {
-	return (channelID > 0 && slices.Contains(exempt.ChannelIDs, channelID)) ||
-		(tokenID > 0 && slices.Contains(exempt.TokenIDs, tokenID))
+	if channelID > 0 && slices.Contains(exempt.ChannelIDs, channelID) {
+		return true
+	}
+	if tokenID > 0 && slices.Contains(exempt.TokenIDs, tokenID) {
+		return true
+	}
+	return false
 }
 
 type PromptTextFilterTarget struct {

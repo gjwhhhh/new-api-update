@@ -61,7 +61,13 @@ func TestLocalSensitiveRejectionAuditKeepsPrivateEvidence(t *testing.T) {
 	}, service.RelayFailureLog(""), CaptureMiddleware(), func(c *gin.Context) {
 		var request dto.OpenAIResponsesRequest
 		require.NoError(t, c.ShouldBindJSON(&request))
-		apiErr := service.CheckRelayPromptSensitive(c, &request, request.GetTokenCountMeta().CombineText, []string{word}, "all", 0)
+		policy := &model.PromptTextFilterPolicy{
+			Enabled:    true,
+			Keywords:   []string{word},
+			RejectMode: model.PromptRejectModeSensitive,
+			Target:     model.PromptTextFilterTarget{Scope: "all"},
+		}
+		apiErr := service.CheckRelayPromptSensitive(c, &request, request.GetTokenCountMeta().CombineText, policy, 0)
 		require.NotNil(t, apiErr)
 		service.SetRelayFinalError(c, apiErr)
 		c.JSON(apiErr.StatusCode, gin.H{"error": apiErr.ToOpenAIError()})

@@ -40,7 +40,15 @@ export type HealthSettings = {
 export type FilteringSettings = Pick<
   SecuritySettings,
   'CheckSensitiveEnabled' | 'CheckSensitiveOnPromptEnabled' | 'SensitiveWords'
-> & { PromptTextFilterTarget: string; PromptTextFilterExempt: string }
+> & {
+  PromptTextFilterTarget: string
+  PromptTextFilterExempt: string
+  PromptSimilarityEnabled: boolean
+  PromptSimilarityThreshold: string
+  PromptSimilarityTemplates: string
+  PromptRejectMode: 'sensitive' | 'cyber'
+  PromptRejectBanSession: boolean
+}
 export type RequestPolicySettings = RetrySettings &
   HealthSettings &
   FilteringSettings &
@@ -71,4 +79,9 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   SensitiveWords: '',
   PromptTextFilterTarget: '{"scope":"all"}',
   PromptTextFilterExempt: '{}',
+  PromptSimilarityEnabled: false,
+  PromptSimilarityThreshold: '0.80',
+  PromptSimilarityTemplates: '',
+  PromptRejectMode: 'cyber',
+  PromptRejectBanSession: false,
 }

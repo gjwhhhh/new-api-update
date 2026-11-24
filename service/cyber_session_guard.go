@@ -243,9 +243,16 @@ func CyberSessionGuard(c *gin.Context) {
 	arm := sync.OnceFunc(func() { writeCyberSession(c, session) })
 	c.Set(cyberSessionArmKey, arm)
 	c.Next()
-	if failure, failed := FinalRelayFailure(c); failed && failure.Code == relaycommon.CyberPolicyCode {
+	if failure, failed := FinalRelayFailure(c); failed && shouldArmCyberSession(c, failure.Code) {
 		arm()
 	}
+}
+
+func shouldArmCyberSession(c *gin.Context, code string) bool {
+	if IsLocalPromptReject(c) {
+		return c.GetBool(relaySensitiveBanSessionKey) && (code == relaycommon.CyberPolicyCode || code == string(types.ErrorCodeSensitiveWordsDetected))
+	}
+	return code == relaycommon.CyberPolicyCode
 }
 
 const cyberSessionSkipKey = "cyber_session_skip"

@@ -186,6 +186,11 @@ func InitOptionMap() {
 	common.OptionMap["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
+	common.OptionMap["PromptSimilarityEnabled"] = "false"
+	common.OptionMap["PromptSimilarityThreshold"] = "0.80"
+	common.OptionMap["PromptSimilarityTemplates"] = ""
+	common.OptionMap["PromptRejectMode"] = requestPolicyDefaults["PromptRejectMode"]
+	common.OptionMap["PromptRejectBanSession"] = requestPolicyDefaults["PromptRejectBanSession"]
 	common.OptionMap["PromptTextFilterExempt"] = `{}`
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()

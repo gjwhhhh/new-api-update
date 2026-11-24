@@ -81,7 +81,9 @@ export async function fetchCyber<K extends keyof CyberReads>(
 ): Promise<CyberReads[K]> {
   const response = await api.get<ApiResponse<CyberReads[K]>>(
     `/api/cyber/${path}`,
-    { params, signal }
+    // React Query owns cancellation and deduplication; a remount must not
+    // reuse the HTTP client's promise from an aborted request.
+    { params, signal, disableDuplicate: true }
   )
   const result = requireServerSuccess(response.data).data
   if (!result) throw new Error('Missing Cyber API response')

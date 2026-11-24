@@ -20,6 +20,9 @@ For commercial licensing, please contact support@quantumnous.com
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
   'Select at least one target',
+  'Threshold must be between 0.60 and 0.95',
+  'Each template must contain at least 80 characters.',
+  'Each template must not exceed 8 KiB.',
   // Mail center labels and backend permission catalog.
   'Invalid email ID',
   'Invalid email settings',

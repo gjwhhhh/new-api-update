@@ -7144,6 +7144,7 @@
     "Use 8–128 characters.": "Sử dụng 8–128 ký tự.",
     "Use a compatible browser or device with biometric authentication or a security key to register a Passkey.": "Sử dụng trình duyệt hoặc thiết bị tương thích có xác thực sinh trắc học hoặc khóa bảo mật để đăng ký Khóa truy cập.",
     "Use a different stable value for each instance, then restart the service.": "Dùng một giá trị ổn định khác nhau cho mỗi phiên bản, sau đó khởi động lại dịch vụ.",
+    "Use a fixed Claude prompt cache": "Dùng bộ nhớ đệm lời nhắc cố định cho Claude",
     "Use a fixed Grok conversation ID": "Dùng ID cuộc trò chuyện Grok cố định",
     "Use a Passkey from another website": "Dùng khóa truy cập của trang web khác",
     "Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.": "Dùng đường dẫn để nối vào Base URL của kênh, hoặc nhập URL đầy đủ để ghi đè Base URL cho tuyến này.",

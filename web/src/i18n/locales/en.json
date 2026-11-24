@@ -7144,6 +7144,7 @@
     "Use 8–128 characters.": "Use 8–128 characters.",
     "Use a compatible browser or device with biometric authentication or a security key to register a Passkey.": "Use a compatible browser or device with biometric authentication or a security key to register a Passkey.",
     "Use a different stable value for each instance, then restart the service.": "Use a different stable value for each instance, then restart the service.",
+    "Use a fixed Claude prompt cache": "Use a fixed Claude prompt cache",
     "Use a fixed Grok conversation ID": "Use a fixed Grok conversation ID",
     "Use a Passkey from another website": "Use a Passkey from another website",
     "Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.": "Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.",

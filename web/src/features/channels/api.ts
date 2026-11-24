@@ -51,6 +51,11 @@ const channelActionConfig = (
   skipErrorHandler: true,
 })
 
+export type ChannelProbeCacheAffinity =
+  | 'none'
+  | 'grok_header'
+  | 'claude_cache_control'
+
 export type ChannelProbeConfig = {
   mode: 'short' | 'auto' | 'custom'
   target_tokens?: number
@@ -60,7 +65,7 @@ export type ChannelProbeConfig = {
   context?: string
   question?: string
   expected_answer?: string
-  grok_conv_id?: boolean
+  cache_affinity: ChannelProbeCacheAffinity
 }
 
 export type ChannelProbePreview = {
@@ -75,7 +80,11 @@ type ProbeResponse<T> = { success: boolean; message: string; data: T }
 
 export async function getChannelProbe(id: number) {
   const { data } = await api.get<
-    ProbeResponse<{ supported: boolean; config: ChannelProbeConfig }>
+    ProbeResponse<{
+      supported: boolean
+      cache_affinity: ChannelProbeCacheAffinity
+      config: ChannelProbeConfig
+    }>
   >(`/api/channel/${id}/probe`, channelActionConfig())
   return requireServerSuccess(data).data
 }

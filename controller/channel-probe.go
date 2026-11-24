@@ -6,12 +6,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +20,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/gin-gonic/gin"
@@ -37,9 +39,11 @@ const (
 	probeTemplateVersion    = 1
 	probeOutputTokens       = 128
 	probeChatPath           = "/v1/chat/completions"
-	probeConversationHeader = "x-grok-conv-id"
 	probeMaxDiagnosticBytes = 1 << 20
 	probeTimeout            = 2 * time.Minute
+	probeAffinityNone       = "none"
+	probeAffinityGrok       = "grok_header"
+	probeAffinityClaude     = "claude_cache_control"
 )
 
 type channelProbeConfig struct {
@@ -51,12 +55,31 @@ type channelProbeConfig struct {
 	Context         string `json:"context,omitempty"`
 	Question        string `json:"question,omitempty"`
 	ExpectedAnswer  string `json:"expected_answer,omitempty"`
-	GrokConvID      bool   `json:"grok_conv_id,omitempty"`
+	CacheAffinity   string `json:"cache_affinity"`
 }
 
 type channelProbe struct {
 	mode, context, question, answer string
-	grokConvID                      bool
+	cacheAffinity                   string
+}
+
+func (config *channelProbeConfig) UnmarshalJSON(data []byte) error {
+	type probeConfig channelProbeConfig
+	var saved struct {
+		probeConfig
+		GrokConvID bool `json:"grok_conv_id"`
+	}
+	if err := common.Unmarshal(data, &saved); err != nil {
+		return err
+	}
+	*config = channelProbeConfig(saved.probeConfig)
+	if config.CacheAffinity == "" {
+		config.CacheAffinity = probeAffinityNone
+		if saved.GrokConvID {
+			config.CacheAffinity = probeAffinityGrok
+		}
+	}
+	return nil
 }
 
 func resolveChannelTestModel(channel *model.Channel, requested string) string {
@@ -77,16 +100,47 @@ func resolveChannelTestModel(channel *model.Channel, requested string) string {
 }
 
 func supportsChannelProbe(channel *model.Channel) bool {
-	switch channel.Type {
-	case constant.ChannelTypeOpenAI, constant.ChannelTypeCustom, constant.ChannelTypeXai, constant.ChannelTypeNewAPI, constant.ChannelTypeSub2API:
-		return true
-	default:
+	if channel.Type == constant.ChannelTypeAws {
+		// Bedrock either calls the AWS SDK directly or addresses the model in the
+		// endpoint, so the probe body and endpoint checks cannot pass.
 		return false
 	}
+	return !slices.Contains(unsupportedTestChannelTypes, channel.Type)
+}
+
+func channelProbeCacheAffinity(channel *model.Channel) string {
+	switch channel.Type {
+	case constant.ChannelTypeXai:
+		return probeAffinityGrok
+	case constant.ChannelTypeAnthropic:
+		return probeAffinityClaude
+	}
+	testModel := resolveChannelTestModel(channel, "")
+	if constant.IsAdvancedCustomChannel(channel.Type) {
+		settings := channel.GetOtherSettings()
+		route, _ := settings.AdvancedCustom.MatchPathForModel(probeChatPath, testModel)
+		if strings.TrimSpace(route.Converter) == relayconvert.ConverterOpenAIChatToClaudeMessages {
+			return probeAffinityClaude
+		}
+	}
+	if channel.Type == constant.ChannelTypeVertexAi {
+		c := &gin.Context{}
+		c.Set("model_mapping", channel.GetModelMapping())
+		info := &relaycommon.RelayInfo{OriginModelName: testModel, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: testModel}}
+		if helper.ModelMappedHelper(c, info, nil) == nil && strings.HasPrefix(info.UpstreamModelName, "claude") {
+			return probeAffinityClaude
+		}
+	}
+	return probeAffinityNone
 }
 
 func (config channelProbeConfig) prepare() (*channelProbe, error) {
-	probe := &channelProbe{mode: config.Mode, grokConvID: config.GrokConvID}
+	switch config.CacheAffinity {
+	case "", probeAffinityNone, probeAffinityGrok, probeAffinityClaude:
+	default:
+		return nil, errors.New("invalid probe cache affinity")
+	}
+	probe := &channelProbe{mode: config.Mode, cacheAffinity: config.CacheAffinity}
 	switch config.Mode {
 	case probeAuto:
 		seed, err := hex.DecodeString(config.Seed)
@@ -140,7 +194,7 @@ func generateChannelProbe(modelName string, target int) (channelProbeConfig, *ch
 	if _, err := rand.Read(seed[:]); err != nil {
 		return channelProbeConfig{}, nil, 0, err
 	}
-	config := channelProbeConfig{Mode: probeAuto, Seed: hex.EncodeToString(seed[:]), TargetTokens: target, TemplateVersion: probeTemplateVersion, Lines: 32}
+	config := channelProbeConfig{Mode: probeAuto, Seed: hex.EncodeToString(seed[:]), TargetTokens: target, TemplateVersion: probeTemplateVersion, Lines: 32, CacheAffinity: probeAffinityNone}
 	for range 3 {
 		probe, err := config.prepare()
 		if err != nil {
@@ -163,7 +217,7 @@ func generateChannelProbe(modelName string, target int) (channelProbeConfig, *ch
 func loadChannelProbe(channelID int) (channelProbeConfig, error) {
 	row, err := model.GetChannelProbe(channelID)
 	if row == nil || err != nil {
-		return channelProbeConfig{Mode: probeShort}, err
+		return channelProbeConfig{Mode: probeShort, CacheAffinity: probeAffinityNone}, err
 	}
 	var config channelProbeConfig
 	if err := common.UnmarshalJsonStr(string(row.Config), &config); err != nil {
@@ -196,7 +250,12 @@ func GetChannelProbe(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"supported": supportsChannelProbe(channel), "config": config})
+	affinity := channelProbeCacheAffinity(channel)
+	if affinity == probeAffinityNone && supportsChannelProbe(channel) && config.CacheAffinity == probeAffinityGrok {
+		// Keep the control available on compatible gateways with a saved legacy setting.
+		affinity = probeAffinityGrok
+	}
+	common.ApiSuccess(c, gin.H{"supported": supportsChannelProbe(channel), "cache_affinity": affinity, "config": config})
 }
 
 func PreviewChannelProbe(c *gin.Context) {
@@ -250,7 +309,7 @@ func SaveChannelProbe(c *gin.Context) {
 	var data []byte
 	if config.Mode != probeShort {
 		if !supportsChannelProbe(channel) {
-			common.ApiErrorMsg(c, "long probes require an OpenAI-compatible chat channel")
+			common.ApiErrorMsg(c, "this channel does not support long probes")
 			return
 		}
 		probe, err := config.prepare()
@@ -263,7 +322,7 @@ func SaveChannelProbe(c *gin.Context) {
 			return
 		}
 		if config.Mode == probeCustom {
-			config = channelProbeConfig{Mode: config.Mode, Context: probe.context, Question: probe.question, ExpectedAnswer: probe.answer, GrokConvID: config.GrokConvID}
+			config = channelProbeConfig{Mode: config.Mode, Context: probe.context, Question: probe.question, ExpectedAnswer: probe.answer, CacheAffinity: config.CacheAffinity}
 		} else {
 			config.Context, config.Question, config.ExpectedAnswer = "", "", ""
 		}
@@ -273,7 +332,7 @@ func SaveChannelProbe(c *gin.Context) {
 			return
 		}
 	} else {
-		config = channelProbeConfig{Mode: probeShort}
+		config = channelProbeConfig{Mode: probeShort, CacheAffinity: probeAffinityNone}
 	}
 	if err := model.SaveChannelProbe(channel.Id, channel.Type, data); err != nil {
 		common.ApiErrorMsg(c, "could not save probe configuration")
@@ -283,67 +342,60 @@ func SaveChannelProbe(c *gin.Context) {
 	common.ApiSuccess(c, config)
 }
 
-func (probe *channelProbe) validateRequest(data []byte, upstreamModel, requestURL string) error {
+func (probe *channelProbe) validateRequest(wire *probeWire, info *relaycommon.RelayInfo, convertedBody, body []byte, requestURL string) ([]byte, error) {
 	endpoint, err := url.Parse(requestURL)
-	if err != nil || endpoint == nil || !strings.HasSuffix(endpoint.EscapedPath(), probeChatPath) ||
-		(endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" {
-		return errors.New("long probes require an OpenAI-compatible chat completions endpoint")
+	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" {
+		return nil, errors.New("invalid upstream probe endpoint")
 	}
-	var request struct {
-		Model               string `json:"model"`
-		Stream              bool   `json:"stream"`
-		MaxTokens           *uint  `json:"max_tokens"`
-		MaxCompletionTokens *uint  `json:"max_completion_tokens"`
-		Messages            []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-	}
-	if common.Unmarshal(data, &request) != nil || request.Model == "" || request.Model != upstreamModel || request.Stream ||
-		len(request.Messages) != 2 || (request.Messages[0].Role != "system" && request.Messages[0].Role != "developer") ||
-		request.Messages[0].Content != probe.context || request.Messages[1].Role != "user" || request.Messages[1].Content != probe.question {
-		return errors.New("channel request overrides changed the probe model, messages, or streaming mode")
-	}
-	if (request.MaxTokens == nil) == (request.MaxCompletionTokens == nil) ||
-		(request.MaxTokens != nil && *request.MaxTokens != probeOutputTokens) ||
-		(request.MaxCompletionTokens != nil && *request.MaxCompletionTokens != probeOutputTokens) {
-		return errors.New("channel request overrides changed the probe output limit")
-	}
-	var fields map[string]json.RawMessage
-	_ = common.Unmarshal(data, &fields)
-	for key := range fields {
-		switch key {
-		case "model", "messages", "stream", "max_tokens", "max_completion_tokens", "temperature", "top_p", "seed", "reasoning_effort":
-		default:
-			return errors.New("channel request overrides add fields not supported for long probes")
+	switch wire.name {
+	case "gemini":
+		if !strings.HasSuffix(endpoint.Path, "/models/"+info.UpstreamModelName+":generateContent") {
+			return nil, errProbeProtocol
+		}
+	case "anthropic":
+		if !probeHasFields(body, "model") &&
+			(info.ChannelType != constant.ChannelTypeVertexAi || !strings.HasSuffix(endpoint.Path, ":rawPredict")) {
+			return nil, errProbeProtocol
 		}
 	}
-	var messages []map[string]json.RawMessage
-	if common.Unmarshal(fields["messages"], &messages) != nil || len(messages) != 2 || len(messages[0]) != 2 || len(messages[1]) != 2 {
-		return errors.New("channel request overrides add unsupported message fields")
-	}
-	return nil
-}
 
-func (probe *channelProbe) applyConversationID(info *relaycommon.RelayInfo, data []byte) {
-	if !probe.grokConvID || !strings.HasPrefix(strings.ToLower(info.UpstreamModelName), "grok-") {
-		return
-	}
-	// Use the exact upstream request content, but neither credentials nor per-attempt metadata.
-	digest := sha256.New()
-	fmt.Fprintf(digest, "channel-probe/v1/%d/%d/", info.ChannelId, info.ChannelMultiKeyIndex)
-	_, _ = digest.Write(data)
-	id := digest.Sum(nil)[:16]
-	id[6] = (id[6] & 0x0f) | 0x80 // UUID version 8, application-defined hash
-	id[8] = (id[8] & 0x3f) | 0x80
-	headers := relaycommon.GetEffectiveHeaderOverride(info)
-	for key := range headers {
-		if strings.EqualFold(strings.TrimSpace(key), probeConversationHeader) {
-			delete(headers, key)
+	headers := make(map[string]string)
+	if probe.cacheAffinity == wire.cacheAffinity && wire.cacheAffinity != "" {
+		body, err = wire.affinity(info, headers, body)
+		if err != nil {
+			return nil, err
 		}
 	}
-	headers[probeConversationHeader] = fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:])
-	info.RuntimeHeadersOverride, info.UseRuntimeHeadersOverride = headers, true
+	if err := wire.validate(body, info.UpstreamModelName, probe); err != nil {
+		return nil, err
+	}
+	if wire.cacheAffinity == probeAffinityClaude && probe.cacheAffinity == probeAffinityClaude && len(info.ParamOverride) > 0 {
+		// A delete against the original unmarked block is a no-op. Check the same
+		// overrides with the marker present so injection cannot hide its removal.
+		marked, err := wire.affinity(info, nil, convertedBody)
+		if err != nil {
+			return nil, err
+		}
+		overridden, err := relaycommon.ApplyParamOverride(marked, info.ParamOverride, relaycommon.BuildParamOverrideContext(info))
+		if err == nil && !probeHasFields(overridden, "system.0.cache_control") {
+			return nil, errProbeCache
+		}
+	}
+	if len(headers) > 0 {
+		overrides := relaycommon.GetEffectiveHeaderOverride(info)
+		for key, value := range headers {
+			// Overrides are later folded to one case, so drop any alias that would
+			// otherwise compete with the injected value.
+			for existing := range overrides {
+				if strings.EqualFold(strings.TrimSpace(existing), key) {
+					delete(overrides, existing)
+				}
+			}
+			overrides[key] = value
+		}
+		info.RuntimeHeadersOverride, info.UseRuntimeHeadersOverride = overrides, true
+	}
+	return body, nil
 }
 
 // Capture original usage before an adaptor can estimate it or fill missing cache fields with zeros.
@@ -367,26 +419,11 @@ func (response *channelProbeResponse) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (response *channelProbeResponse) usage() (input, cached *int) {
+func (response *channelProbeResponse) usage(wire *probeWire) (input, cached *int) {
 	if response == nil || response.data.Len() > probeMaxDiagnosticBytes {
 		return nil, nil
 	}
-	var wire struct {
-		Usage struct {
-			PromptTokens        *int `json:"prompt_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens *int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-		} `json:"usage"`
-	}
-	if common.Unmarshal(response.data.Bytes(), &wire) != nil || wire.Usage.PromptTokens == nil || *wire.Usage.PromptTokens <= 0 {
-		return nil, nil
-	}
-	input, cached = wire.Usage.PromptTokens, wire.Usage.PromptTokensDetails.CachedTokens
-	if cached != nil && (*cached < 0 || *cached > *input) {
-		cached = nil
-	}
-	return input, cached
+	return wire.usage(response.data.Bytes())
 }
 
 func (probe *channelProbe) matchesAnswer(body []byte) bool {
@@ -410,7 +447,7 @@ func TestChannelProbe(c *gin.Context) {
 		return
 	}
 	if !supportsChannelProbe(channel) {
-		common.ApiErrorMsg(c, "long probes require an OpenAI-compatible chat channel")
+		common.ApiErrorMsg(c, "this channel does not support long probes")
 		return
 	}
 	config, err := loadChannelProbe(channel.Id)

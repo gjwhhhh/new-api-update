@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,6 +82,17 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
+var unsupportedTestChannelTypes = []int{
+	constant.ChannelTypeMidjourney,
+	constant.ChannelTypeMidjourneyPlus,
+	constant.ChannelTypeSunoAPI,
+	constant.ChannelTypeKling,
+	constant.ChannelTypeJimeng,
+	constant.ChannelTypeDoubaoVideo,
+	constant.ChannelTypeVidu,
+	constant.ChannelTypeTaskPlugin,
+}
+
 func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream, isHealthCheck bool, probe *channelProbe) (result testResult) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -102,17 +114,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}()
 	tik := time.Now()
-	var unsupportedTestChannelTypes = []int{
-		constant.ChannelTypeMidjourney,
-		constant.ChannelTypeMidjourneyPlus,
-		constant.ChannelTypeSunoAPI,
-		constant.ChannelTypeKling,
-		constant.ChannelTypeJimeng,
-		constant.ChannelTypeDoubaoVideo,
-		constant.ChannelTypeVidu,
-		constant.ChannelTypeTaskPlugin,
-	}
-	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
+	if slices.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)
 		return testResult{
 			localErr:    fmt.Errorf("%s channel test is not supported", channelTypeName),
@@ -453,6 +455,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//	}
 	//}
 
+	convertedBody := jsonData
 	if len(info.ParamOverride) > 0 {
 		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 		if err != nil {
@@ -471,10 +474,14 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
+	var wire *probeWire
 	if probe != nil {
 		requestURL, err := adaptor.GetRequestURL(info)
 		if err == nil {
-			err = probe.validateRequest(jsonData, info.UpstreamModelName, requestURL)
+			wire, err = classifyProbeWire(convertedBody)
+		}
+		if err == nil {
+			jsonData, err = probe.validateRequest(wire, info, convertedBody, jsonData, requestURL)
 		}
 		if err != nil {
 			return testResult{context: c, localErr: err, failureKind: service.ChannelTestFailureKindSetup,
@@ -486,7 +493,6 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			return testResult{context: c, localErr: errors.New("estimated probe input exceeds token limit"), failureKind: service.ChannelTestFailureKindSetup}
 		}
 		info.SetEstimatePromptTokens(estimate)
-		probe.applyConversationID(info, jsonData)
 	}
 
 	requestBody := bytes.NewBuffer(jsonData)
@@ -535,7 +541,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		httpResp.Body = probeResponse
 	}
 	if probe != nil {
-		defer func() { result.probeInputTokens, result.probeCachedTokens = probeResponse.usage() }()
+		defer func() { result.probeInputTokens, result.probeCachedTokens = probeResponse.usage(wire) }()
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
 	if respErr != nil {

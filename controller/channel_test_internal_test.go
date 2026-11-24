@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,7 +73,7 @@ func TestChannelProbeScheduledAndTrialSendSameRequest(t *testing.T) {
 	config, probe, estimate, err := generateChannelProbe("gpt-4o-mini", 0)
 	require.NoError(t, err)
 	assert.InDelta(t, 24000, estimate, 240)
-	config.GrokConvID = true
+	config.CacheAffinity = probeAffinityGrok
 	rawConfig, err := common.Marshal(config)
 	require.NoError(t, err)
 	type requestSample struct{ body, conversationID string }
@@ -185,6 +186,8 @@ func TestChannelProbeScheduledAndTrialSendSameRequest(t *testing.T) {
 }
 
 func TestChannelProbeRawUsage(t *testing.T) {
+	wire, err := classifyProbeWire([]byte(`{"messages":[],"max_tokens":128}`))
+	require.NoError(t, err)
 	for _, tc := range []struct {
 		name, usage string
 		wantInput   *int
@@ -199,9 +202,220 @@ func TestChannelProbeRawUsage(t *testing.T) {
 			response := &channelProbeResponse{ReadCloser: io.NopCloser(strings.NewReader(`{"usage":` + tc.usage + `}`))}
 			_, err := io.ReadAll(response)
 			require.NoError(t, err)
-			input, cached := response.usage()
+			input, cached := response.usage(wire)
 			assert.Equal(t, tc.wantInput, input)
 			assert.Equal(t, tc.wantCached, cached)
+		})
+	}
+}
+
+func TestChannelProbeWireClassification(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"openai-chat", `{"messages":[],"max_completion_tokens":128}`},
+		{"openai-responses", `{"input":[],"model":"mapped-model"}`},
+		{"anthropic", `{"messages":[],"system":[],"anthropic_version":"vertex-2023-10-16","max_tokens":128}`},
+		{"gemini", `{"contents":[],"generationConfig":{}}`},
+		{"", `{"prompt":"example"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire, err := classifyProbeWire([]byte(tc.body))
+			if tc.name == "" {
+				require.EqualError(t, err, "unsupported upstream chat protocol")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.name, wire.name)
+		})
+	}
+}
+
+func TestChannelProbeAnthropicValidation(t *testing.T) {
+	const base = `{"model":"mapped-model","anthropic_version":"2023-06-01","max_tokens":128,"system":[{"type":"text","text":"reference"}],"messages":[{"role":"user","content":"question"}]`
+	probe := &channelProbe{context: "reference", question: "question"}
+	wire, err := classifyProbeWire([]byte(base + "}"))
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, body string
+		wantErr    error
+	}{
+		{"valid", base + "}", nil},
+		{"thinking", base + `,"thinking":{"type":"enabled","budget_tokens":1024}}`, errProbeFields},
+		{"output config", base + `,"output_config":{"effort":"high"}}`, errProbeFields},
+		{"stream", base + `,"stream":true}`, errProbeInput},
+		{"limit", strings.Replace(base, "128", "1024", 1) + "}", errProbeLimit},
+		{"model", strings.Replace(base, "mapped-model", "other-model", 1) + "}", errProbeInput},
+		{"system text", strings.Replace(base, "reference", "changed", 1) + "}", errProbeInput},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := wire.validate([]byte(tc.body), "mapped-model", probe)
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestChannelProbeResponsesAndGeminiValidation(t *testing.T) {
+	const responses = `{"model":"mapped-model","max_output_tokens":128,"instructions":"reference","input":[{"role":"user","content":"question"}]}`
+	const gemini = `{"systemInstruction":{"parts":[{"text":"reference"}]},"contents":[{"role":"user","parts":[{"text":"question"}]}],"generationConfig":{"maxOutputTokens":128}}`
+	probe := &channelProbe{context: "reference", question: "question"}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped-model"}}
+	for _, tc := range []struct {
+		name, original, body, endpoint string
+		wantErr                        error
+	}{
+		{"Responses valid", responses, responses, "/v1/responses", nil},
+		{"Responses model override", responses, strings.Replace(responses, "mapped-model", "other-model", 1), "/v1/responses", errProbeInput},
+		{"Responses context override", responses, strings.Replace(responses, "reference", "changed", 1), "/v1/responses", errProbeInput},
+		{"Responses output override", responses, strings.Replace(responses, "128", "1024", 1), "/v1/responses", errProbeLimit},
+		{"Responses streaming override", responses, strings.Replace(responses, `"instructions":`, `"stream":true,"instructions":`, 1), "/v1/responses", errProbeInput},
+		{"Responses tools override", responses, strings.Replace(responses, `"instructions":`, `"tools":[],"instructions":`, 1), "/v1/responses", errProbeFields},
+		{"Gemini valid", gemini, gemini, "/v1beta/models/mapped-model:generateContent", nil},
+		{"Gemini context override", gemini, strings.Replace(gemini, "reference", "changed", 1), "/v1beta/models/mapped-model:generateContent", errProbeInput},
+		{"Gemini output override", gemini, strings.Replace(gemini, "128", "1024", 1), "/v1beta/models/mapped-model:generateContent", errProbeLimit},
+		{"Gemini thinking override", gemini, strings.Replace(gemini, `"maxOutputTokens":128`, `"maxOutputTokens":128,"thinkingConfig":{"thinkingBudget":1024}`, 1), "/v1beta/models/mapped-model:generateContent", errProbeFields},
+		{"Gemini model endpoint", gemini, gemini, "/v1beta/models/other-model:generateContent", errProbeProtocol},
+		{"Gemini streaming endpoint", gemini, gemini, "/v1beta/models/mapped-model:streamGenerateContent", errProbeProtocol},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire, err := classifyProbeWire([]byte(tc.original))
+			require.NoError(t, err)
+			_, err = probe.validateRequest(wire, info, []byte(tc.original), []byte(tc.body), "https://upstream.example"+tc.endpoint)
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestChannelProbeClaudeCacheAffinity(t *testing.T) {
+	body := []byte(`{"model":"mapped-model","max_tokens":128,"system":[{"type":"text","text":"reference"}],"messages":[{"role":"user","content":"question"}]}`)
+	probe := &channelProbe{context: "reference", question: "question", cacheAffinity: probeAffinityClaude}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped-model"}}
+	wire, err := classifyProbeWire(body)
+	require.NoError(t, err)
+	const endpoint = "https://upstream.example/v1/messages"
+	cached, err := probe.validateRequest(wire, info, body, body, endpoint)
+	require.NoError(t, err)
+	assert.Contains(t, string(cached), `"cache_control":{"type":"ephemeral"}`)
+	assert.ErrorIs(t, wire.validate(body, info.UpstreamModelName, probe), errProbeCache)
+
+	for _, tc := range []struct {
+		name, override string
+	}{
+		{"replace marker", `{"operations":[{"mode":"set","path":"system.0.cache_control","value":{"type":"other"}}]}`},
+		{"delete marker", `{"operations":[{"mode":"delete","path":"system.0.cache_control"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, common.UnmarshalJsonStr(tc.override, &info.ParamOverride))
+			overridden, err := relaycommon.ApplyParamOverrideWithRelayInfo(body, info)
+			require.NoError(t, err)
+			_, err = probe.validateRequest(wire, info, body, overridden, endpoint)
+			assert.ErrorIs(t, err, errProbeCache)
+		})
+	}
+}
+
+func TestChannelProbeProviderUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name, body        string
+		usage             func([]byte) (*int, *int)
+		wantInput, cached *int
+	}{
+		{"Claude missing input", `{"usage":{}}`, anthropicProbeUsage, nil, nil},
+		{"Claude missing read", `{"usage":{"input_tokens":200,"cache_creation_input_tokens":50}}`, anthropicProbeUsage, common.GetPointer(250), nil},
+		{"Claude zero input", `{"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`, anthropicProbeUsage, nil, nil},
+		{"Claude zero input with cache read", `{"usage":{"input_tokens":0,"cache_read_input_tokens":250}}`, anthropicProbeUsage, nil, nil},
+		{"Claude sum", `{"usage":{"input_tokens":50,"cache_creation_input_tokens":200,"cache_read_input_tokens":250}}`, anthropicProbeUsage, common.GetPointer(500), common.GetPointer(250)},
+		{"Claude negative read", `{"usage":{"input_tokens":50,"cache_read_input_tokens":-1}}`, anthropicProbeUsage, nil, nil},
+		{"Claude negative creation", `{"usage":{"input_tokens":50,"cache_creation_input_tokens":-1,"cache_read_input_tokens":55}}`, anthropicProbeUsage, nil, nil},
+		{"Claude sum overflow", fmt.Sprintf(`{"usage":{"input_tokens":%d,"cache_read_input_tokens":1}}`, math.MaxInt), anthropicProbeUsage, nil, nil},
+		{"Claude read exceeds int", fmt.Sprintf(`{"usage":{"input_tokens":1,"cache_read_input_tokens":%d}`, uint64(math.MaxInt)+1) + "}", anthropicProbeUsage, nil, nil},
+		{"Responses", `{"usage":{"input_tokens":300,"input_tokens_details":{"cached_tokens":250}}}`, openAIResponsesProbeUsage, common.GetPointer(300), common.GetPointer(250)},
+		{"Gemini", `{"usageMetadata":{"promptTokenCount":300,"cachedContentTokenCount":250}}`, geminiProbeUsage, common.GetPointer(300), common.GetPointer(250)},
+		{"Gemini cache exceeds input", `{"usageMetadata":{"promptTokenCount":300,"cachedContentTokenCount":301}}`, geminiProbeUsage, common.GetPointer(300), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input, cached := tc.usage([]byte(tc.body))
+			assert.Equal(t, tc.wantInput, input)
+			assert.Equal(t, tc.cached, cached)
+		})
+	}
+}
+
+func TestChannelProbeSupportsChannelTypes(t *testing.T) {
+	// Bedrock addresses the model in the endpoint or bypasses HTTP entirely.
+	assert.False(t, supportsChannelProbe(&model.Channel{Type: constant.ChannelTypeAws}))
+	assert.False(t, supportsChannelProbe(&model.Channel{Type: constant.ChannelTypeMidjourney}))
+	assert.True(t, supportsChannelProbe(&model.Channel{Type: constant.ChannelTypeAnthropic}))
+	assert.True(t, supportsChannelProbe(&model.Channel{Type: constant.ChannelTypeOpenAI}))
+}
+
+func TestChannelProbeGrokHeaderReplacesAlias(t *testing.T) {
+	body := []byte(`{"model":"grok-4","max_tokens":128,"messages":[{"role":"system","content":"reference"},{"role":"user","content":"question"}]}`)
+	probe := &channelProbe{context: "reference", question: "question", cacheAffinity: probeAffinityGrok}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:               &relaycommon.ChannelMeta{UpstreamModelName: "grok-4"},
+		RuntimeHeadersOverride:    map[string]any{"X-Grok-Conv-Id": "operator-value"},
+		UseRuntimeHeadersOverride: true,
+	}
+	wire, err := classifyProbeWire(body)
+	require.NoError(t, err)
+	_, err = probe.validateRequest(wire, info, body, body, "https://upstream.example/v1/chat/completions")
+	require.NoError(t, err)
+
+	var values []string
+	for key, value := range info.RuntimeHeadersOverride {
+		if strings.EqualFold(strings.TrimSpace(key), probeConversationHeader) {
+			values = append(values, value.(string))
+		}
+	}
+	require.Len(t, values, 1)
+	assert.NotEqual(t, "operator-value", values[0])
+}
+
+func TestChannelProbeErrorsSeparateProtocolFromOverrides(t *testing.T) {
+	probe := &channelProbe{context: "reference", question: "question"}
+	chat := []byte(`{"model":"mapped-model","max_tokens":128,"messages":[{"role":"system","content":"reference"},{"role":"user","content":"question"}]}`)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped-model"}}
+	wire, err := classifyProbeWire(chat)
+	require.NoError(t, err)
+
+	// A Vertex-shaped body on a non-Vertex endpoint cannot be probed as Claude.
+	vertex := []byte(`{"anthropic_version":"vertex-2023-10-16","max_tokens":128,"system":[{"type":"text","text":"reference"}],"messages":[{"role":"user","content":"question"}]}`)
+	vertexWire, err := classifyProbeWire(vertex)
+	require.NoError(t, err)
+	_, err = probe.validateRequest(vertexWire, info, vertex, vertex, "https://upstream.example/v1/messages")
+	assert.ErrorIs(t, err, errProbeProtocol)
+	assert.NotErrorIs(t, err, errProbeInput)
+
+	// An override that rewrites the probe model stays in the override class.
+	changed := bytes.Replace(chat, []byte(`"mapped-model"`), []byte(`"other-model"`), 1)
+	_, err = probe.validateRequest(wire, info, chat, changed, "https://upstream.example/v1/chat/completions")
+	assert.ErrorIs(t, err, errProbeInput)
+	assert.NotErrorIs(t, err, errProbeProtocol)
+}
+
+func TestChannelProbeLegacyCacheAffinity(t *testing.T) {
+	for _, tc := range []struct{ body, affinity string }{
+		{`{"mode":"custom","grok_conv_id":true}`, probeAffinityGrok},
+		{`{"mode":"custom","grok_conv_id":false}`, probeAffinityNone},
+		{`{"mode":"custom"}`, probeAffinityNone},
+		{`{"mode":"custom","grok_conv_id":true,"cache_affinity":"none"}`, probeAffinityNone},
+		{`{"mode":"custom","cache_affinity":"claude_cache_control"}`, probeAffinityClaude},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			var config channelProbeConfig
+			require.NoError(t, common.UnmarshalJsonStr(tc.body, &config))
+			assert.Equal(t, probeCustom, config.Mode)
+			assert.Equal(t, tc.affinity, config.CacheAffinity)
+			encoded, err := common.Marshal(config)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "grok_conv_id")
 		})
 	}
 }

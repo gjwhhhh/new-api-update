@@ -41,7 +41,7 @@ import { createAppQueryClient } from '@/lib/query-client'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import type { TaskPluginOption } from '../../api'
+import type { ChannelProbeConfig, TaskPluginOption } from '../../api'
 import {
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_SGLANG,
@@ -49,6 +49,7 @@ import {
 } from '../../constants'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
+import { ChannelProbeSettings } from '../channel-probe-settings'
 import { ChannelsProvider } from '../channels-provider'
 import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
@@ -163,7 +164,11 @@ beforeEach(() => {
       return {
         data: {
           success: true,
-          data: { supported: true, config: { mode: 'short' } },
+          data: {
+            supported: true,
+            cache_affinity: 'none',
+            config: { mode: 'short', cache_affinity: 'none' },
+          },
         },
       }
     }
@@ -236,6 +241,7 @@ function useWideScreen() {
 test('generated probe is a draft until saved and displays explicit zero cache hits', async () => {
   const generated = {
     mode: 'auto',
+    cache_affinity: 'none',
     target_tokens: 24000,
     seed: 'fixture',
     template_version: 1,
@@ -309,6 +315,78 @@ test('generated probe is a draft until saved and displays explicit zero cache hi
   expect(post).toHaveBeenCalledTimes(2)
   expect(await screen.findByText('0%')).toBeVisible()
 })
+
+test.each([
+  ['none', undefined],
+  ['grok_header', 'Use a fixed Grok conversation ID'],
+  ['claude_cache_control', 'Use a fixed Claude prompt cache'],
+] as const)(
+  'probe cache affinity %s displays and saves its supported option',
+  async (affinity, label) => {
+    const config: ChannelProbeConfig = {
+      mode: 'custom',
+      cache_affinity: 'none',
+      context: 'Reference context',
+      question: 'Question?',
+      expected_answer: 'Answer',
+    }
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        success: true,
+        data: { supported: true, cache_affinity: affinity, config },
+      },
+    })
+    const put = vi.spyOn(api, 'put').mockImplementation(async (_url, body) => ({
+      data: { success: true, data: body },
+    }))
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <ChannelProbeSettings channelId={42} disabled={false} canRun />
+      </QueryClientProvider>
+    )
+    await screen.findByLabelText('Context')
+    if (label) {
+      const checkbox = screen.getByRole('checkbox', { name: label })
+      expect(checkbox).not.toBeChecked()
+      await user.click(checkbox)
+      expect(checkbox).toBeChecked()
+    } else {
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('Context'), {
+        target: { value: 'Updated context' },
+      })
+    }
+    await user.click(
+      screen.getByRole('button', { name: 'Save probe settings' })
+    )
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/channel/42/probe',
+        expect.objectContaining({ cache_affinity: affinity }),
+        expect.anything()
+      )
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Save probe settings' })
+      ).toBeDisabled()
+    )
+    if (label) {
+      await user.click(screen.getByRole('checkbox', { name: label }))
+      await user.click(
+        screen.getByRole('button', { name: 'Save probe settings' })
+      )
+      await waitFor(() =>
+        expect(put).toHaveBeenLastCalledWith(
+          '/api/channel/42/probe',
+          expect.objectContaining({ cache_affinity: 'none' }),
+          expect.anything()
+        )
+      )
+    }
+  }
+)
 
 test('probe settings wait for a fresh fetch instead of pinning a stale cache', async () => {
   const stale = { mode: 'short' as const }

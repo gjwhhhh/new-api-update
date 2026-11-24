@@ -7144,6 +7144,7 @@
     "Use 8–128 characters.": "Используйте от 8 до 128 символов.",
     "Use a compatible browser or device with biometric authentication or a security key to register a Passkey.": "Используйте совместимый браузер или устройство с биометрической аутентификацией или ключ безопасности для регистрации ключа доступа.",
     "Use a different stable value for each instance, then restart the service.": "Используйте разные стабильные значения для каждого экземпляра, затем перезапустите сервис.",
+    "Use a fixed Claude prompt cache": "Использовать фиксированный кеш промптов Claude",
     "Use a fixed Grok conversation ID": "Использовать постоянный ID диалога Grok",
     "Use a Passkey from another website": "Использовать ключ доступа другого сайта",
     "Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.": "Укажите путь, чтобы добавить его к Base URL канала, или введите полный URL, чтобы переопределить Base URL для этого маршрута.",

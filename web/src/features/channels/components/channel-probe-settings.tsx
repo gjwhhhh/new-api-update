@@ -24,6 +24,7 @@ import {
   previewChannelProbe,
   saveChannelProbe,
   testChannelProbe,
+  type ChannelProbeCacheAffinity,
   type ChannelProbeConfig,
   type ChannelProbePreview,
 } from '../api'
@@ -63,6 +64,7 @@ export function ChannelProbeSettings(props: Props) {
       {...props}
       key={props.channelId}
       supported={query.data.supported}
+      cacheAffinity={query.data.cache_affinity}
       initialConfig={query.data.config}
       configRevision={query.dataUpdatedAt}
     />
@@ -72,6 +74,7 @@ export function ChannelProbeSettings(props: Props) {
 function ProbeForm(
   props: Props & {
     supported: boolean
+    cacheAffinity: ChannelProbeCacheAffinity
     initialConfig: ChannelProbeConfig
     configRevision: number
   }
@@ -123,7 +126,14 @@ function ProbeForm(
   ])
 
   const save = useMutation({
-    mutationFn: () => saveChannelProbe(props.channelId, draft),
+    mutationFn: () =>
+      saveChannelProbe(props.channelId, {
+        ...draft,
+        cache_affinity:
+          draft.mode !== 'short' && draft.cache_affinity === props.cacheAffinity
+            ? draft.cache_affinity
+            : 'none',
+      }),
     onSuccess: (config) => {
       setSaved(config)
       setDraft(config)
@@ -131,6 +141,7 @@ function ProbeForm(
       setAppliedRevision(props.configRevision)
       queryClient.setQueryData(['channel-probe', props.channelId], {
         supported: props.supported,
+        cache_affinity: props.cacheAffinity,
         config,
       })
     },
@@ -142,7 +153,10 @@ function ProbeForm(
     onSuccess: (data, tokens) => {
       setPreview(data)
       if (tokens !== undefined) {
-        setDraft({ ...data.config, grok_conv_id: draft.grok_conv_id })
+        setDraft((current) => ({
+          ...data.config,
+          cache_affinity: current.cache_affinity,
+        }))
       }
     },
     onError: () => setError(t('Could not preview probe content')),
@@ -178,7 +192,7 @@ function ProbeForm(
               setDraft(
                 mode === saved.mode
                   ? saved
-                  : { mode, grok_conv_id: draft.grok_conv_id }
+                  : { mode, cache_affinity: draft.cache_affinity }
               )
               setTarget(String(saved.target_tokens ?? 24_000))
             }}
@@ -309,17 +323,22 @@ function ProbeForm(
           </>
         )}
 
-        {props.supported && draft.mode !== 'short' && (
+        {draft.mode !== 'short' && props.cacheAffinity !== 'none' && (
           <div className='flex items-center gap-2'>
             <Checkbox
-              id={`${id}-grok`}
-              checked={draft.grok_conv_id ?? false}
+              id={`${id}-affinity`}
+              checked={draft.cache_affinity === props.cacheAffinity}
               onCheckedChange={(value) =>
-                setDraft({ ...draft, grok_conv_id: value === true })
+                setDraft({
+                  ...draft,
+                  cache_affinity: value ? props.cacheAffinity : 'none',
+                })
               }
             />
-            <Label htmlFor={`${id}-grok`}>
-              {t('Use a fixed Grok conversation ID')}
+            <Label htmlFor={`${id}-affinity`}>
+              {props.cacheAffinity === 'grok_header'
+                ? t('Use a fixed Grok conversation ID')
+                : t('Use a fixed Claude prompt cache')}
             </Label>
           </div>
         )}

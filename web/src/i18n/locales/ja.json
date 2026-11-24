@@ -7144,6 +7144,7 @@
     "Use 8–128 characters.": "8～128文字で設定してください。",
     "Use a compatible browser or device with biometric authentication or a security key to register a Passkey.": "生体認証またはセキュリティキーを備えた互換性のあるブラウザまたはデバイスを使用して、パスキーを登録してください。",
     "Use a different stable value for each instance, then restart the service.": "インスタンスごとに異なる安定した値を使用し、その後サービスを再起動してください。",
+    "Use a fixed Claude prompt cache": "Claude の固定プロンプトキャッシュを使用する",
     "Use a fixed Grok conversation ID": "固定の Grok 会話 ID を使う",
     "Use a Passkey from another website": "別のサイトのパスキーを使用",
     "Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.": "パスを入力するとチャネルの Base URL に追加されます。完全な URL を入力すると、このルートでは Base URL を使わずその URL を使用します。",

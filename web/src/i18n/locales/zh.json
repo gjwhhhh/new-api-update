@@ -7144,6 +7144,7 @@
     "Use 8–128 characters.": "使用 8–128 个字符。",
     "Use a compatible browser or device with biometric authentication or a security key to register a Passkey.": "请使用支持生物识别认证或安全密钥的兼容浏览器或设备来注册通行密钥。",
     "Use a different stable value for each instance, then restart the service.": "每个实例使用不同且稳定的值，然后重启服务。",
+    "Use a fixed Claude prompt cache": "使用固定的 Claude 提示词缓存",
     "Use a fixed Grok conversation ID": "使用固定的 Grok 会话 ID",
     "Use a Passkey from another website": "使用其他网站的通行密钥",
     "Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.": "填写以 / 开头的路径时会自动拼接渠道 Base URL；填写完整 URL 时，此路由会直接使用该 URL。",

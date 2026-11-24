@@ -37,6 +37,8 @@ const POLICY_SECTIONS = [
           PromptSimilarityEnabled: settings.PromptSimilarityEnabled,
           PromptSimilarityThreshold: settings.PromptSimilarityThreshold,
           PromptSimilarityTemplates: settings.PromptSimilarityTemplates,
+          PromptSimilarityTemplateMaxBytes:
+            settings.PromptSimilarityTemplateMaxBytes,
           PromptRejectMode: settings.PromptRejectMode,
           PromptRejectBanSession: settings.PromptRejectBanSession,
         }}

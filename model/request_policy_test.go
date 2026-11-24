@@ -170,6 +170,37 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
 			require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplates": strings.Repeat("x", 8193)}))
 			assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplateMaxBytes": "16384"}))
+			loadOptionsFromDatabase()
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplates": strings.Repeat("x", 8193)}))
+			loadOptionsFromDatabase()
+			assert.Equal(t, 16*1024, CurrentPromptTextFilterPolicy().SimilarityTemplateMaxBytes)
+			exemptPolicy = CurrentPromptTextFilterPolicy()
+			require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplates": strings.Repeat("x", 16*1024+1)}))
+			assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			for _, invalid := range []string{"8193", "131072", "invalid"} {
+				require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplateMaxBytes": invalid}))
+				assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			}
+			require.Error(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplateMaxBytes": "8192"}))
+			assert.Same(t, exemptPolicy, CurrentPromptTextFilterPolicy())
+			loadOptionsFromDatabase()
+			assert.Equal(t, 16*1024, CurrentPromptTextFilterPolicy().SimilarityTemplateMaxBytes)
+			assert.Equal(t, strings.Repeat("x", 8193), CurrentPromptTextFilterPolicy().SimilarityTemplates[0].Text)
+			for _, limit := range []int{32 * 1024, 64 * 1024} {
+				template := strings.Repeat("测", limit/3) + strings.Repeat("x", limit%3)
+				raw := template + "\n---\n" + template
+				require.NoError(t, UpdateRequestPolicyOptions(map[string]string{
+					"PromptSimilarityTemplateMaxBytes": strconv.Itoa(limit),
+					"PromptSimilarityTemplates":        raw,
+				}))
+				loadOptionsFromDatabase()
+				require.Len(t, CurrentPromptTextFilterPolicy().SimilarityTemplates, 2)
+				assert.Equal(t, limit, CurrentPromptTextFilterPolicy().SimilarityTemplateMaxBytes)
+				assert.Equal(t, template, CurrentPromptTextFilterPolicy().SimilarityTemplates[1].Text)
+				assert.Equal(t, raw, RequestPolicyOptions()["PromptSimilarityTemplates"])
+			}
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptSimilarityTemplates": "", "PromptSimilarityTemplateMaxBytes": "8192"}))
 			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"PromptRejectBanSession": "true"}))
 			loadOptionsFromDatabase()
 			loadOptionsFromDatabase()

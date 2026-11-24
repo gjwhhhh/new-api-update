@@ -356,7 +356,7 @@ describe('request policy settings', () => {
 
   it.each([
     ['x'.repeat(79), 'Each template must contain at least 80 characters.'],
-    ['测'.repeat(2731), 'Each template must not exceed 8 KiB.'],
+    ['测'.repeat(2731), 'Template exceeds the selected size limit.'],
     [
       `${'x'.repeat(80)}\n---\n${'y'.repeat(80)}`,
       'Use a separate input for each template.',
@@ -427,6 +427,74 @@ describe('request policy settings', () => {
         }
       )
     )
+  })
+
+  it('selecting a larger template limit accepts and persists a larger template', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('combobox', { name: 'Maximum template size' })
+    )
+    await userEvent.click(await screen.findByRole('option', { name: '16 KiB' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Add template' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Template 1' }), {
+      target: { value: 'x'.repeat(8193) },
+    })
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            PromptSimilarityTemplateMaxBytes: '16384',
+            PromptSimilarityTemplates: 'x'.repeat(8193),
+          },
+        }
+      )
+    )
+  })
+
+  it('lowering the saved limit preserves oversized text and raising it clears the error', async () => {
+    const template = '测'.repeat(3000)
+    settings.PromptSimilarityTemplates = template
+    settings.PromptSimilarityTemplateMaxBytes = 16384
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const limit = await screen.findByRole('combobox', {
+      name: 'Maximum template size',
+    })
+    expect(limit).toHaveTextContent('16 KiB')
+    const input = screen.getByRole('textbox', { name: 'Template 1' })
+    expect(input).toHaveValue(template)
+    await userEvent.click(limit)
+    await userEvent.click(await screen.findByRole('option', { name: '8 KiB' }))
+    expect(
+      await screen.findByText('Template exceeds the selected size limit.')
+    ).toBeVisible()
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    expect(api.patch).not.toHaveBeenCalled()
+    expect(input).toHaveValue(template)
+    await userEvent.click(limit)
+    await userEvent.click(await screen.findByRole('option', { name: '32 KiB' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Template exceeds the selected size limit.')
+      ).not.toBeInTheDocument()
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: { PromptSimilarityTemplateMaxBytes: '32768' },
+        }
+      )
+    )
+    expect(input).toHaveValue(template)
   })
 
   it('preserves edited and collapsed legacy templates when another template is removed', async () => {

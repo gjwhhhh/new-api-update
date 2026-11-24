@@ -27,13 +27,27 @@ func TestParseTemplatesSplitsAndBounds(t *testing.T) {
 	assert.Contains(t, parts[0], "运营方配置")
 	assert.Contains(t, parts[1], "任务 #117")
 
-	huge := strings.Repeat("汉", MaxTemplateBytes+100)
+	huge := strings.Repeat("汉", DefaultMaxTemplateBytes+100)
 	_, err = ParseTemplates(huge)
 	require.ErrorIs(t, err, ErrLongTemplate)
-	boundary := strings.Repeat("x", MaxTemplateBytes)
+	boundary := strings.Repeat("x", DefaultMaxTemplateBytes)
 	parts, err = ParseTemplates(boundary)
 	require.NoError(t, err)
 	assert.Equal(t, []string{boundary}, parts)
+}
+
+func TestParseTemplatesWithConfiguredLimit(t *testing.T) {
+	for _, limit := range []int{8 * 1024, 16 * 1024, 32 * 1024, 64 * 1024} {
+		// A multibyte template proves that limits apply to bytes, not characters.
+		boundary := strings.Repeat("测", limit/3) + strings.Repeat("x", limit%3)
+		parts, err := ParseTemplatesWithLimit(boundary+"\n---\n"+boundary, limit)
+		require.NoError(t, err)
+		assert.Equal(t, []string{boundary, boundary}, parts, "the limit is per template")
+		_, err = ParseTemplatesWithLimit(boundary+"x", limit)
+		require.ErrorIs(t, err, ErrLongTemplate)
+	}
+	_, err := ParseTemplatesWithLimit(strings.Repeat("x", 80), MaxTemplateBytes+1)
+	require.ErrorIs(t, err, ErrInvalidTemplateLimit)
 }
 
 func TestBestMatchScansFullRequestAndPreservesNormalization(t *testing.T) {

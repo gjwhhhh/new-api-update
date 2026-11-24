@@ -189,6 +189,7 @@ func InitOptionMap() {
 	common.OptionMap["PromptSimilarityEnabled"] = "false"
 	common.OptionMap["PromptSimilarityThreshold"] = "0.80"
 	common.OptionMap["PromptSimilarityTemplates"] = ""
+	common.OptionMap["PromptSimilarityTemplateMaxBytes"] = requestPolicyDefaults["PromptSimilarityTemplateMaxBytes"]
 	common.OptionMap["PromptRejectMode"] = requestPolicyDefaults["PromptRejectMode"]
 	common.OptionMap["PromptRejectBanSession"] = requestPolicyDefaults["PromptRejectBanSession"]
 	common.OptionMap["PromptTextFilterExempt"] = `{}`

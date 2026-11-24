@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/promptsim"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -61,6 +62,7 @@ func requestPolicyDefaultOptions() map[string]string {
 	defaults["PromptSimilarityEnabled"] = "false"
 	defaults["PromptSimilarityThreshold"] = "0.80"
 	defaults["PromptSimilarityTemplates"] = ""
+	defaults["PromptSimilarityTemplateMaxBytes"] = strconv.Itoa(promptsim.DefaultMaxTemplateBytes)
 	defaults["PromptRejectMode"] = PromptRejectModeCyber
 	defaults["PromptRejectBanSession"] = "false"
 	defaults["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)

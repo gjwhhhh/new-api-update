@@ -127,69 +127,82 @@ function serializeFilterExempt(exempt: {
   })
 }
 
-const sensitiveSchema = z.object({
-  CheckSensitiveEnabled: z.boolean(),
-  CheckSensitiveOnPromptEnabled: z.boolean(),
-  SensitiveWords: z.string().optional(),
-  PromptSimilarityEnabled: z.boolean(),
-  PromptSimilarityThreshold: z.string().refine((value) => {
-    const n = Number(value)
-    return Number.isFinite(n) && n >= 0.6 && n <= 0.95
-  }, 'Threshold must be between 0.60 and 0.95'),
-  PromptSimilarityTemplates: z.array(
-    z.object({
-      text: z.string().superRefine((value, ctx) => {
-        const template = value.trim()
-        if (!template) return
-        if (/^[^\S\n]*---[^\S\n]*$/m.test(template)) {
-          ctx.addIssue({
-            code: 'custom',
-            message: 'Use a separate input for each template.',
-          })
-        } else if ([...template].length < 80) {
-          ctx.addIssue({
-            code: 'custom',
-            message: 'Each template must contain at least 80 characters.',
-          })
-        } else if (new TextEncoder().encode(template).byteLength > 8192) {
-          ctx.addIssue({
-            code: 'custom',
-            message: 'Each template must not exceed 8 KiB.',
-          })
+const sensitiveSchema = z
+  .object({
+    CheckSensitiveEnabled: z.boolean(),
+    CheckSensitiveOnPromptEnabled: z.boolean(),
+    SensitiveWords: z.string().optional(),
+    PromptSimilarityEnabled: z.boolean(),
+    PromptSimilarityThreshold: z.string().refine((value) => {
+      const n = Number(value)
+      return Number.isFinite(n) && n >= 0.6 && n <= 0.95
+    }, 'Threshold must be between 0.60 and 0.95'),
+    PromptSimilarityTemplates: z.array(z.object({ text: z.string() })),
+    PromptSimilarityTemplateMaxBytes: z
+      .number()
+      .refine(
+        (value) => [8192, 16384, 32768, 65536].includes(value),
+        'Choose a supported template size.'
+      ),
+    PromptRejectMode: z.enum(['sensitive', 'cyber']),
+    PromptRejectBanSession: z.boolean(),
+    target: z
+      .object({
+        scope: filterScope.nullable(),
+        channel_ids: targetIDs,
+        token_ids: targetIDs,
+      })
+      .superRefine((target, ctx) => {
+        if (target.scope === null) {
+          ctx.addIssue({ code: 'custom', path: ['scope'], message: 'Required' })
+          return
+        }
+        if (target.scope === 'all') return
+        for (const kind of ['channel', 'token'] as const) {
+          const field = `${kind}_ids` as const
+          if (
+            (target.scope === kind || target.scope === 'channel_token') &&
+            !target[field].length
+          ) {
+            ctx.addIssue({
+              code: 'custom',
+              path: [field],
+              message: 'Select at least one target',
+            })
+          }
         }
       }),
-    })
-  ),
-  PromptRejectMode: z.enum(['sensitive', 'cyber']),
-  PromptRejectBanSession: z.boolean(),
-  target: z
-    .object({
-      scope: filterScope.nullable(),
-      channel_ids: targetIDs,
-      token_ids: targetIDs,
-    })
-    .superRefine((target, ctx) => {
-      if (target.scope === null) {
-        ctx.addIssue({ code: 'custom', path: ['scope'], message: 'Required' })
-        return
+    exempt: exemptSchema,
+  })
+  .superRefine((values, ctx) => {
+    values.PromptSimilarityTemplates.forEach(({ text }, index) => {
+      const template = text.trim()
+      if (!template) return
+      const path = ['PromptSimilarityTemplates', index, 'text']
+      if (/^[^\S\n]*---[^\S\n]*$/m.test(template)) {
+        ctx.addIssue({
+          code: 'custom',
+          path,
+          message: 'Use a separate input for each template.',
+        })
+      } else if ([...template].length < 80) {
+        ctx.addIssue({
+          code: 'custom',
+          path,
+          message: 'Each template must contain at least 80 characters.',
+        })
+      } else if (
+        new TextEncoder().encode(template).byteLength >
+        values.PromptSimilarityTemplateMaxBytes
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path,
+          message: 'Template exceeds the selected size limit.',
+        })
       }
-      if (target.scope === 'all') return
-      for (const kind of ['channel', 'token'] as const) {
-        const field = `${kind}_ids` as const
-        if (
-          (target.scope === kind || target.scope === 'channel_token') &&
-          !target[field].length
-        ) {
-          ctx.addIssue({
-            code: 'custom',
-            path: [field],
-            message: 'Select at least one target',
-          })
-        }
-      }
-    }),
-  exempt: exemptSchema,
-})
+    })
+  })
 
 type SensitiveFormValues = z.infer<typeof sensitiveSchema>
 
@@ -371,6 +384,7 @@ export function RequestChecksSection({
     PromptSimilarityEnabled,
     PromptSimilarityThreshold,
     PromptSimilarityTemplates,
+    PromptSimilarityTemplateMaxBytes,
     PromptRejectMode,
     PromptRejectBanSession,
   } = defaultValues
@@ -381,6 +395,7 @@ export function RequestChecksSection({
       SensitiveWords,
       PromptSimilarityEnabled,
       PromptSimilarityThreshold,
+      PromptSimilarityTemplateMaxBytes,
       PromptSimilarityTemplates: PromptSimilarityTemplates.replaceAll(
         '\r\n',
         '\n'
@@ -402,6 +417,7 @@ export function RequestChecksSection({
       PromptTextFilterExempt,
       PromptSimilarityEnabled,
       PromptSimilarityThreshold,
+      PromptSimilarityTemplateMaxBytes,
       PromptSimilarityTemplates,
       PromptRejectMode,
       PromptRejectBanSession,

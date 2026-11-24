@@ -22,15 +22,16 @@ const (
 
 // PromptTextFilterPolicy is independent of channel routing and health policy.
 type PromptTextFilterPolicy struct {
-	Enabled             bool
-	Keywords            []string
-	Target              PromptTextFilterTarget
-	SimilarityEnabled   bool
-	SimilarityThreshold float64
-	SimilarityTemplates []promptsim.Template
-	RejectMode          string
-	BanSession          bool
-	Exempt              PromptTextFilterExempt
+	Enabled                    bool
+	Keywords                   []string
+	Target                     PromptTextFilterTarget
+	SimilarityEnabled          bool
+	SimilarityThreshold        float64
+	SimilarityTemplates        []promptsim.Template
+	SimilarityTemplateMaxBytes int
+	RejectMode                 string
+	BanSession                 bool
+	Exempt                     PromptTextFilterExempt
 }
 
 func (p *PromptTextFilterPolicy) ShouldScan() bool {
@@ -84,7 +85,7 @@ func isPromptTextFilterOption(key string) bool {
 	switch key {
 	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "PromptTextFilterTarget",
 		"PromptTextFilterExempt",
-		"PromptSimilarityEnabled", "PromptSimilarityThreshold", "PromptSimilarityTemplates",
+		"PromptSimilarityEnabled", "PromptSimilarityThreshold", "PromptSimilarityTemplates", "PromptSimilarityTemplateMaxBytes",
 		"PromptRejectMode", "PromptRejectBanSession":
 		return true
 	default:
@@ -128,7 +129,12 @@ func buildPromptTextFilterPolicy(options map[string]string) (*PromptTextFilterPo
 		return nil, fmt.Errorf("invalid prompt similarity threshold")
 	}
 	policy.SimilarityThreshold = threshold
-	templates, err := promptsim.ParseTemplates(value("PromptSimilarityTemplates"))
+	maxTemplateBytes, err := strconv.Atoi(value("PromptSimilarityTemplateMaxBytes"))
+	if err != nil || !promptsim.IsSupportedTemplateLimit(maxTemplateBytes) {
+		return nil, fmt.Errorf("invalid prompt similarity template byte limit")
+	}
+	policy.SimilarityTemplateMaxBytes = maxTemplateBytes
+	templates, err := promptsim.ParseTemplatesWithLimit(value("PromptSimilarityTemplates"), maxTemplateBytes)
 	if err != nil {
 		return nil, err
 	}

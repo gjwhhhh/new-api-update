@@ -22,7 +22,8 @@ export const STATIC_I18N_KEYS = [
   'Select at least one target',
   'Threshold must be between 0.60 and 0.95',
   'Each template must contain at least 80 characters.',
-  'Each template must not exceed 8 KiB.',
+  'Choose a supported template size.',
+  'Template exceeds the selected size limit.',
   'Use a separate input for each template.',
   // Mail center labels and backend permission catalog.
   'Invalid email ID',

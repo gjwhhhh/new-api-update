@@ -8,12 +8,24 @@ import (
 )
 
 const (
-	DefaultNGram      = 4
-	DefaultThreshold  = 0.80
-	MinTemplateRunes  = 80
-	MaxTemplateBytes  = 8 * 1024
-	TemplateSeparator = "---"
+	DefaultNGram            = 4
+	DefaultThreshold        = 0.80
+	MinTemplateRunes        = 80
+	DefaultMaxTemplateBytes = 8 * 1024
+	MaxTemplateBytes        = 64 * 1024
+	TemplateSeparator       = "---"
 )
+
+// IsSupportedTemplateLimit reports whether the configured per-template limit
+// is one of the bounded values available in request-policy settings.
+func IsSupportedTemplateLimit(limit int) bool {
+	switch limit {
+	case 8 * 1024, 16 * 1024, 32 * 1024, MaxTemplateBytes:
+		return true
+	default:
+		return false
+	}
+}
 
 // Template is one precomputed dangerous-prompt fragment.
 type Template struct {
@@ -62,6 +74,15 @@ func TruncateBytes(text string, maxBytes int) string {
 
 // ParseTemplates splits on a line that contains only "---".
 func ParseTemplates(raw string) ([]string, error) {
+	return ParseTemplatesWithLimit(raw, DefaultMaxTemplateBytes)
+}
+
+// ParseTemplatesWithLimit splits and validates templates against the selected
+// per-template byte limit, which must be one of the supported bounded values.
+func ParseTemplatesWithLimit(raw string, maxBytes int) ([]string, error) {
+	if !IsSupportedTemplateLimit(maxBytes) {
+		return nil, ErrInvalidTemplateLimit
+	}
 	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	var (
 		out     []string
@@ -76,7 +97,7 @@ func ParseTemplates(raw string) ([]string, error) {
 		if utf8.RuneCountInString(part) < MinTemplateRunes {
 			return errShortTemplate
 		}
-		if len(part) > MaxTemplateBytes {
+		if len(part) > maxBytes {
 			return ErrLongTemplate
 		}
 		out = append(out, part)
@@ -110,7 +131,10 @@ func (shortTemplateError) Error() string {
 var ErrShortTemplate = errShortTemplate
 
 // ErrLongTemplate prevents silently saving only a prefix of a template.
-var ErrLongTemplate = errors.New("each prompt similarity template must not exceed 8192 bytes")
+var ErrLongTemplate = errors.New("prompt similarity template exceeds the configured byte limit")
+
+// ErrInvalidTemplateLimit rejects unsupported or unbounded settings values.
+var ErrInvalidTemplateLimit = errors.New("unsupported prompt similarity template byte limit")
 
 var errShortTemplate = shortTemplateError{}
 

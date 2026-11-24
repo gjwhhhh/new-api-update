@@ -46,6 +46,7 @@ export type FilteringSettings = Pick<
   PromptSimilarityEnabled: boolean
   PromptSimilarityThreshold: string
   PromptSimilarityTemplates: string
+  PromptSimilarityTemplateMaxBytes: number
   PromptRejectMode: 'sensitive' | 'cyber'
   PromptRejectBanSession: boolean
 }
@@ -82,6 +83,7 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   PromptSimilarityEnabled: false,
   PromptSimilarityThreshold: '0.80',
   PromptSimilarityTemplates: '',
+  PromptSimilarityTemplateMaxBytes: 8192,
   PromptRejectMode: 'cyber',
   PromptRejectBanSession: false,
 }

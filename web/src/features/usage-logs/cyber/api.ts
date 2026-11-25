@@ -30,6 +30,9 @@ export type CyberPolicy = {
   match_message: boolean
   blocked_action?: 'block' | 'reroute'
   fallback_channel_id?: number
+  notify_webhook_url?: string
+  notify_webhook_secret?: string
+  notify_webhook_secret_configured?: boolean
 }
 
 export type CyberFallbackRoute = {

@@ -15,7 +15,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func GetCyberPolicy(c *gin.Context) { common.ApiSuccess(c, service.CurrentCyberPolicy()) }
+func GetCyberPolicy(c *gin.Context) {
+	common.ApiSuccess(c, service.CurrentCyberPolicy().ForAPI())
+}
 
 func SaveCyberPolicy(c *gin.Context) {
 	var policy service.CyberPolicy
@@ -24,6 +26,12 @@ func SaveCyberPolicy(c *gin.Context) {
 		return
 	}
 	policy.Normalize()
+	existing := service.CurrentCyberPolicy()
+	if policy.NotifyWebhookURL == "" {
+		policy.NotifyWebhookSecret = ""
+	} else if policy.NotifyWebhookSecret == "" {
+		policy.NotifyWebhookSecret = existing.NotifyWebhookSecret
+	}
 	if policy.BlockedAction == "reroute" {
 		channel, err := model.GetChannelById(policy.FallbackChannelID, false)
 		if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
@@ -39,8 +47,8 @@ func SaveCyberPolicy(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryOperation, Action: "cyber_policy_updated", Content: "Cyber policy updated", Success: true, Other: model.AuditOther{Op: &model.AuditOperation{Action: "cyber_policy_updated", Params: map[string]any{"mode": policy.Mode, "scope": policy.Scope, "token_ids": policy.TokenIDs, "channel_ids": policy.ChannelIDs, "ttl_seconds": policy.TTLSeconds, "match_message": policy.MatchMessage, "capture_full_payload": policy.CaptureFullPayload, "blocked_action": policy.BlockedAction, "fallback_channel_id": policy.FallbackChannelID}}}})
-	common.ApiSuccess(c, service.CurrentCyberPolicy())
+	model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryOperation, Action: "cyber_policy_updated", Content: "Cyber policy updated", Success: true, Other: model.AuditOther{Op: &model.AuditOperation{Action: "cyber_policy_updated", Params: map[string]any{"mode": policy.Mode, "scope": policy.Scope, "token_ids": policy.TokenIDs, "channel_ids": policy.ChannelIDs, "ttl_seconds": policy.TTLSeconds, "match_message": policy.MatchMessage, "capture_full_payload": policy.CaptureFullPayload, "blocked_action": policy.BlockedAction, "fallback_channel_id": policy.FallbackChannelID, "notify_webhook_configured": policy.NotifyWebhookURL != ""}}}})
+	common.ApiSuccess(c, service.CurrentCyberPolicy().ForAPI())
 }
 
 func decodeCyberBody(c *gin.Context, dst any) error {

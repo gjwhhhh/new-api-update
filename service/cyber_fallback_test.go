@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,17 @@ func TestCyberFallbackPolicy(t *testing.T) {
 	p.BlockedAction = "reroute"
 	require.Error(t, p.Validate())
 	p.FallbackChannelID = 12
+	require.NoError(t, p.Validate())
+
+	p.NotifyWebhookURL = "not-a-url"
+	require.Error(t, p.Validate())
+	p.NotifyWebhookURL = ""
+	require.NoError(t, p.Validate())
+	p.NotifyWebhookURL = "https://hooks.example.com/cyber"
+	require.NoError(t, p.Validate())
+	p.NotifyWebhookSecret = strings.Repeat("x", 257)
+	require.Error(t, p.Validate())
+	p.NotifyWebhookSecret = strings.Repeat("x", 256)
 	require.NoError(t, p.Validate())
 }
 
@@ -410,4 +422,167 @@ func TestCyberFallbackChannelScopeAndAffinityIsolation(t *testing.T) {
 	apiErr := CheckCyberSessionChannel(c, 21)
 	require.NotNil(t, apiErr)
 	assert.Equal(t, "cyber_fallback_target_rejected", string(apiErr.GetErrorCode()), "a separately banned fallback cannot bypass its own active ban")
+}
+
+func TestWriteCyberSessionBanNotify(t *testing.T) {
+	client := useChannelAffinityRedisForTest(t)
+	prevNotify := cyberBanNotifyFn
+	t.Cleanup(func() { cyberBanNotifyFn = prevNotify })
+
+	type call struct {
+		url, secret string
+		data        relaydto.Notify
+	}
+	var (
+		mu    sync.Mutex
+		calls []call
+		wg    sync.WaitGroup
+	)
+	cyberBanNotifyFn = func(webhookURL, secret string, data relaydto.Notify) error {
+		mu.Lock()
+		calls = append(calls, call{url: webhookURL, secret: secret, data: data})
+		mu.Unlock()
+		wg.Done()
+		return nil
+	}
+
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(t.Name()+uuid.NewString())))
+	session := cyberRequestSession{
+		policy: CyberPolicy{
+			Mode:                "enforce",
+			Scope:               "all",
+			TTLSeconds:          600,
+			BlockedAction:       "block",
+			NotifyWebhookURL:    "https://hooks.example.com/cyber",
+			NotifyWebhookSecret: "s3cret",
+		},
+		tokenID: 91,
+		digest:  digest,
+	}
+	key := session.redisKey(0)
+	t.Cleanup(func() { client.Del(context.Background(), key) })
+
+	c := cyberFallbackTestContext(`{"input":"hello"}`)
+	c.Set(common.RequestIdKey, "req-armed-1")
+	c.Set("channel_id", 77)
+	wg.Add(1)
+	writeCyberSession(c, session)
+	require.Equal(t, "armed", cyberSessionLogAction(t, c))
+	exists, err := client.Exists(t.Context(), key).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), exists)
+	require.True(t, waitGroupDone(t, &wg, time.Second), "armed notify should fire once")
+
+	mu.Lock()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "https://hooks.example.com/cyber", calls[0].url)
+	assert.Equal(t, "s3cret", calls[0].secret)
+	assert.Equal(t, relaydto.NotifyTypeCyberSessionBan, calls[0].data.Type)
+	assert.Contains(t, calls[0].data.Content, "token_id=91")
+	assert.Contains(t, calls[0].data.Content, "channel_id=77")
+	assert.Contains(t, calls[0].data.Content, "request_id=req-armed-1")
+	assert.Contains(t, calls[0].data.Content, "source=upstream_cyber_policy")
+	mu.Unlock()
+
+	c2 := cyberFallbackTestContext(`{"input":"hello"}`)
+	c2.Set(common.RequestIdKey, "req-armed-2")
+	c2.Set("channel_id", 77)
+	writeCyberSession(c2, session)
+	require.Equal(t, "already_active", cyberSessionLogAction(t, c2))
+	mu.Lock()
+	assert.Len(t, calls, 1, "already_active must not notify again")
+	mu.Unlock()
+
+	emptySession := session
+	emptySession.digest = fmt.Sprintf("%x", sha256.Sum256([]byte(t.Name()+"empty"+uuid.NewString())))
+	emptySession.policy.NotifyWebhookURL = ""
+	emptyKey := emptySession.redisKey(0)
+	t.Cleanup(func() { client.Del(context.Background(), emptyKey) })
+	c3 := cyberFallbackTestContext(`{"input":"hello"}`)
+	c3.Set("channel_id", 77)
+	writeCyberSession(c3, emptySession)
+	require.Equal(t, "armed", cyberSessionLogAction(t, c3))
+	mu.Lock()
+	assert.Len(t, calls, 1, "empty webhook URL must not notify")
+	mu.Unlock()
+
+	localSession := session
+	localSession.digest = fmt.Sprintf("%x", sha256.Sum256([]byte(t.Name()+"local"+uuid.NewString())))
+	localKey := localSession.redisKey(0)
+	t.Cleanup(func() { client.Del(context.Background(), localKey) })
+	wg.Add(1)
+	cLocal := cyberFallbackTestContext(`{"input":"hello"}`)
+	cLocal.Set(common.RequestIdKey, "req-local")
+	cLocal.Set("channel_id", 88)
+	cLocal.Set(relaySensitiveMatchKey, RelaySensitiveMatch{Rule: "local_prompt_sensitive_words"})
+	writeCyberSession(cLocal, localSession)
+	require.Equal(t, "armed", cyberSessionLogAction(t, cLocal))
+	require.True(t, waitGroupDone(t, &wg, time.Second))
+	mu.Lock()
+	require.Len(t, calls, 2)
+	assert.Contains(t, calls[1].data.Content, "channel_id=88")
+	assert.Contains(t, calls[1].data.Content, "source=local:local_prompt_sensitive_words")
+	mu.Unlock()
+
+	failSession := session
+	failSession.digest = fmt.Sprintf("%x", sha256.Sum256([]byte(t.Name()+"fail"+uuid.NewString())))
+	failKey := failSession.redisKey(0)
+	t.Cleanup(func() { client.Del(context.Background(), failKey) })
+	cyberBanNotifyFn = func(webhookURL, secret string, data relaydto.Notify) error {
+		wg.Done()
+		return fmt.Errorf("webhook down")
+	}
+	wg.Add(1)
+	c4 := cyberFallbackTestContext(`{"input":"hello"}`)
+	c4.Set("channel_id", 77)
+	writeCyberSession(c4, failSession)
+	require.Equal(t, "armed", cyberSessionLogAction(t, c4))
+	require.True(t, waitGroupDone(t, &wg, time.Second))
+	exists, err = client.Exists(t.Context(), failKey).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), exists, "notify failure must not undo the ban")
+}
+
+func TestCyberPolicyForAPIRedactsWebhookSecret(t *testing.T) {
+	p := CyberPolicy{
+		Mode:                "enforce",
+		Scope:               "all",
+		TTLSeconds:          600,
+		NotifyWebhookURL:    "https://hooks.example.com/cyber",
+		NotifyWebhookSecret: "s3cret",
+	}
+	view := p.ForAPI()
+	assert.Equal(t, "s3cret", p.NotifyWebhookSecret)
+	assert.Empty(t, view.NotifyWebhookSecret)
+	assert.True(t, view.NotifyWebhookSecretConfigured)
+	assert.Equal(t, "https://hooks.example.com/cyber", view.NotifyWebhookURL)
+
+	empty := CyberPolicy{Mode: "off", Scope: "all", TTLSeconds: 600}.ForAPI()
+	assert.False(t, empty.NotifyWebhookSecretConfigured)
+	assert.Empty(t, empty.NotifyWebhookSecret)
+}
+
+func cyberSessionLogAction(t *testing.T, c *gin.Context) string {
+	t.Helper()
+	value, ok := c.Get(cyberSessionLogKey)
+	require.True(t, ok)
+	log, ok := value.(gin.H)
+	require.True(t, ok)
+	action, _ := log["action"].(string)
+	return action
+}
+
+func waitGroupDone(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) bool {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }

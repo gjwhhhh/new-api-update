@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -342,6 +343,20 @@ func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID in
 	return nil
 }
 
+// cyberBanNotifyFn sends a newly armed Cyber session ban webhook. Tests replace it.
+var cyberBanNotifyFn = SendWebhookNotify
+
+type cyberBanNotifyPayload struct {
+	webhookURL    string
+	webhookSecret string
+	tokenID       int
+	channelID     int
+	fingerprint   string
+	requestID     string
+	ttlSeconds    int
+	source        string
+}
+
 func writeCyberSession(c *gin.Context, session cyberRequestSession) {
 	if route := cyberFallback(c); route != nil {
 		rejectCyberFallback(c, route)
@@ -358,7 +373,9 @@ func writeCyberSession(c *gin.Context, session cyberRequestSession) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), cyberSessionRedisBudget)
 	defer cancel()
-	metadata, err := common.Marshal(CyberBanMetadata{ID: uuid.NewString(), RequestID: c.GetString(common.RequestIdKey), CreatedAt: time.Now().Unix(), SourceChannelID: c.GetInt("channel_id")})
+	requestID := c.GetString(common.RequestIdKey)
+	sourceChannelID := c.GetInt("channel_id")
+	metadata, err := common.Marshal(CyberBanMetadata{ID: uuid.NewString(), RequestID: requestID, CreatedAt: time.Now().Unix(), SourceChannelID: sourceChannelID})
 	if err != nil {
 		c.Set(cyberSessionSkipKey, "store_failed")
 		return
@@ -373,8 +390,63 @@ func writeCyberSession(c *gin.Context, session cyberRequestSession) {
 	} else if created {
 		action = "armed"
 		cyberSessionCounters.armed.Add(1)
+		notifyArmedCyberSessionBan(cyberBanNotifyPayload{
+			webhookURL:    settings.NotifyWebhookURL,
+			webhookSecret: settings.NotifyWebhookSecret,
+			tokenID:       session.tokenID,
+			channelID:     sourceChannelID,
+			fingerprint:   session.digest,
+			requestID:     requestID,
+			ttlSeconds:    settings.TTLSeconds,
+			source:        cyberBanNotifySource(c),
+		})
 	}
 	c.Set(cyberSessionLogKey, gin.H{"mode": settings.Mode, "action": action, "session_fingerprint": session.digest, "configured_ttl_seconds": settings.TTLSeconds, "channel_id": channelID})
+}
+
+func cyberBanNotifySource(c *gin.Context) string {
+	if IsLocalPromptReject(c) {
+		if match, ok := RelayPromptSensitiveMatch(c); ok && match.Rule != "" {
+			return "local:" + match.Rule
+		}
+		return "local"
+	}
+	return "upstream_cyber_policy"
+}
+
+func notifyArmedCyberSessionBan(p cyberBanNotifyPayload) {
+	if strings.TrimSpace(p.webhookURL) == "" {
+		return
+	}
+	fp := p.fingerprint
+	if len(fp) > 8 {
+		fp = fp[:8]
+	}
+	ttl := "permanent"
+	if p.ttlSeconds > 0 {
+		ttl = fmt.Sprintf("%ds", p.ttlSeconds)
+	}
+	content := fmt.Sprintf(
+		"token_id=%d channel_id=%d fingerprint=%s request_id=%s ttl=%s source=%s",
+		p.tokenID, p.channelID, fp, p.requestID, ttl, p.source,
+	)
+	webhookURL, webhookSecret := p.webhookURL, p.webhookSecret
+	notify := cyberBanNotifyFn
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				common.SysLog(fmt.Sprintf("cyber session ban webhook panic: %v", recovered))
+			}
+		}()
+		if err := notify(webhookURL, webhookSecret, dto.NewNotify(
+			dto.NotifyTypeCyberSessionBan,
+			"Cyber session banned",
+			content,
+			nil,
+		)); err != nil {
+			common.SysLog(fmt.Sprintf("cyber session ban webhook failed: %s", err.Error()))
+		}
+	}()
 }
 
 func cyberSessionFingerprint(storage common.BodyStorage) string {

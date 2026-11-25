@@ -66,6 +66,11 @@ const schema = z
     capture_full_payload: z.boolean(),
     blocked_action: z.enum(['block', 'reroute']),
     fallback_channel_id: z.number().int(),
+    notify_webhook_url: z
+      .string()
+      .trim()
+      .refine((value) => !value || URL.canParse(value)),
+    notify_webhook_secret: z.string().trim().max(256),
   })
   .superRefine((value, ctx) => {
     if (value.blocked_action === 'reroute' && value.fallback_channel_id < 1) {
@@ -131,12 +136,15 @@ function PolicyForm(props: {
       blocked_action: props.policy.blocked_action ?? 'block',
       capture_full_payload: props.policy.capture_full_payload ?? true,
       fallback_channel_id: props.policy.fallback_channel_id ?? 0,
+      notify_webhook_url: props.policy.notify_webhook_url ?? '',
+      notify_webhook_secret: '',
       token_ids: props.policy.token_ids?.join(', ') ?? '',
       channel_ids: props.policy.channel_ids?.join(', ') ?? '',
     },
   })
   const scope = form.watch('scope')
   const blockedAction = form.watch('blocked_action')
+  const secretConfigured = !!props.policy.notify_webhook_secret_configured
   const channelsQuery = useQuery({
     queryKey: ['cyber', props.userId, 'fallback-channels'],
     queryFn: async () => {
@@ -377,6 +385,50 @@ function PolicyForm(props: {
               )}
             </p>
           </div>
+          <label className='grid gap-1.5 text-sm sm:col-span-2'>
+            {t('Ban notification webhook URL')}
+            <Input
+              type='url'
+              placeholder='https://'
+              aria-invalid={!!errors.notify_webhook_url}
+              {...form.register('notify_webhook_url')}
+            />
+            {errors.notify_webhook_url ? (
+              <span className='text-destructive'>
+                {t('Enter a valid URL, or leave blank to disable notifications')}
+              </span>
+            ) : (
+              <span className='text-muted-foreground text-xs'>
+                {t(
+                  'Leave blank to disable. Sends a webhook when a session ban is newly armed.'
+                )}
+              </span>
+            )}
+          </label>
+          <label className='grid gap-1.5 text-sm sm:col-span-2'>
+            {t('Ban notification webhook secret')}
+            <Input
+              type='password'
+              autoComplete='new-password'
+              aria-invalid={!!errors.notify_webhook_secret}
+              {...form.register('notify_webhook_secret')}
+            />
+            {errors.notify_webhook_secret ? (
+              <span className='text-destructive'>
+                {t('Webhook secret must be at most 256 characters')}
+              </span>
+            ) : (
+              <span className='text-muted-foreground text-xs'>
+                {secretConfigured
+                  ? t(
+                      'A secret is already saved. Leave blank to keep it, or enter a new one to replace it.'
+                    )
+                  : t(
+                      'Optional. Used for DingTalk signing or the X-Webhook-Signature header.'
+                    )}
+              </span>
+            )}
+          </label>
           {props.canWrite && (
             <Button
               className='justify-self-start'

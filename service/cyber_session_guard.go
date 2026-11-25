@@ -343,8 +343,17 @@ func checkCyberSession(c *gin.Context, session cyberRequestSession, channelID in
 	return nil
 }
 
+// Keep notification work bounded independently of relay request timeouts.
+var cyberBanNotifySlots = make(chan struct{}, 8)
+
 // cyberBanNotifyFn sends a newly armed Cyber session ban webhook. Tests replace it.
-var cyberBanNotifyFn = SendWebhookNotify
+var cyberBanNotifyFn = sendCyberBanWebhook
+
+func sendCyberBanWebhook(webhookURL, secret string, data dto.Notify) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return sendWebhookNotify(ctx, webhookURL, secret, data)
+}
 
 type cyberBanNotifyPayload struct {
 	webhookURL    string
@@ -418,6 +427,14 @@ func notifyArmedCyberSessionBan(p cyberBanNotifyPayload) {
 	if strings.TrimSpace(p.webhookURL) == "" {
 		return
 	}
+	// Drop excess notifications rather than queueing unbounded work or delaying relay.
+	slots := cyberBanNotifySlots
+	select {
+	case slots <- struct{}{}:
+	default:
+		common.SysLog("cyber session ban webhook skipped: concurrency limit reached")
+		return
+	}
 	fp := p.fingerprint
 	if len(fp) > 8 {
 		fp = fp[:8]
@@ -433,6 +450,7 @@ func notifyArmedCyberSessionBan(p cyberBanNotifyPayload) {
 	webhookURL, webhookSecret := p.webhookURL, p.webhookSecret
 	notify := cyberBanNotifyFn
 	go func() {
+		defer func() { <-slots }()
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				common.SysLog(fmt.Sprintf("cyber session ban webhook panic: %v", recovered))

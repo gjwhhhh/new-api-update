@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -194,6 +195,10 @@ func validateWebhookResponse(provider webhookProvider, response *http.Response) 
 
 // SendWebhookNotify 发送 webhook 通知
 func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error {
+	return sendWebhookNotify(context.Background(), webhookURL, secret, data)
+}
+
+func sendWebhookNotify(ctx context.Context, webhookURL string, secret string, data dto.Notify) error {
 	requestSpec, err := buildWebhookRequest(webhookURL, secret, data, time.Now())
 	if err != nil {
 		return err
@@ -214,7 +219,7 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 			Body:    requestSpec.Body,
 		}
 
-		resp, err = DoWorkerRequest(workerReq)
+		resp, err = doWorkerRequest(ctx, workerReq)
 		if err != nil {
 			return fmt.Errorf("failed to send webhook request through worker: %s", common.MaskSensitiveInfo(err.Error()))
 		}
@@ -222,7 +227,7 @@ func SendWebhookNotify(webhookURL string, secret string, data dto.Notify) error 
 		if err := ValidateSSRFProtectedFetchURL(requestSpec.URL); err != nil {
 			return fmt.Errorf("request reject: %v", err)
 		}
-		req, err := http.NewRequest(http.MethodPost, requestSpec.URL, bytes.NewBuffer(requestSpec.Body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestSpec.URL, bytes.NewBuffer(requestSpec.Body))
 		if err != nil {
 			return fmt.Errorf("failed to create webhook request: %v", err)
 		}

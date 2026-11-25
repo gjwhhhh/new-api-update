@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +21,7 @@ import (
 	relaydto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
@@ -560,6 +562,115 @@ func TestCyberPolicyForAPIRedactsWebhookSecret(t *testing.T) {
 	empty := CyberPolicy{Mode: "off", Scope: "all", TTLSeconds: 600}.ForAPI()
 	assert.False(t, empty.NotifyWebhookSecretConfigured)
 	assert.Empty(t, empty.NotifyWebhookSecret)
+}
+
+func TestCyberBanWebhookRequestDeadline(t *testing.T) {
+	for _, worker := range []bool{false, true} {
+		t.Run(fmt.Sprintf("worker=%t", worker), func(t *testing.T) {
+			captured := captureWebhookRequest(t, http.StatusOK, "ok")
+			if worker {
+				system_setting.WorkerUrl = "https://worker.example.com"
+				system_setting.WorkerValidKey = "test-worker-key"
+			}
+			var requestContext context.Context
+			transport := httpClient.Transport
+			httpClient.Transport = webhookRoundTripper(func(request *http.Request) (*http.Response, error) {
+				requestContext = request.Context()
+				return transport.RoundTrip(request)
+			})
+			require.NoError(t, cyberBanNotifyFn("https://hooks.example.com/cyber", "secret", relaydto.Notify{}))
+			require.NotNil(t, captured.URL)
+			require.NotNil(t, requestContext)
+			deadline, ok := requestContext.Deadline()
+			require.True(t, ok, "Cyber notifications need a deadline even without RELAY_TIMEOUT")
+			assert.WithinDuration(t, time.Now(), deadline, 10*time.Second)
+			assert.ErrorIs(t, requestContext.Err(), context.Canceled, "completion must release the timeout context")
+		})
+	}
+}
+
+func TestCyberBanWebhookCancelsStalledRequests(t *testing.T) {
+	for _, worker := range []bool{false, true} {
+		t.Run(fmt.Sprintf("worker=%t", worker), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				captureWebhookRequest(t, http.StatusOK, "ok")
+				if worker {
+					system_setting.WorkerUrl = "https://worker.example.com"
+					system_setting.WorkerValidKey = "test-worker-key"
+				}
+				var requestContext context.Context
+				httpClient.Transport = webhookRoundTripper(func(request *http.Request) (*http.Response, error) {
+					requestContext = request.Context()
+					<-requestContext.Done()
+					return nil, requestContext.Err()
+				})
+				err := sendCyberBanWebhook("https://hooks.example.com/cyber", "secret", relaydto.Notify{})
+				require.Error(t, err)
+				require.NotNil(t, requestContext)
+				assert.ErrorIs(t, requestContext.Err(), context.DeadlineExceeded)
+			})
+		})
+	}
+}
+
+func TestCyberBanWebhookLimitsConcurrentNotificationsAndReleasesSlots(t *testing.T) {
+	previousNotify, previousSlots := cyberBanNotifyFn, cyberBanNotifySlots
+	slots := make(chan struct{}, 2)
+	cyberBanNotifySlots = slots
+	started := make(chan struct{}, 3)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+		cyberBanNotifyFn, cyberBanNotifySlots = previousNotify, previousSlots
+	})
+	cyberBanNotifyFn = func(string, string, relaydto.Notify) error {
+		started <- struct{}{}
+		<-release
+		return fmt.Errorf("webhook down")
+	}
+	payload := cyberBanNotifyPayload{webhookURL: "https://hooks.example.com/cyber"}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for range cap(slots) {
+		notifyArmedCyberSessionBan(payload)
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("notification did not start")
+		}
+	}
+	notifyArmedCyberSessionBan(payload)
+	select {
+	case <-started:
+		t.Fatal("a saturated sender must drop additional notifications")
+	default:
+	}
+	releaseOnce.Do(func() { close(release) })
+	for range cap(slots) {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			t.Fatal("failed notifications did not release their slots")
+		}
+	}
+	for range cap(slots) {
+		<-slots
+	}
+	// A failed batch must not prevent subsequent notifications from starting.
+	notifyArmedCyberSessionBan(payload)
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("notification capacity was not restored")
+	}
+	for range cap(slots) {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			t.Fatal("subsequent notification did not release its slot")
+		}
+	}
 }
 
 func cyberSessionLogAction(t *testing.T, c *gin.Context) string {

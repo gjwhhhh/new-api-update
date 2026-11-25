@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -307,4 +313,47 @@ it('loads the policy with a fresh signal after an earlier mount cancels its requ
   } finally {
     api.defaults.adapter = adapter
   }
+})
+
+it('clears a rotated webhook secret after saving and omits it on the next policy update', async () => {
+  const current: CyberPolicy = {
+    ...policy,
+    notify_webhook_url: 'https://hooks.example.com/cyber',
+    notify_webhook_secret: '',
+    notify_webhook_secret_configured: true,
+  }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: current },
+  })
+  const save = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true, data: current },
+  })
+  const user = userEvent.setup()
+  renderPanel(<CyberPolicySettings userId={1} canWrite />)
+  const secret = await screen.findByLabelText(/Ban notification webhook secret/)
+  await user.type(secret, 'rotated-secret')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await user.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', {
+      name: 'Save',
+    })
+  )
+  await waitFor(() => expect(secret).toHaveValue(''))
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  expect(save).toHaveBeenLastCalledWith(
+    '/api/cyber/policy',
+    expect.objectContaining({ notify_webhook_secret: 'rotated-secret' })
+  )
+
+  await user.click(screen.getByRole('switch', { name: /Match cyber_policy/ }))
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await user.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', {
+      name: 'Save',
+    })
+  )
+  expect(save).toHaveBeenLastCalledWith(
+    '/api/cyber/policy',
+    expect.objectContaining({ notify_webhook_secret: '', match_message: true })
+  )
 })

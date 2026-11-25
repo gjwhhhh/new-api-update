@@ -173,6 +173,7 @@ function PolicyForm(props: {
       }),
     meta: { errorToast: false },
     onSuccess: (saved) => {
+      form.reset({ ...form.getValues(), notify_webhook_secret: '' })
       setPending(null)
       toast.success(t('Cyber policy saved'))
       client.setQueryData(['cyber', props.userId, 'policy'], saved)
@@ -395,7 +396,9 @@ function PolicyForm(props: {
             />
             {errors.notify_webhook_url ? (
               <span className='text-destructive'>
-                {t('Enter a valid URL, or leave blank to disable notifications')}
+                {t(
+                  'Enter a valid URL, or leave blank to disable notifications'
+                )}
               </span>
             ) : (
               <span className='text-muted-foreground text-xs'>
